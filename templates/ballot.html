@@ -1,1 +1,16 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>{{e.title}} — Training Ballot</b><span>Ballot {{step+1}} of {{total}}</span></header><div class=demo>TRAINING / SIMULATION ONLY — not an official ballot.</div><div class=wrap><div class=card><h2>Select one {{e.title}} candidate</h2>{% if error %}<p>{{error}}</p>{% endif %}<form method=post><div class=grid>{% for c in e.candidates %}<div class=candidate><input id=c{{c.slot}} type=radio name=candidate value={{c.slot}} {% if selected==c.slot %}checked{% endif %}><label for=c{{c.slot}}><div class=photo>{{c.slot}}</div><b>{{c.name}}</b></label></div>{% endfor %}</div><div class=actions>{% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}<button>Save choice & continue</button></div></form></div></div>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>{{e.title}} — Training Ballot</b><span>Ballot {{step+1}} of {{total}}</span></header><div class=demo>TRAINING / SIMULATION ONLY — not an official ballot.</div><div class=wrap><div class=card><h2>Select one {{e.title}} candidate</h2>{% if error %}<p>{{error}}</p>{% endif %}<div id=selection_status class=muted aria-live=polite>Select a candidate.</div><form method=post><div class=grid>{% for c in e.candidates %}<div class=candidate><input id=c{{c.slot}} type=radio name=candidate value={{c.slot}} {% if selected==c.slot %}checked{% endif %}><label for=c{{c.slot}}><div class=photo>{{c.slot}}</div><b>{{c.name}}</b></label></div>{% endfor %}</div><div class=actions>{% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}<button>Save choice & continue</button></div></form></div></div>
+<script>
+const radios=[...document.querySelectorAll('input[name="candidate"]')];
+const status=document.getElementById('selection_status');
+function updateSelection(){
+ const r=radios.find(x=>x.checked);
+ if(r){
+   const label=document.querySelector('label[for="'+r.id+'"] b');
+   status.textContent=(label?label.textContent:'Candidate '+r.value)+' selected.';
+ }else{
+   status.textContent='Select a candidate.';
+ }
+}
+radios.forEach(r=>r.addEventListener('change',updateSelection));
+updateSelection();
+</script>

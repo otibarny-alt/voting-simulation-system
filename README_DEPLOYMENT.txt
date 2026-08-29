@@ -27,3 +27,12 @@ V2 CASCADING ELECTORAL UNITS
 - Uses list_name and parent keys from county_main.csv.
 - Includes all 47 counties and the polling-station-stream rows in that file.
 - No new Render environment variable is required.
+
+
+V3 SELECTION FEEDBACK
+- Selected candidate card changes to a light highlighted background.
+- Selected card rises/pops out slightly.
+- Stronger shadow and border make the choice obvious.
+- A visible "✓ SELECTED" badge appears on the chosen candidate.
+- Text confirmation announces the selected candidate.
+- Only one candidate can remain selected because the ballot uses radio buttons.
