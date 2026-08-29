@@ -54,5 +54,5 @@ $('sc_station').onchange=function(){
 <p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
 {% if not row["closed_at"] %}<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>{% endif %}
-<p><a href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening & Closing Report</a></p>
+<p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening & Closing Report</a> <small>(opens in a new tab)</small></p>
 {% endif %}</div></div>

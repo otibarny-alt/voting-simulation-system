@@ -249,3 +249,11 @@ The header appears on all printed reports supported by V19:
 - MCA tally
 
 TRAINING / SIMULATION ONLY.
+
+
+V21 — OPEN/CLOSE REPORT IN NEW TAB
+The "View / Print Opening & Closing Report" link now opens the report in a separate
+browser tab using target="_blank" and rel="noopener".
+The Voting Stream Control page remains open in the original tab, so after printing or
+reviewing the report the operator can simply close the report tab instead of using Back.
+TRAINING / SIMULATION ONLY.
