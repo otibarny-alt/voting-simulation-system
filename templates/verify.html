@@ -6,7 +6,7 @@
  <div class=card>
   <h2>Demo voter verification</h2>
   <p class=muted id=terminal_help>Set this computer's voting stream once. Subsequent demo voters only enter their ID.</p>
-  {% if error %}<p>{{error}}</p>{% endif %}
+  {% if error %}<div class='vote-error'>{{error}}</div>{% endif %}
 
   <div id=locked_panel style="display:none" class="terminal-lock">
     <div class=muted>This computer is assigned to</div>

@@ -71,3 +71,15 @@ V6 SUBSEQUENT VOTER SUBMISSION FIX
   electoral-unit values are submitted through hidden fields.
 - Subsequent voters can now enter only their voter ID and continue directly to
   the six training ballots.
+
+
+V7 NO DOUBLE VOTING — TRAINING SIMULATION
+- A voter ID that already has a saved simulated ballot set is blocked from
+  starting another six-ballot session.
+- The check happens when the voter ID is entered and is repeated again before
+  the simulated selections are written.
+- A clear red warning is shown for duplicate voter IDs.
+- The same ID remains blocked across different terminals as long as those
+  terminals use the same persistent demo database.
+- Resetting all simulated votes from the tally dashboard clears this training
+  restriction because the demo vote records are deleted.

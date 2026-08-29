@@ -56,3 +56,13 @@
   font-weight:800;
   margin:5px 0;
 }
+
+.vote-error{
+  background:#fde8e8;
+  border:2px solid #9b1c1c;
+  color:#7f1d1d;
+  padding:14px 16px;
+  border-radius:10px;
+  font-weight:700;
+  margin:14px 0;
+}

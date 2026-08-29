@@ -13,6 +13,7 @@ ELECTIONS=[
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row
  c.execute('CREATE TABLE IF NOT EXISTS demo_votes(id INTEGER PRIMARY KEY AUTOINCREMENT,voter_session TEXT,election TEXT,candidate INTEGER,county TEXT,constituency TEXT,ward TEXT,poll_station TEXT,stream TEXT)')
+ c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_voter ON demo_votes(voter_session)')
  return c
 
 def cfg():
@@ -45,6 +46,12 @@ def api_hierarchy():
  from flask import jsonify
  return jsonify(hierarchy_payload())
 
+def has_voted(voter_id):
+ c=con()
+ row=c.execute("SELECT 1 FROM demo_votes WHERE voter_session=? LIMIT 1",(voter_id,)).fetchone()
+ c.close()
+ return row is not None
+
 @app.get("/")
 def home(): return render_template("verify.html")
 
@@ -52,6 +59,8 @@ def home(): return render_template("verify.html")
 def start():
  voter=request.form.get("voter_id","").strip()
  if not voter: return render_template("verify.html",error="Enter a demo voter ID.")
+ if has_voted(voter):
+  return render_template("verify.html",error=f"Voter ID {voter} has already completed the six-ballot simulation and cannot vote again.")
  session.clear(); session["voter_id"]=voter; session["choices"]={}
  session["geo"]={x:(request.form.get(x,"").strip() or d) for x,d in [
   ("county","Demo County"),("constituency","Demo Constituency"),("ward","Demo Ward"),
@@ -84,7 +93,11 @@ def cast():
  choices=session.get("choices",{})
  if len(choices)!=6:return redirect(url_for("review"))
  c=con(); voter=session["voter_id"]; geo=session["geo"]
- c.execute("DELETE FROM demo_votes WHERE voter_session=?",(voter,))
+ existing=c.execute("SELECT 1 FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
+ if existing:
+  c.close()
+  session.clear()
+  return render_template("verify.html",error=f"Voter ID {voter} has already completed the six-ballot simulation and cannot vote again.")
  for e in cfg():
   c.execute("INSERT INTO demo_votes(voter_session,election,candidate,county,constituency,ward,poll_station,stream) VALUES(?,?,?,?,?,?,?,?)",
    (voter,e["key"],choices[e["key"]],geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
