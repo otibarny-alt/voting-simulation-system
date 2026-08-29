@@ -196,3 +196,29 @@ both opening and closing.
 
 The report may span multiple A4 pages so that each agent has adequate signing space.
 TRAINING / SIMULATION ONLY.
+
+
+V19 — DYNAMIC PRINTED REPORT HEADER
+A dynamic header/logo image can now be displayed on all printed reports using a Render
+environment variable.
+
+Add this environment variable in Render:
+REPORT_HEADER_IMAGE_URL=https://your-public-image-url.example/header.png
+
+The image is NOT hard-coded into the application. The application reads the URL at runtime.
+Changing REPORT_HEADER_IMAGE_URL changes the printed report header without editing the code.
+
+The dynamic header appears on:
+- Voting Stream Opening / Closing Report
+- President tally printout
+- Governor tally printout
+- Senator tally printout
+- Woman Representative tally printout
+- MNA tally printout
+- MCA tally printout
+
+Important:
+- The value must be a direct, publicly accessible image URL (PNG/JPG/WebP).
+- Do not use a Google Drive page/share URL unless it resolves directly to the image.
+- If REPORT_HEADER_IMAGE_URL is empty, no header image is printed.
+TRAINING / SIMULATION ONLY.

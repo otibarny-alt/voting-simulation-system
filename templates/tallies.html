@@ -4,6 +4,9 @@
 <div class=wrap>
 {% for s in sections %}
 <div class="card tally-section" id="tally-{{s.key}}">
+{% if report_header_image_url %}
+<div class="print-report-header"><img src="{{report_header_image_url}}" alt="Report Header"></div>
+{% endif %}
 <div class="tally-heading">
  <h2>{{s.title}}</h2>
  <button type="button" class="print-tally no-print" onclick="printTally('tally-{{s.key}}','{{s.title|e}}')">Print {{s.title}}</button>

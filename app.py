@@ -29,6 +29,7 @@ COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
 AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
+REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "").strip()
 
 def norm_key(v):
  return "_".join((v or "").strip().lower().replace("-", " ").split())
@@ -98,7 +99,8 @@ def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
  return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
- open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME)
+ open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+ report_header_image_url=REPORT_HEADER_IMAGE_URL)
 
 @app.post("/stream/open")
 def open_stream():
@@ -109,6 +111,7 @@ def open_stream():
   c.close()
   return render_template("stream_control.html",row=None,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
  now=datetime.now().astimezone().isoformat(timespec="seconds")
  c.execute("""INSERT OR IGNORE INTO stream_sessions
@@ -133,6 +136,7 @@ def stream_report():
  if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
  c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
  return render_template("stream_report.html",row=row,votes=votes,open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+  report_header_image_url=REPORT_HEADER_IMAGE_URL,
   open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),close_ok=time_status(row["closed_at"],VOTING_CLOSE_TIME))
 
 @app.get("/")
@@ -260,5 +264,10 @@ def tallies():
 def reset():
  c=con(); c.execute("DELETE FROM demo_votes"); c.commit(); c.close(); session.clear()
  return redirect(url_for("home"))
+
+
+@app.context_processor
+def inject_report_branding():
+ return {"report_header_image_url": REPORT_HEADER_IMAGE_URL}
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))
