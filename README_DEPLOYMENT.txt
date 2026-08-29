@@ -116,3 +116,12 @@ At the end of EACH elective-position tally: Total Votes Cast, Registered Voters 
 Registered Voters per polling station, and Votes Not Cast. Detailed stream and station tables
 are also shown. Polling-station registered totals include all streams belonging to the station.
 TRAINING / SIMULATION ONLY.
+
+
+V12 — A4 PRINT BUTTONS
+- Every elective-position tally has its own Print button.
+- Clicking it opens the browser/operating-system print dialog for the connected/default printer.
+- Only that elective-position section is included in the print job.
+- Print CSS requests A4 portrait paper and removes dashboard navigation/buttons from the printed page.
+- The browser controls the actual printer selection; a normal web application cannot silently force a specific connected printer without browser/OS or kiosk-print configuration.
+TRAINING / SIMULATION ONLY.

@@ -3,8 +3,11 @@
 <div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
 <div class=wrap>
 {% for s in sections %}
-<div class=card>
-<h2>{{s.title}}</h2>
+<div class="card tally-section" id="tally-{{s.key}}">
+<div class="tally-heading">
+ <h2>{{s.title}}</h2>
+ <button type="button" class="print-tally no-print" onclick="printTally('tally-{{s.key}}','{{s.title|e}}')">Print {{s.title}}</button>
+</div>
 <table><tr><th>Rank</th><th>Candidate</th><th>Votes</th></tr>
 {% for c in s.candidates %}<tr><td><b>#{{c.rank}}</b></td><td>{{c.name}}</td><td><b>{{c.votes}}</b></td></tr>{% endfor %}
 </table>
@@ -28,3 +31,19 @@
 {% endfor %}
 <div class=card><form method=post action=/reset-demo><button>Reset all simulated votes</button></form></div>
 </div>
+<script>
+function printTally(sectionId, title){
+  const section=document.getElementById(sectionId);
+  if(!section) return;
+  document.body.classList.add('printing-one');
+  document.querySelectorAll('.tally-section').forEach(el=>el.classList.remove('print-target'));
+  section.classList.add('print-target');
+  document.title=title+' - Simulated Tally';
+  window.print();
+  setTimeout(()=>{
+    document.body.classList.remove('printing-one');
+    section.classList.remove('print-target');
+    document.title='Simulated Tally Dashboard';
+  },500);
+}
+</script>
