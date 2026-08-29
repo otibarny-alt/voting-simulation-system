@@ -135,3 +135,11 @@ V13 — CANDIDATE AGENT SIGNATURE LINES
 - Certification text states that signatories confirm the printout is a true copy of the simulated results for that polling station stream.
 - Designed to print as part of the same A4 tally printout.
 TRAINING / SIMULATION ONLY.
+
+
+V14 — PRESIDING / RETURNING OFFICER SIGNATURES
+- Adds an Election Officials' Certification area to every elective-position printout.
+- Presiding Officer: Name, Signature, Date/Time.
+- Returning Officer: Name, Signature, Date/Time.
+- Appears after the candidate-agent certification section.
+TRAINING / SIMULATION ONLY.
