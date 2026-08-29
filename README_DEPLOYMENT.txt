@@ -42,3 +42,18 @@ V4 REVIEW VOTER ID
 - The review screen now prominently displays the demo voter's ID number.
 - The voter is asked to confirm the ID before saving the simulated ballot set.
 - The ID is read from the current session and is not manually re-entered on review.
+
+
+V5 TERMINAL / STREAM LOCK
+- The electoral hierarchy is selected only once per computer/browser.
+- The chosen County, Constituency, Ward, Polling Station and Stream are stored
+  locally in that browser as the terminal assignment.
+- Subsequent voters only enter their voter ID.
+- Clicking "Next voter on this computer" returns to the ID entry screen while
+  retaining the same voting stream.
+- A "Change voting stream" control is available if the computer is moved to
+  another room/stream.
+- The assignment survives ordinary page refreshes and browser restarts because
+  it is kept in browser local storage.
+- Clearing browser/site data will clear the terminal assignment.
+- No new Render environment variables are required.

@@ -43,3 +43,16 @@
   letter-spacing:1px;
   margin:4px 0 6px;
 }
+
+.terminal-lock{
+  padding:16px 18px;
+  border:2px solid #111;
+  border-radius:12px;
+  background:#f7f7f7;
+  margin-bottom:18px;
+}
+.terminal-title{
+  font-size:24px;
+  font-weight:800;
+  margin:5px 0;
+}
