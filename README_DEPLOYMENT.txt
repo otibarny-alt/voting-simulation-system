@@ -174,3 +174,25 @@ County -> Constituency -> Ward -> Polling Station -> Stream.
 Each selection filters the next dropdown and the selected values are submitted to the
 existing zero-precast-vote/open-stream procedure.
 TRAINING / SIMULATION ONLY.
+
+
+V18 — SIX ELECTIVE-POSITION AGENT SIGNATURES
+The printable stream opening/closing report now provides candidate-agent signature rows
+for all six elective positions because the same candidate may have a different agent
+at each polling-station stream.
+
+Opening certification sections:
+- President: Candidate 1–10
+- Governor: Candidate 1–6
+- Senator: Candidate 1–6
+- Woman Representative: Candidate 1–6
+- MNA: Candidate 1–6
+- MCA: Candidate 1–6
+
+Closing certification repeats the same six elective-position agent signature sections.
+Each row has Candidate, Agent Name, Signature, and Date/Time.
+Presiding Officer and Returning Officer signature lines are included separately for
+both opening and closing.
+
+The report may span multiple A4 pages so that each agent has adequate signing space.
+TRAINING / SIMULATION ONLY.

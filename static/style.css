@@ -147,3 +147,17 @@
 .control-grid label{display:block;font-weight:700;margin-bottom:5px}
 .control-grid select{width:100%;padding:10px;border:1px solid #aaa;border-radius:6px;background:white}
 @media(max-width:760px){.control-grid{grid-template-columns:1fr}}
+
+.signature-section{margin-top:14px;break-inside:avoid;page-break-inside:avoid}
+.signature-section h3{margin:6px 0}
+.agent-sign-table{width:100%;border-collapse:collapse}
+.agent-sign-table th,.agent-sign-table td{border:1px solid #777;padding:5px}
+.closing-signatures{margin-top:26px;padding-top:16px;border-top:3px solid #222}
+@media print{
+ .signature-section{break-inside:avoid;page-break-inside:avoid}
+ .signature-section h3{font-size:10pt!important;margin:4px 0!important}
+ .agent-sign-table{font-size:7.5pt!important}
+ .agent-sign-table th,.agent-sign-table td{padding:2px!important}
+ .agent-sign-table .sig{height:15px!important}
+ .closing-signatures{page-break-before:always;margin-top:0;padding-top:0;border-top:0}
+}
