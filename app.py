@@ -46,11 +46,11 @@ def api_hierarchy():
  from flask import jsonify
  return jsonify(hierarchy_payload())
 
-def has_voted(voter_id):
+def previous_vote(voter_id):
  c=con()
- row=c.execute("SELECT 1 FROM demo_votes WHERE voter_session=? LIMIT 1",(voter_id,)).fetchone()
+ row=c.execute("SELECT poll_station, stream FROM demo_votes WHERE voter_session=? LIMIT 1",(voter_id,)).fetchone()
  c.close()
- return row is not None
+ return row
 
 @app.get("/")
 def home(): return render_template("verify.html")
@@ -59,8 +59,10 @@ def home(): return render_template("verify.html")
 def start():
  voter=request.form.get("voter_id","").strip()
  if not voter: return render_template("verify.html",error="Enter a demo voter ID.")
- if has_voted(voter):
-  return render_template("verify.html",error=f"Voter ID {voter} has already completed the six-ballot simulation and cannot vote again.")
+ previous=previous_vote(voter)
+ if previous:
+  station=previous["poll_station"] or "the recorded polling station"
+  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
  session.clear(); session["voter_id"]=voter; session["choices"]={}
  session["geo"]={x:(request.form.get(x,"").strip() or d) for x,d in [
   ("county","Demo County"),("constituency","Demo Constituency"),("ward","Demo Ward"),
@@ -93,11 +95,12 @@ def cast():
  choices=session.get("choices",{})
  if len(choices)!=6:return redirect(url_for("review"))
  c=con(); voter=session["voter_id"]; geo=session["geo"]
- existing=c.execute("SELECT 1 FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
+ existing=c.execute("SELECT poll_station, stream FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
  if existing:
+  station=existing["poll_station"] or "the recorded polling station"
   c.close()
   session.clear()
-  return render_template("verify.html",error=f"Voter ID {voter} has already completed the six-ballot simulation and cannot vote again.")
+  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
  for e in cfg():
   c.execute("INSERT INTO demo_votes(voter_session,election,candidate,county,constituency,ward,poll_station,stream) VALUES(?,?,?,?,?,?,?,?)",
    (voter,e["key"],choices[e["key"]],geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))

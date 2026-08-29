@@ -100,3 +100,11 @@ V9 RANKED TALLIES
 - Candidates with equal vote totals share the same rank.
 - Candidate slot number is used only to keep tied candidates in a stable order.
 - Zero-vote candidates remain visible and are ranked after candidates with votes.
+
+
+V10 DUPLICATE-VOTER POLLING-STATION MESSAGE
+- When a previously used voter ID is entered, the warning now identifies the
+  polling station recorded with that simulated ballot.
+- Example:
+  "Voter ID 10703460 has already voted at RATTA PRIMARY SCHOOL polling station
+  and cannot vote again."
