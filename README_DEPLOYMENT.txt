@@ -222,3 +222,30 @@ Important:
 - Do not use a Google Drive page/share URL unless it resolves directly to the image.
 - If REPORT_HEADER_IMAGE_URL is empty, no header image is printed.
 TRAINING / SIMULATION ONLY.
+
+
+V20 — BUNDLED REPORT HEADER IMAGE
+The supplied ODM Vote Count and Transmission header image is now included inside:
+static/odm_report_header.png
+
+Recommended Render environment variable:
+REPORT_HEADER_IMAGE_URL=/static/odm_report_header.png
+
+The application also defaults automatically to that local path if the variable is omitted.
+
+Advantages:
+- No dependency on GitHub raw URLs.
+- Works even when the GitHub repository is private.
+- Header is served directly by the Render web application.
+- Changing the environment variable later can still point to a different public image if desired.
+
+The header appears on all printed reports supported by V19:
+- Voting Stream Opening / Closing Report
+- President tally
+- Governor tally
+- Senator tally
+- Woman Representative tally
+- MNA tally
+- MCA tally
+
+TRAINING / SIMULATION ONLY.

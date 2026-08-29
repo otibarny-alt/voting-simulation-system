@@ -29,7 +29,7 @@ COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
 AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
-REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "").strip()
+REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
 
 def norm_key(v):
  return "_".join((v or "").strip().lower().replace("-", " ").split())
