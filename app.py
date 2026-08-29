@@ -1,4 +1,4 @@
-import os, sqlite3
+import os, sqlite3, csv
 from flask import Flask, render_template, request, redirect, url_for, session
 
 app=Flask(__name__)
@@ -17,6 +17,33 @@ def con():
 
 def cfg():
  return [{"key":k,"title":t,"count":n,"candidates":[{"slot":i,"name":f"Candidate {i}"} for i in range(1,n+1)]} for k,t,n in ELECTIONS]
+
+
+COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
+
+def hierarchy_rows():
+ rows=[]
+ try:
+  with open(COUNTY_MAIN, encoding="utf-8", errors="replace", newline="") as f:
+   rows=list(csv.DictReader(f))
+ except Exception:
+  pass
+ return rows
+
+def hierarchy_payload():
+ rows=hierarchy_rows()
+ return {
+  "counties":[{"name":r["name"],"label":r.get("label") or r["name"]} for r in rows if r.get("list_name")=="county"],
+  "constituencies":[{"name":r["name"],"label":r.get("label") or r["name"],"county_key":r.get("county_key","")} for r in rows if r.get("list_name")=="constituency"],
+  "wards":[{"name":r["name"],"label":r.get("label") or r["name"],"constituency_key":r.get("constituency_key","")} for r in rows if r.get("list_name")=="ward"],
+  "poll_stations":[{"name":r["name"],"label":r.get("label") or r["name"],"ward_key":r.get("ward_key",""),"poll_station_code":r.get("poll_station_code","")} for r in rows if r.get("list_name")=="poll_station"],
+  "streams":[{"name":r["name"],"label":r.get("label") or r["name"],"poll_station_key":r.get("poll_station_key","")} for r in rows if r.get("list_name")=="poll_station_stream"]
+ }
+
+@app.get("/api/hierarchy")
+def api_hierarchy():
+ from flask import jsonify
+ return jsonify(hierarchy_payload())
 
 @app.get("/")
 def home(): return render_template("verify.html")

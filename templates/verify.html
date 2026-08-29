@@ -1,1 +1,42 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training E-Ballot Prototype</b><a href=/tallies>Simulated Tallies</a></header><div class=demo>TRAINING / SIMULATION ONLY — not official voting.</div><div class=wrap><div class=card><h2>Demo voter verification</h2><p class=muted>This stands in for the production verification step.</p>{% if error %}<p>{{error}}</p>{% endif %}<form method=post action=/start><input name=voter_id placeholder='Demo voter ID' required><div class=grid style='margin-top:10px'><input name=county placeholder=County><input name=constituency placeholder=Constituency><input name=ward placeholder=Ward><input name=poll_station placeholder='Polling station'><input name=stream placeholder=Stream></div><div class=actions><span></span><button>Start six-ballot demo</button></div></form></div></div>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'>
+<header><b>Training E-Ballot Prototype</b><a href=/tallies>Simulated Tallies</a></header>
+<div class=demo>TRAINING / SIMULATION ONLY — not official voting.</div>
+<div class=wrap><div class=card><h2>Demo voter verification</h2><p class=muted>This stands in for the production verification step.</p>
+{% if error %}<p>{{error}}</p>{% endif %}
+<form method=post action=/start>
+<input name=voter_id placeholder='Demo voter ID' required>
+<div class=grid style='margin-top:10px'>
+<select id=county required><option value="">Select County</option></select>
+<select id=constituency required disabled><option value="">Select Constituency</option></select>
+<select id=ward required disabled><option value="">Select Ward</option></select>
+<select id=poll_station required disabled><option value="">Select Polling Station</option></select>
+<select id=stream required disabled><option value="">Select Stream</option></select>
+</div>
+<input type=hidden name=county id=county_label><input type=hidden name=constituency id=constituency_label>
+<input type=hidden name=ward id=ward_label><input type=hidden name=poll_station id=poll_station_label>
+<input type=hidden name=stream id=stream_label>
+<p id=hierarchy_status class=muted>Loading electoral units from county_main.csv…</p>
+<div class=actions><span></span><button id=start_btn disabled>Start six-ballot demo</button></div></form></div></div>
+<script>
+const els={county:document.getElementById("county"),constituency:document.getElementById("constituency"),ward:document.getElementById("ward"),poll_station:document.getElementById("poll_station"),stream:document.getElementById("stream")};
+let H=null;
+const norm=v=>(v||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+function fill(el,rows,label){
+ el.innerHTML=`<option value="">Select ${label}</option>`;
+ rows.forEach(r=>{const o=document.createElement("option");o.value=r.name;o.textContent=r.label;o.dataset.label=r.label;el.appendChild(o)});
+ el.disabled=false;
+}
+function clearAfter(names){names.forEach(n=>{els[n].innerHTML=`<option value="">Select ${n==="poll_station"?"Polling Station":n[0].toUpperCase()+n.slice(1)}</option>`;els[n].disabled=true})}
+function syncHidden(){
+ ["county","constituency","ward","poll_station","stream"].forEach(n=>{
+  const o=els[n].selectedOptions[0]; document.getElementById(n+"_label").value=o&&o.value?(o.dataset.label||o.textContent):"";
+ });
+ document.getElementById("start_btn").disabled=!Object.values(els).every(x=>x.value);
+}
+els.county.addEventListener("change",()=>{clearAfter(["constituency","ward","poll_station","stream"]);fill(els.constituency,H.constituencies.filter(r=>norm(r.county_key)===norm(els.county.value)),"Constituency");syncHidden()});
+els.constituency.addEventListener("change",()=>{clearAfter(["ward","poll_station","stream"]);fill(els.ward,H.wards.filter(r=>norm(r.constituency_key)===norm(els.constituency.value)),"Ward");syncHidden()});
+els.ward.addEventListener("change",()=>{clearAfter(["poll_station","stream"]);fill(els.poll_station,H.poll_stations.filter(r=>norm(r.ward_key)===norm(els.ward.value)),"Polling Station");syncHidden()});
+els.poll_station.addEventListener("change",()=>{clearAfter(["stream"]);fill(els.stream,H.streams.filter(r=>norm(r.poll_station_key)===norm(els.poll_station.value)),"Stream");syncHidden()});
+els.stream.addEventListener("change",syncHidden);
+fetch("/api/hierarchy").then(r=>r.json()).then(h=>{H=h;fill(els.county,H.counties,"County");document.getElementById("hierarchy_status").textContent=`Loaded ${H.counties.length} counties from county_main.csv.`;syncHidden()}).catch(()=>{document.getElementById("hierarchy_status").textContent="Could not load county_main.csv.";});
+</script>

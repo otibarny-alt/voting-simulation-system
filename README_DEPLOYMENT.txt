@@ -16,3 +16,14 @@ Render:
 Build: pip install -r requirements.txt
 Start: gunicorn app:app
 Set FLASK_SECRET_KEY to a random secret.
+
+
+V2 CASCADING ELECTORAL UNITS
+- Bundles county_main.csv.
+- Replaces manual County, Constituency, Ward, Polling Station and Stream typing
+  with cascading dropdowns.
+- Hierarchy:
+  County -> Constituency -> Ward -> Polling Station -> Stream.
+- Uses list_name and parent keys from county_main.csv.
+- Includes all 47 counties and the polling-station-stream rows in that file.
+- No new Render environment variable is required.
