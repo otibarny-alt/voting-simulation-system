@@ -76,7 +76,7 @@ def ballot(step):
 @app.get("/review")
 def review():
  if "voter_id" not in session:return redirect(url_for("home"))
- return render_template("review.html",elections=cfg(),choices=session.get("choices",{}),geo=session.get("geo",{}))
+ return render_template("review.html",elections=cfg(),choices=session.get("choices",{}),geo=session.get("geo",{}),voter_id=session.get("voter_id",""))
 
 @app.post("/cast")
 def cast():

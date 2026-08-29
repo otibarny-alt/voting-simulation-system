@@ -29,3 +29,17 @@
   .candidate{transition:none}
   .candidate:has(input:checked){transform:none}
 }
+
+.voter-confirm{
+  margin:14px 0 22px;
+  padding:16px 18px;
+  border:2px solid #111;
+  border-radius:12px;
+  background:#fff8d8;
+}
+.voter-id{
+  font-size:30px;
+  font-weight:800;
+  letter-spacing:1px;
+  margin:4px 0 6px;
+}

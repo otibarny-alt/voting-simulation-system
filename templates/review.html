@@ -1,1 +1,7 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Review six simulated choices</b></header><div class=demo>TRAINING / SIMULATION ONLY.</div><div class=wrap><div class=card><h2>Review</h2><table><tr><th>Election</th><th>Choice</th><th>Change</th></tr>{% for e in elections %}<tr><td>{{e.title}}</td><td>Candidate {{choices.get(e.key,'—')}}</td><td><a href='/ballot/{{loop.index0}}'>Edit</a></td></tr>{% endfor %}</table><form method=post action=/cast><div class=actions><a class='btn secondary' href=/ballot/5>Back</a><button>Save simulated ballot set</button></div></form></div></div>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Review six simulated choices</b></header><div class=demo>TRAINING / SIMULATION ONLY.</div><div class=wrap><div class=card><h2>Review</h2>
+<div class="voter-confirm">
+  <div class="muted">Voter ID making these selections</div>
+  <div class="voter-id">{{ voter_id }}</div>
+  <div class="muted">Please confirm this is your ID before saving the simulated ballot.</div>
+</div>
+<table><tr><th>Election</th><th>Choice</th><th>Change</th></tr>{% for e in elections %}<tr><td>{{e.title}}</td><td>Candidate {{choices.get(e.key,'—')}}</td><td><a href='/ballot/{{loop.index0}}'>Edit</a></td></tr>{% endfor %}</table><form method=post action=/cast><div class=actions><a class='btn secondary' href=/ballot/5>Back</a><button>Save simulated ballot set</button></div></form></div></div>

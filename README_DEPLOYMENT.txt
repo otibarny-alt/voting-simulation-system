@@ -36,3 +36,9 @@ V3 SELECTION FEEDBACK
 - A visible "✓ SELECTED" badge appears on the chosen candidate.
 - Text confirmation announces the selected candidate.
 - Only one candidate can remain selected because the ballot uses radio buttons.
+
+
+V4 REVIEW VOTER ID
+- The review screen now prominently displays the demo voter's ID number.
+- The voter is asked to confirm the ID before saving the simulated ballot set.
+- The ID is read from the current session and is not manually re-entered on review.
