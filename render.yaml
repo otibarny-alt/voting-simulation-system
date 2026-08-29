@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: training-e-ballot-prototype
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
