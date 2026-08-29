@@ -165,3 +165,12 @@ V16 — PRE-OPENING ZERO-VOTE + OPEN/CLOSE REPORT
   VOTING_CLOSE_TIME=HH:MM
   No legal/official hours are assumed by the prototype; enter the hours required for your training exercise.
 TRAINING / SIMULATION ONLY.
+
+
+V17 — CASCADING STREAM CONTROL FROM county_main.csv
+The Pre-Opening / Closing Control page no longer requires manual typing of electoral units.
+It uses the existing /api/hierarchy endpoint backed by county_main.csv:
+County -> Constituency -> Ward -> Polling Station -> Stream.
+Each selection filters the next dropdown and the selected values are submitted to the
+existing zero-precast-vote/open-stream procedure.
+TRAINING / SIMULATION ONLY.

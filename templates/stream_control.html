@@ -4,11 +4,51 @@
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if not row %}
 <p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
-<form method=post action=/stream/open><label>Polling Station</label><input name=poll_station value="{{poll_station}}" required>
-<label>Stream</label><input name=stream value="{{stream}}" required><label>County</label><input name=county>
-<label>Constituency</label><input name=constituency><label>Ward</label><input name=ward>
+<form method=post action=/stream/open id=streamOpenForm>
+<div class=control-grid>
+ <div><label>County</label><select id=sc_county name=county required><option value="">Select County</option></select></div>
+ <div><label>Constituency</label><select id=sc_constituency name=constituency required disabled><option value="">Select Constituency</option></select></div>
+ <div><label>Ward</label><select id=sc_ward name=ward required disabled><option value="">Select Ward</option></select></div>
+ <div><label>Polling Station</label><select id=sc_station name=poll_station required disabled><option value="">Select Polling Station</option></select></div>
+ <div><label>Stream</label><select id=sc_stream name=stream required disabled><option value="">Select Stream</option></select></div>
+</div>
 <p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Scheduled closing: <b>{{close_time or "Not configured"}}</b></p>
 <button>Verify 0 Pre-Cast Votes & Open Stream</button></form>
+<script>
+let H=null;
+const $=id=>document.getElementById(id);
+function fill(sel,rows,placeholder){
+ sel.innerHTML='<option value="">'+placeholder+'</option>';
+ rows.forEach(r=>{const o=document.createElement('option');o.value=r.name;o.textContent=r.label||r.name;sel.appendChild(o)});
+ sel.disabled=false;
+}
+function norm(v){return (v||'').trim().toLowerCase().replaceAll('-','_').replace(/\s+/g,'_')}
+fetch('/api/hierarchy').then(r=>r.json()).then(d=>{
+ H=d; fill($('sc_county'),H.counties,'Select County');
+});
+$('sc_county').onchange=function(){
+ const k=norm(this.value);
+ fill($('sc_constituency'),H.constituencies.filter(x=>norm(x.county_key)==k),'Select Constituency');
+ $('sc_ward').innerHTML='<option value="">Select Ward</option>';$('sc_ward').disabled=true;
+ $('sc_station').innerHTML='<option value="">Select Polling Station</option>';$('sc_station').disabled=true;
+ $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+};
+$('sc_constituency').onchange=function(){
+ const k=norm(this.value);
+ fill($('sc_ward'),H.wards.filter(x=>norm(x.constituency_key)==k),'Select Ward');
+ $('sc_station').innerHTML='<option value="">Select Polling Station</option>';$('sc_station').disabled=true;
+ $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+};
+$('sc_ward').onchange=function(){
+ const k=norm(this.value);
+ fill($('sc_station'),H.poll_stations.filter(x=>norm(x.ward_key)==k),'Select Polling Station');
+ $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+};
+$('sc_station').onchange=function(){
+ const k=norm(this.value);
+ fill($('sc_stream'),H.streams.filter(x=>norm(x.poll_station_key)==k),'Select Stream');
+};
+</script>
 {% else %}
 <p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>
 <p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>

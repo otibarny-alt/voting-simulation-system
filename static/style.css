@@ -142,3 +142,8 @@
 
 .clean-check{font-weight:700;border:2px solid;padding:10px;border-radius:8px}.report-page{max-width:900px;margin:20px auto;padding:20px;background:#fff}.report-page table{width:100%;border-collapse:collapse}.report-page th,.report-page td{border:1px solid #777;padding:6px}.report-page .sig{height:28px}
 @media print{@page{size:A4 portrait;margin:10mm}.no-print,header,.demo{display:none!important}.report-page{margin:0;padding:0;max-width:none}.report-page h1{font-size:18pt}.report-page table{font-size:8pt}.report-page th,.report-page td{padding:3px}.report-page .sig{height:18px}}
+
+.control-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:14px 20px;margin:18px 0}
+.control-grid label{display:block;font-weight:700;margin-bottom:5px}
+.control-grid select{width:100%;padding:10px;border:1px solid #aaa;border-radius:6px;background:white}
+@media(max-width:760px){.control-grid{grid-template-columns:1fr}}
