@@ -171,3 +171,5 @@
  .print-report-header{display:block!important;margin:0 0 7mm!important}
  .print-report-header img{width:100%!important;max-height:38mm!important;object-fit:contain!important}
 }
+
+.terminal-lock-banner{border:2px solid #222;padding:12px;margin:12px 0;border-radius:8px;font-weight:600}

@@ -1,5 +1,6 @@
 import os, sqlite3, csv
 from datetime import datetime, date
+from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session
 
 app=Flask(__name__)
@@ -30,6 +31,23 @@ AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
 REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
+TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
+TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
+
+def terminal_serializer():
+ return URLSafeSerializer(app.secret_key, salt=TERMINAL_LOCK_SALT)
+
+def terminal_lock():
+ raw=request.cookies.get(TERMINAL_LOCK_COOKIE,"")
+ if not raw: return None
+ try:
+  data=terminal_serializer().loads(raw)
+  if isinstance(data,dict) and data.get("poll_station") and data.get("stream"):
+   return data
+ except BadSignature:
+  pass
+ return None
+
 
 def norm_key(v):
  return "_".join((v or "").strip().lower().replace("-", " ").split())
@@ -118,7 +136,12 @@ def open_stream():
  (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes)
  VALUES(?,?,?,?,?,?,?,1)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now))
  c.commit(); c.close()
- return redirect(url_for("stream_control",poll_station=ps,stream=st))
+ resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
+ lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
+            "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,"session_date":today_iso()}
+ resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
+                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ return resp
 
 @app.post("/stream/close")
 def close_stream():
@@ -150,14 +173,15 @@ def start():
  if previous:
   station=previous["poll_station"] or "the recorded polling station"
   return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
- geo={x:(request.form.get(x,"").strip() or d) for x,d in [
-  ("county","Demo County"),("constituency","Demo Constituency"),("ward","Demo Ward"),
-  ("poll_station","Demo Polling Station"),("stream","Stream 1")]}
+ lock=terminal_lock()
+ if not lock or lock.get("session_date")!=today_iso():
+  return render_template("verify.html",error="This voting terminal is not locked to an opened stream. Complete the pre-voting stream opening first.")
+ geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
  ss=stream_session(geo["poll_station"],geo["stream"])
  if not ss:
-  return render_template("verify.html",error="Voting has not been opened for this stream. First verify zero pre-cast votes and open the stream.")
+  return render_template("verify.html",error="The locked voting stream has no valid opening record for today.")
  if ss["closed_at"]:
-  return render_template("verify.html",error="Voting for this stream has already been closed for today.")
+  return render_template("verify.html",error="Voting for this locked stream has already been closed for today.")
  session.clear(); session["voter_id"]=voter; session["choices"]={}; session["geo"]=geo
  return redirect(url_for("ballot",step=0))
 
@@ -268,6 +292,6 @@ def reset():
 
 @app.context_processor
 def inject_report_branding():
- return {"report_header_image_url": REPORT_HEADER_IMAGE_URL}
+ return {"report_header_image_url": REPORT_HEADER_IMAGE_URL, "terminal_lock": terminal_lock()}
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))

@@ -257,3 +257,22 @@ browser tab using target="_blank" and rel="noopener".
 The Voting Stream Control page remains open in the original tab, so after printing or
 reviewing the report the operator can simply close the report tab instead of using Back.
 TRAINING / SIMULATION ONLY.
+
+
+V22 — HARD LOCK VOTING TERMINAL TO PRE-OPENED STREAM
+After the pre-voting zero-vote verification opens a polling-station stream, that browser/device
+is locked to the selected County, Constituency, Ward, Polling Station and Stream for that day.
+
+Security/flow changes:
+- The lock is stored in a signed, HttpOnly browser cookie.
+- Ballot start ignores any manually posted geography and uses only the signed terminal lock.
+- Ballot casting re-checks that the session geography still matches the signed terminal lock.
+- The stream-control page no longer offers a second manual stream-opening form after locking.
+- The voter screen displays the locked Polling Station and Stream.
+- The previous "Change voting stream" workflow is no longer available during ballot casting.
+- Closing the stream does not permit further voters in that stream.
+
+This is a per-browser/device training-terminal lock. Clearing browser cookies or using another
+browser/device creates a different terminal context; for a stronger multi-device simulation,
+terminal identity and locks should be stored centrally in a persistent simulation database.
+TRAINING / SIMULATION ONLY.
