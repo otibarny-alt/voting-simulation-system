@@ -173,7 +173,9 @@ def tallies():
 
   # A station's registered total includes every stream assigned to that station.
   for pk,st in station_acc.items():
-   st["registered"]=sum(reg_index.get(sk,0) for sk,parent in stream_to_station.items() if parent==pk)
+   station_streams=[sk for sk,parent in stream_to_station.items() if parent==pk]
+   st["streams_count"]=len(station_streams)
+   st["registered"]=sum(reg_index.get(sk,0) for sk in station_streams)
    st["not_cast"]=max(0,st["registered"]-st["votes_cast"])
 
   station_summary=sorted(station_acc.values(),key=lambda x:x["name"])

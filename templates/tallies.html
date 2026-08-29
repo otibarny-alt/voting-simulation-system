@@ -24,9 +24,9 @@
 {% for x in s.streams %}<tr><td>{{x.name}}</td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
 {% else %}<tr><td colspan=4>No simulated votes yet.</td></tr>{% endfor %}</table>
 <h4>Registered Voters / Votes Cast Per Polling Station</h4>
-<table><tr><th>Polling Station</th><th>Votes Cast</th><th>Registered Voters</th><th>Votes Not Cast</th></tr>
-{% for x in s.stations %}<tr><td>{{x.name}}</td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
-{% else %}<tr><td colspan=4>No simulated votes yet.</td></tr>{% endfor %}</table>
+<table><tr><th>Polling Station</th><th>No. of Streams</th><th>Votes Cast</th><th>Registered Voters</th><th>Votes Not Cast</th></tr>
+{% for x in s.stations %}<tr><td>{{x.name}}</td><td><b>{{x.streams_count}}</b></td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
+{% else %}<tr><td colspan=5>No simulated votes yet.</td></tr>{% endfor %}</table>
 
 
 <div class="agent-certification">

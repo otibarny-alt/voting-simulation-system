@@ -143,3 +143,13 @@ V14 — PRESIDING / RETURNING OFFICER SIGNATURES
 - Returning Officer: Name, Signature, Date/Time.
 - Appears after the candidate-agent certification section.
 TRAINING / SIMULATION ONLY.
+
+
+V15 — POLLING STATION STREAM COUNT
+- The "Registered Voters / Votes Cast Per Polling Station" table now includes
+  "No. of Streams".
+- This count shows how many polling station streams contribute to the
+  Registered Voters total for that polling station.
+- The count is derived from county_main.csv using the same station-to-stream
+  relationship used to calculate registered voters.
+TRAINING / SIMULATION ONLY.
