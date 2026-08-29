@@ -19,11 +19,11 @@
    <div id=setup_panel>
     <h3>Voting room / terminal setup</h3>
     <div class=grid style='margin-top:10px'>
-     <select id=county required><option value="">Select County</option></select>
-     <select id=constituency required disabled><option value="">Select Constituency</option></select>
-     <select id=ward required disabled><option value="">Select Ward</option></select>
-     <select id=poll_station required disabled><option value="">Select Polling Station</option></select>
-     <select id=stream required disabled><option value="">Select Stream</option></select>
+     <select id=county><option value="">Select County</option></select>
+     <select id=constituency disabled><option value="">Select Constituency</option></select>
+     <select id=ward disabled><option value="">Select Ward</option></select>
+     <select id=poll_station disabled><option value="">Select Polling Station</option></select>
+     <select id=stream disabled><option value="">Select Stream</option></select>
     </div>
     <p id=hierarchy_status class=muted>Loading electoral units from county_main.csv…</p>
     <button type=button id=lock_terminal disabled>Use this stream on this computer</button>
@@ -88,6 +88,7 @@ function setHidden(g){
 }
 function showLocked(g){
  setHidden(g);
+ Object.values(els).forEach(el=>el.disabled=true);
  document.getElementById("setup_panel").style.display="none";
  document.getElementById("locked_panel").style.display="block";
  document.getElementById("voter_panel").style.display="block";
@@ -97,6 +98,7 @@ function showLocked(g){
  setTimeout(()=>document.getElementById("voter_id").focus(),50);
 }
 function showSetup(){
+ els.county.disabled=false;
  document.getElementById("locked_panel").style.display="none";
  document.getElementById("voter_panel").style.display="none";
  document.getElementById("setup_panel").style.display="block";
@@ -148,7 +150,13 @@ document.getElementById("change_terminal").addEventListener("click",()=>{
  }
 });
 
-document.getElementById("voter_form").addEventListener("submit",()=>{
+document.getElementById("voter_form").addEventListener("submit",(ev)=>{
+ const voter=document.getElementById("voter_id").value.trim();
+ if(!voter){
+   ev.preventDefault();
+   alert("Enter the voter ID.");
+   return;
+ }
  const saved=localStorage.getItem(STORAGE_KEY);
  if(saved){
   try{ setHidden(JSON.parse(saved)); }catch(e){}

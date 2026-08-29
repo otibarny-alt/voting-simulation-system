@@ -57,3 +57,17 @@ V5 TERMINAL / STREAM LOCK
   it is kept in browser local storage.
 - Clearing browser/site data will clear the terminal assignment.
 - No new Render environment variables are required.
+
+
+V6 SUBSEQUENT VOTER SUBMISSION FIX
+- Fixes the issue where the second/subsequent voter could enter an ID but the
+  Start button appeared not to respond.
+- Cause: hidden terminal setup dropdowns still had HTML 'required' validation.
+  On later voters those dropdowns were empty on page load, so the browser
+  silently blocked form submission even though the saved stream was valid.
+- Terminal setup completeness is now validated only when the stream is first
+  locked.
+- Once a terminal is locked, its setup dropdowns are disabled and the stored
+  electoral-unit values are submitted through hidden fields.
+- Subsequent voters can now enter only their voter ID and continue directly to
+  the six training ballots.
