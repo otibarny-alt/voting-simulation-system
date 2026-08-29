@@ -125,3 +125,13 @@ V12 — A4 PRINT BUTTONS
 - Print CSS requests A4 portrait paper and removes dashboard navigation/buttons from the printed page.
 - The browser controls the actual printer selection; a normal web application cannot silently force a specific connected printer without browser/OS or kiosk-print configuration.
 TRAINING / SIMULATION ONLY.
+
+
+V13 — CANDIDATE AGENT SIGNATURE LINES
+- At the end of every elective-position printout, a Candidate Agents' Certification section is added.
+- One signature row is created for every candidate listed in that tally.
+- Columns: Candidate, Agent Name, Signature, Date / Time.
+- Includes blank Polling Station and Stream confirmation lines.
+- Certification text states that signatories confirm the printout is a true copy of the simulated results for that polling station stream.
+- Designed to print as part of the same A4 tally printout.
+TRAINING / SIMULATION ONLY.

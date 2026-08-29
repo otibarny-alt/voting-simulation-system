@@ -27,6 +27,28 @@
 <table><tr><th>Polling Station</th><th>Votes Cast</th><th>Registered Voters</th><th>Votes Not Cast</th></tr>
 {% for x in s.stations %}<tr><td>{{x.name}}</td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
 {% else %}<tr><td colspan=4>No simulated votes yet.</td></tr>{% endfor %}</table>
+
+
+<div class="agent-certification">
+ <h3>Candidate Agents' Certification — Polling Station Stream</h3>
+ <p class="cert-statement">We, the undersigned candidate agents, confirm that this is a true copy of the simulated results recorded for this polling station stream.</p>
+ <table class="signature-table">
+  <tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>
+  {% for c in s.candidates %}
+  <tr>
+   <td>{{c.name}}</td>
+   <td class="signature-space"></td>
+   <td class="signature-space"></td>
+   <td class="signature-space"></td>
+  </tr>
+  {% endfor %}
+ </table>
+ <div class="stream-cert-details">
+  <div><b>Polling Station:</b> ________________________________</div>
+  <div><b>Stream:</b> ________________________________</div>
+ </div>
+</div>
+
 </div></div>
 {% endfor %}
 <div class=card><form method=post action=/reset-demo><button>Reset all simulated votes</button></form></div>
