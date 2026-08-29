@@ -6,9 +6,10 @@
 <div class=card>
  <h2>{{s.title}}</h2>
  <table>
-  <tr><th>Candidate</th><th>Votes</th></tr>
+  <tr><th>Rank</th><th>Candidate</th><th>Votes</th></tr>
   {% for c in s.candidates %}
   <tr>
+   <td><b>#{{c.rank}}</b></td>
    <td>{{c.name}}</td>
    <td><b>{{c.votes}}</b></td>
   </tr>

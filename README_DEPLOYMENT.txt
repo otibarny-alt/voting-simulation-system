@@ -92,3 +92,11 @@ V8 SHOW ZERO-VOTE CANDIDATES
 - Governor, Senator, Woman Rep, MNA and MCA show all candidates configured in
   the prototype.
 - Vote counts update automatically as simulated ballots are saved.
+
+
+V9 RANKED TALLIES
+- Candidates in every election section are sorted from highest votes to lowest.
+- A Rank column is shown.
+- Candidates with equal vote totals share the same rank.
+- Candidate slot number is used only to keep tied candidates in a stable order.
+- Zero-vote candidates remain visible and are ranked after candidates with votes.

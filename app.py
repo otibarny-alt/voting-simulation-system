@@ -125,6 +125,17 @@ def tallies():
     "name": cand["name"],
     "votes": vote_map.get((e["key"], cand["slot"]), 0)
    })
+  # Highest vote total first. Equal vote totals share the same rank.
+  # Candidate slot is used only as a stable display order within a tie.
+  candidates.sort(key=lambda x: (-x["votes"], x["slot"]))
+  previous_votes=None
+  previous_rank=0
+  for position,cand in enumerate(candidates, start=1):
+   if previous_votes is None or cand["votes"] != previous_votes:
+    previous_rank=position
+   cand["rank"]=previous_rank
+   previous_votes=cand["votes"]
+
   tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates})
 
  return render_template("tallies.html",sections=tally_sections)
