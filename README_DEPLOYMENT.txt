@@ -83,3 +83,12 @@ V7 NO DOUBLE VOTING — TRAINING SIMULATION
   terminals use the same persistent demo database.
 - Resetting all simulated votes from the tally dashboard clears this training
   restriction because the demo vote records are deleted.
+
+
+V8 SHOW ZERO-VOTE CANDIDATES
+- The simulated tally dashboard now lists every configured candidate in every
+  election category, even when that candidate has received 0 votes.
+- President shows Candidate 1 through Candidate 10.
+- Governor, Senator, Woman Rep, MNA and MCA show all candidates configured in
+  the prototype.
+- Vote counts update automatically as simulated ballots are saved.

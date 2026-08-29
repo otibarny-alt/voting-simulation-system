@@ -111,8 +111,23 @@ def complete():
 
 @app.get("/tallies")
 def tallies():
- c=con(); rows=c.execute("SELECT election,candidate,county,constituency,ward,poll_station,stream,COUNT(*) votes FROM demo_votes GROUP BY election,candidate,county,constituency,ward,poll_station,stream ORDER BY election,candidate").fetchall(); c.close()
- return render_template("tallies.html",rows=rows,elections=cfg())
+ c=con()
+ vote_rows=c.execute("SELECT election,candidate,COUNT(*) votes FROM demo_votes GROUP BY election,candidate ORDER BY election,candidate").fetchall()
+ c.close()
+
+ vote_map={(r["election"], int(r["candidate"])): int(r["votes"]) for r in vote_rows}
+ tally_sections=[]
+ for e in cfg():
+  candidates=[]
+  for cand in e["candidates"]:
+   candidates.append({
+    "slot": cand["slot"],
+    "name": cand["name"],
+    "votes": vote_map.get((e["key"], cand["slot"]), 0)
+   })
+  tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates})
+
+ return render_template("tallies.html",sections=tally_sections)
 
 @app.post("/reset-demo")
 def reset():

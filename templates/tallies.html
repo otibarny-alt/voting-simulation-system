@@ -1,1 +1,24 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Simulated Tally Dashboard</b><a href=/>Training ballot</a></header><div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div><div class=wrap>{% for e in elections %}<div class=card><h2>{{e.title}}</h2><table><tr><th>Candidate</th><th>Votes</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th><th>Stream</th></tr>{% for r in rows if r['election']==e.key %}<tr><td>Candidate {{r['candidate']}}</td><td><b>{{r['votes']}}</b></td><td>{{r['county']}}</td><td>{{r['constituency']}}</td><td>{{r['ward']}}</td><td>{{r['poll_station']}}</td><td>{{r['stream']}}</td></tr>{% else %}<tr><td colspan=7>No simulated votes yet.</td></tr>{% endfor %}</table></div>{% endfor %}<div class=card><form method=post action=/reset-demo><button>Reset all simulated votes</button></form></div></div>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'>
+<header><b>Simulated Tally Dashboard</b><a href=/>Training ballot</a></header>
+<div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
+<div class=wrap>
+{% for s in sections %}
+<div class=card>
+ <h2>{{s.title}}</h2>
+ <table>
+  <tr><th>Candidate</th><th>Votes</th></tr>
+  {% for c in s.candidates %}
+  <tr>
+   <td>{{c.name}}</td>
+   <td><b>{{c.votes}}</b></td>
+  </tr>
+  {% endfor %}
+ </table>
+</div>
+{% endfor %}
+<div class=card>
+ <form method=post action=/reset-demo>
+  <button>Reset all simulated votes</button>
+ </form>
+</div>
+</div>
