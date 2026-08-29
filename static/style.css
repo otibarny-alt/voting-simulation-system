@@ -66,3 +66,10 @@
   font-weight:700;
   margin:14px 0;
 }
+
+.participation{margin-top:22px;padding-top:18px;border-top:2px solid #ddd}
+.participation h3{margin-bottom:12px}.participation h4{margin:18px 0 8px}
+.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px}
+.summary-box{border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center;background:#f7f7f7}
+.summary-box span{display:block;font-size:.82rem;margin-bottom:6px}.summary-box strong{font-size:1.45rem}
+@media(max-width:760px){.summary-grid{grid-template-columns:repeat(2,1fr)}}

@@ -108,3 +108,11 @@ V10 DUPLICATE-VOTER POLLING-STATION MESSAGE
 - Example:
   "Voter ID 10703460 has already voted at RATTA PRIMARY SCHOOL polling station
   and cannot vote again."
+
+
+V11 — REGISTERED VOTER SUMMARIES
+Uses bundled agents_login.csv. total_registered_voters is read by poll_station_name (stream).
+At the end of EACH elective-position tally: Total Votes Cast, Registered Voters per stream,
+Registered Voters per polling station, and Votes Not Cast. Detailed stream and station tables
+are also shown. Polling-station registered totals include all streams belonging to the station.
+TRAINING / SIMULATION ONLY.

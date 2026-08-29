@@ -21,6 +21,28 @@ def cfg():
 
 
 COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
+AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
+
+def norm_key(v):
+ return "_".join((v or "").strip().lower().replace("-", " ").split())
+
+def agent_rows():
+ try:
+  with open(AGENTS_LOGIN, encoding="utf-8-sig", errors="replace", newline="") as f:
+   return list(csv.DictReader(f))
+ except Exception:
+  return []
+
+def to_int(v):
+ try: return int(float(str(v or "0").replace(",","").strip()))
+ except Exception: return 0
+
+def registered_voter_index():
+ by_stream={}
+ for r in agent_rows():
+  key=norm_key(r.get("poll_station_name",""))
+  if key: by_stream[key]=to_int(r.get("total_registered_voters",0))
+ return by_stream
 
 def hierarchy_rows():
  rows=[]
@@ -116,30 +138,53 @@ def complete():
 def tallies():
  c=con()
  vote_rows=c.execute("SELECT election,candidate,COUNT(*) votes FROM demo_votes GROUP BY election,candidate ORDER BY election,candidate").fetchall()
+ geo_rows=c.execute("SELECT election,poll_station,stream,COUNT(DISTINCT voter_session) votes_cast FROM demo_votes GROUP BY election,poll_station,stream ORDER BY election,poll_station,stream").fetchall()
  c.close()
 
- vote_map={(r["election"], int(r["candidate"])): int(r["votes"]) for r in vote_rows}
+ vote_map={(r["election"],int(r["candidate"])):int(r["votes"]) for r in vote_rows}
+ reg_index=registered_voter_index()
+ hp=hierarchy_payload()
+ stream_to_station={norm_key(x["name"]):norm_key(x.get("poll_station_key","")) for x in hp["streams"]}
+ station_labels={norm_key(x["name"]):x.get("label") or x["name"] for x in hp["poll_stations"]}
+ stream_labels={norm_key(x["name"]):x.get("label") or x["name"] for x in hp["streams"]}
+
+ geo_by_election={}
+ for r in geo_rows: geo_by_election.setdefault(r["election"],[]).append(r)
+
  tally_sections=[]
  for e in cfg():
-  candidates=[]
-  for cand in e["candidates"]:
-   candidates.append({
-    "slot": cand["slot"],
-    "name": cand["name"],
-    "votes": vote_map.get((e["key"], cand["slot"]), 0)
-   })
-  # Highest vote total first. Equal vote totals share the same rank.
-  # Candidate slot is used only as a stable display order within a tie.
-  candidates.sort(key=lambda x: (-x["votes"], x["slot"]))
-  previous_votes=None
-  previous_rank=0
-  for position,cand in enumerate(candidates, start=1):
-   if previous_votes is None or cand["votes"] != previous_votes:
-    previous_rank=position
-   cand["rank"]=previous_rank
-   previous_votes=cand["votes"]
+  candidates=[{"slot":cand["slot"],"name":cand["name"],"votes":vote_map.get((e["key"],cand["slot"]),0)} for cand in e["candidates"]]
+  candidates.sort(key=lambda x:(-x["votes"],x["slot"]))
+  previous_votes=None; previous_rank=0
+  for position,cand in enumerate(candidates,start=1):
+   if previous_votes is None or cand["votes"]!=previous_votes: previous_rank=position
+   cand["rank"]=previous_rank; previous_votes=cand["votes"]
 
-  tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates})
+  stream_summary=[]; station_acc={}; election_cast=0; stream_registered_total=0
+  for r in geo_by_election.get(e["key"],[]):
+   sk=norm_key(r["stream"]); pk=norm_key(r["poll_station"]) or stream_to_station.get(sk,"")
+   cast=int(r["votes_cast"] or 0); registered=reg_index.get(sk,0)
+   election_cast+=cast; stream_registered_total+=registered
+   stream_summary.append({"name":stream_labels.get(sk,(r["stream"] or "").replace("_"," ").title()),
+                          "votes_cast":cast,"registered":registered,"not_cast":max(0,registered-cast)})
+   st=station_acc.setdefault(pk,{"name":station_labels.get(pk,(r["poll_station"] or "").replace("_"," ").title()),
+                                "votes_cast":0,"registered":0})
+   st["votes_cast"]+=cast
+
+  # A station's registered total includes every stream assigned to that station.
+  for pk,st in station_acc.items():
+   st["registered"]=sum(reg_index.get(sk,0) for sk,parent in stream_to_station.items() if parent==pk)
+   st["not_cast"]=max(0,st["registered"]-st["votes_cast"])
+
+  station_summary=sorted(station_acc.values(),key=lambda x:x["name"])
+  stream_summary.sort(key=lambda x:x["name"])
+  station_registered_total=sum(x["registered"] for x in station_summary)
+
+  tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates,
+   "total_votes_cast":election_cast,"stream_registered_total":stream_registered_total,
+   "station_registered_total":station_registered_total,
+   "total_not_cast":max(0,stream_registered_total-election_cast),
+   "streams":stream_summary,"stations":station_summary})
 
  return render_template("tallies.html",sections=tally_sections)
 
