@@ -1,0 +1,18 @@
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
+<header><b>Voting Stream Control</b><a href="/">Training ballot</a></header><div class=demo>TRAINING / SIMULATION ONLY</div>
+<div class=wrap><div class=card><h2>Pre-Opening / Closing Control</h2>
+{% if error %}<div class=vote-error>{{error}}</div>{% endif %}
+{% if not row %}
+<p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
+<form method=post action=/stream/open><label>Polling Station</label><input name=poll_station value="{{poll_station}}" required>
+<label>Stream</label><input name=stream value="{{stream}}" required><label>County</label><input name=county>
+<label>Constituency</label><input name=constituency><label>Ward</label><input name=ward>
+<p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Scheduled closing: <b>{{close_time or "Not configured"}}</b></p>
+<button>Verify 0 Pre-Cast Votes & Open Stream</button></form>
+{% else %}
+<p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>
+<p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
+<p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
+{% if not row["closed_at"] %}<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>{% endif %}
+<p><a href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening & Closing Report</a></p>
+{% endif %}</div></div>

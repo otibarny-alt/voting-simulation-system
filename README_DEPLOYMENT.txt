@@ -153,3 +153,15 @@ V15 — POLLING STATION STREAM COUNT
 - The count is derived from county_main.csv using the same station-to-stream
   relationship used to calculate registered voters.
 TRAINING / SIMULATION ONLY.
+
+
+V16 — PRE-OPENING ZERO-VOTE + OPEN/CLOSE REPORT
+- Each stream must pass a 0 pre-cast simulated-votes check before simulated voting can start.
+- The actual opening and closing timestamps are recorded on the same-day stream session.
+- A printable A4 report shows the clean-system check, date, scheduled hours, actual timestamps,
+  schedule comparison, candidate-agent signature lines, Presiding Officer and Returning Officer.
+- Set the required hours in Render Environment:
+  VOTING_OPEN_TIME=HH:MM
+  VOTING_CLOSE_TIME=HH:MM
+  No legal/official hours are assumed by the prototype; enter the hours required for your training exercise.
+TRAINING / SIMULATION ONLY.

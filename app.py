@@ -1,4 +1,5 @@
 import os, sqlite3, csv
+from datetime import datetime, date
 from flask import Flask, render_template, request, redirect, url_for, session
 
 app=Flask(__name__)
@@ -14,6 +15,10 @@ def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row
  c.execute('CREATE TABLE IF NOT EXISTS demo_votes(id INTEGER PRIMARY KEY AUTOINCREMENT,voter_session TEXT,election TEXT,candidate INTEGER,county TEXT,constituency TEXT,ward TEXT,poll_station TEXT,stream TEXT)')
  c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_voter ON demo_votes(voter_session)')
+ c.execute('''CREATE TABLE IF NOT EXISTS stream_sessions(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,session_date TEXT NOT NULL,county TEXT,constituency TEXT,ward TEXT,
+ poll_station TEXT,stream TEXT,opened_at TEXT,closed_at TEXT,opening_zero_votes INTEGER DEFAULT 0,
+ UNIQUE(session_date,poll_station,stream))''')
  return c
 
 def cfg():
@@ -22,6 +27,8 @@ def cfg():
 
 COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
 AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
+VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
+VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
 
 def norm_key(v):
  return "_".join((v or "").strip().lower().replace("-", " ").split())
@@ -74,6 +81,60 @@ def previous_vote(voter_id):
  c.close()
  return row
 
+
+def today_iso(): return date.today().isoformat()
+
+def stream_session(poll_station,stream):
+ c=con(); row=c.execute("SELECT * FROM stream_sessions WHERE session_date=? AND poll_station=? AND stream=?",
+ (today_iso(),poll_station,stream)).fetchone(); c.close(); return row
+
+def time_status(ts,expected):
+ if not ts or not expected: return None
+ try: return datetime.fromisoformat(ts).strftime("%H:%M")==expected
+ except Exception: return None
+
+@app.get("/stream-control")
+def stream_control():
+ ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
+ row=stream_session(ps,st) if ps and st else None
+ return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
+ open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME)
+
+@app.post("/stream/open")
+def open_stream():
+ f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
+ c=con()
+ precast=c.execute("SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
+ if precast:
+  c.close()
+  return render_template("stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
+ now=datetime.now().astimezone().isoformat(timespec="seconds")
+ c.execute("""INSERT OR IGNORE INTO stream_sessions
+ (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes)
+ VALUES(?,?,?,?,?,?,?,1)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now))
+ c.commit(); c.close()
+ return redirect(url_for("stream_control",poll_station=ps,stream=st))
+
+@app.post("/stream/close")
+def close_stream():
+ ps=request.form.get("poll_station","").strip(); st=request.form.get("stream","").strip()
+ row=stream_session(ps,st)
+ if row and not row["closed_at"]:
+  c=con(); now=datetime.now().astimezone().isoformat(timespec="seconds")
+  c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=?",(now,row["id"])); c.commit(); c.close()
+ return redirect(url_for("stream_control",poll_station=ps,stream=st))
+
+@app.get("/stream/report")
+def stream_report():
+ ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
+ row=stream_session(ps,st)
+ if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
+ c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
+ return render_template("stream_report.html",row=row,votes=votes,open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),close_ok=time_status(row["closed_at"],VOTING_CLOSE_TIME))
+
 @app.get("/")
 def home(): return render_template("verify.html")
 
@@ -85,10 +146,15 @@ def start():
  if previous:
   station=previous["poll_station"] or "the recorded polling station"
   return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
- session.clear(); session["voter_id"]=voter; session["choices"]={}
- session["geo"]={x:(request.form.get(x,"").strip() or d) for x,d in [
+ geo={x:(request.form.get(x,"").strip() or d) for x,d in [
   ("county","Demo County"),("constituency","Demo Constituency"),("ward","Demo Ward"),
   ("poll_station","Demo Polling Station"),("stream","Stream 1")]}
+ ss=stream_session(geo["poll_station"],geo["stream"])
+ if not ss:
+  return render_template("verify.html",error="Voting has not been opened for this stream. First verify zero pre-cast votes and open the stream.")
+ if ss["closed_at"]:
+  return render_template("verify.html",error="Voting for this stream has already been closed for today.")
+ session.clear(); session["voter_id"]=voter; session["choices"]={}; session["geo"]=geo
  return redirect(url_for("ballot",step=0))
 
 @app.route("/ballot/<int:step>",methods=["GET","POST"])
