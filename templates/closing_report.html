@@ -1,0 +1,14 @@
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
+<div class="report-page closing-report"><div class=no-print><button onclick="window.print()">Print Closing Report</button></div>
+{% if report_header_image_url %}<div class="print-report-header"><img src="{{report_header_image_url}}" alt="Report Header"></div>{% endif %}
+<h1>VOTING STREAM CLOSING REPORT</h1><p class=report-warning><b>TRAINING / SIMULATION ONLY</b></p>
+<table>
+<tr><th>County</th><td>{{row["county"]}}</td><th>Date</th><td>{{row["session_date"]}}</td></tr>
+<tr><th>Constituency</th><td>{{row["constituency"]}}</td><th>Scheduled Closing</th><td>{{close_time or "Not configured"}}</td></tr>
+<tr><th>Ward</th><td>{{row["ward"]}}</td><th>Actual Closing Timestamp</th><td>{{row["closed_at"]}}</td></tr>
+<tr><th>Polling Station</th><td>{{row["poll_station"]}}</td><th>Closing Time Check</th><td>{% if close_ok is sameas true %}ON SCHEDULE{% elif close_ok is sameas false %}DIFFERS FROM CONFIGURED TIME{% else %}NOT CHECKED{% endif %}</td></tr>
+<tr><th>Stream</th><td>{{row["stream"]}}</td><th>Distinct Simulated Voters</th><td>{{total_voters}}</td></tr></table>
+<div class=clean-check><b>STREAM CLOSED</b><br>The figures below are the simulated votes stored for this locked polling-station stream at the time of closing.</div>
+{% for key,data in results.items() %}<div class="result-section"><h2>{{data.label}} Results</h2><table class=result-table><tr><th>Rank</th><th>Candidate</th><th>Votes</th></tr>{% for c in data.candidates %}<tr><td>{{c.rank}}</td><td>{{c.candidate}}</td><td><b>{{c.votes}}</b></td></tr>{% endfor %}<tr><th colspan=2>Total Votes Cast — {{data.label}}</th><th>{{data.votes_cast}}</th></tr></table>
+<h3>{{data.label}} Candidate Agents — Closing Certification</h3><p>We, the undersigned candidate agents, confirm that the figures above are a true reflection of the simulated voting results recorded for this polling-station stream at closing.</p><table class=agent-sign-table><tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>{% for c in data.candidates %}<tr><td>{{c.candidate}}</td><td class=sig></td><td class=sig></td><td class=sig></td></tr>{% endfor %}</table></div>{% endfor %}
+<h3>Election Officials — Closing</h3><p>Presiding Officer: Name __________________ Signature __________________ Date/Time __________________</p><p>Returning Officer: Name __________________ Signature __________________ Date/Time __________________</p></div>

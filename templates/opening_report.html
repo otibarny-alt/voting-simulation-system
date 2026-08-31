@@ -1,0 +1,16 @@
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
+<div class="report-page opening-report"><div class=no-print><button onclick="window.print()">Print Opening Report</button></div>
+{% if report_header_image_url %}<div class="print-report-header"><img src="{{report_header_image_url}}" alt="Report Header"></div>{% endif %}
+<h1>VOTING STREAM OPENING REPORT</h1><p class=report-warning><b>TRAINING / SIMULATION ONLY</b></p>
+<table>
+<tr><th>County</th><td>{{row["county"]}}</td><th>Date</th><td>{{row["session_date"]}}</td></tr>
+<tr><th>Constituency</th><td>{{row["constituency"]}}</td><th>Scheduled Opening</th><td>{{open_time or "Not configured"}}</td></tr>
+<tr><th>Ward</th><td>{{row["ward"]}}</td><th>Actual Opening Timestamp</th><td>{{row["opened_at"]}}</td></tr>
+<tr><th>Polling Station</th><td>{{row["poll_station"]}}</td><th>Opening Time Check</th><td>{% if open_ok is sameas true %}ON SCHEDULE{% elif open_ok is sameas false %}DIFFERS FROM CONFIGURED TIME{% else %}NOT CHECKED{% endif %}</td></tr>
+<tr><th>Stream</th><td>{{row["stream"]}}</td><th>Pre-cast Votes</th><td><b>0 — VERIFIED CLEAN</b></td></tr>
+</table>
+<div class="clean-check"><b>PRE-OPENING SYSTEM VERIFICATION</b><br>The system was checked before voting commenced and confirmed to contain <b>zero pre-cast simulated votes</b> for this polling-station stream. After this verification the terminal was locked to the polling station and stream shown above.</div>
+<h2>Candidate Agents — Opening Certification</h2><p>We, the undersigned candidate agents, confirm that the polling-station stream shown above was clean before voting commenced and that the terminal was locked to this stream.</p>
+{% set positions=[("President",10),("Governor",6),("Senator",6),("Woman Representative",6),("MNA",6),("MCA",6)] %}
+{% for position,count in positions %}<div class=signature-section><h3>{{position}}</h3><table class=agent-sign-table><tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>{% for n in range(1,count+1) %}<tr><td>Candidate {{n}}</td><td class=sig></td><td class=sig></td><td class=sig></td></tr>{% endfor %}</table></div>{% endfor %}
+<h3>Election Officials — Opening</h3><p>Presiding Officer: Name __________________ Signature __________________ Date/Time __________________</p><p>Returning Officer: Name __________________ Signature __________________ Date/Time __________________</p></div>

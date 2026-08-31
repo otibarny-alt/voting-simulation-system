@@ -276,3 +276,11 @@ This is a per-browser/device training-terminal lock. Clearing browser cookies or
 browser/device creates a different terminal context; for a stronger multi-device simulation,
 terminal identity and locks should be stored centrally in a persistent simulation database.
 TRAINING / SIMULATION ONLY.
+
+
+V23 — FORMAL MORNING OPENING / END-OF-DAY CLOSING WORKFLOW
+TRAINING / SIMULATION ONLY.
+
+Morning: select hierarchy, verify 0 pre-cast simulated votes, open and lock the terminal, print a separate Opening Report, and obtain candidate-agent signatures for all six elective positions.
+End of day: close the locked stream, then print a separate Closing Results Report. It displays each configured candidate and the simulated votes recorded for that candidate in President, Governor, Senator, Woman Representative, MNA and MCA, followed by candidate-agent certification signatures.
+Opening and closing reports open in separate tabs.
