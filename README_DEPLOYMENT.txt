@@ -276,3 +276,24 @@ This is a per-browser/device training-terminal lock. Clearing browser cookies or
 browser/device creates a different terminal context; for a stronger multi-device simulation,
 terminal identity and locks should be stored centrally in a persistent simulation database.
 TRAINING / SIMULATION ONLY.
+
+
+V22.1 — CONTROLLED TERMINAL RESET
+Built directly from stable V22.
+
+Adds "Reset Terminal for New Stream" on the Stream Control page.
+
+Reset is allowed only when:
+1. No simulated ballot has yet been cast in the currently locked polling-station stream; OR
+2. The currently locked stream has been formally closed.
+
+Reset is blocked if the stream is still open and any simulated votes already exist.
+
+When reset succeeds:
+- signed terminal-lock cookie is removed
+- current Flask voting session is cleared
+- operator returns to station/stream selection
+- a different County / Constituency / Ward / Polling Station / Stream can be chosen
+
+The working V22 ballot and stream-lock flow is otherwise unchanged.
+TRAINING / SIMULATION ONLY.

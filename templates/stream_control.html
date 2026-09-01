@@ -6,6 +6,14 @@
 Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{terminal_lock.stream}}<br>
 The voting stream cannot be manually changed after pre-voting opening.
 </div>
+{% if terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
+<form method="post" action="/terminal/reset" class="terminal-reset-form"
+      onsubmit="return confirm('Reset this terminal and choose a different polling station/stream?');">
+ <button type="submit" class="reset-terminal-btn">Reset Terminal for New Stream</button>
+</form>
+{% else %}
+<p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes. Close the stream first.</p>
+{% endif %}
 {% endif %}
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if not row and not terminal_lock %}

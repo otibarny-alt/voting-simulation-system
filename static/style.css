@@ -173,3 +173,7 @@
 }
 
 .terminal-lock-banner{border:2px solid #222;padding:12px;margin:12px 0;border-radius:8px;font-weight:600}
+
+.terminal-reset-form{margin:12px 0 18px}
+.reset-terminal-btn{padding:10px 16px;border:1px solid #333;border-radius:7px;cursor:pointer}
+.reset-blocked{margin:10px 0 16px;font-weight:600}

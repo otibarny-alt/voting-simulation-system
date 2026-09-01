@@ -112,6 +112,45 @@ def time_status(ts,expected):
  try: return datetime.fromisoformat(ts).strftime("%H:%M")==expected
  except Exception: return None
 
+
+def locked_stream_vote_count(lock):
+ if not lock:
+  return 0
+ c=con()
+ n=c.execute(
+  "SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",
+  (lock.get("poll_station",""),lock.get("stream",""))
+ ).fetchone()["n"]
+ c.close()
+ return n
+
+@app.post("/terminal/reset")
+def terminal_reset():
+ lock=terminal_lock()
+ if not lock:
+  return redirect(url_for("stream_control"))
+
+ votes=locked_stream_vote_count(lock)
+ row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+
+ can_reset = (votes == 0) or (row and row["closed_at"])
+ if not can_reset:
+  return render_template(
+   "stream_control.html",
+   row=row,
+   poll_station=lock.get("poll_station",""),
+   stream=lock.get("stream",""),
+   open_time=VOTING_OPEN_TIME,
+   close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="Terminal reset blocked: simulated votes already exist in this open stream. Close the stream before changing station."
+  )
+
+ resp=redirect(url_for("stream_control"))
+ resp.delete_cookie(TERMINAL_LOCK_COOKIE)
+ session.clear()
+ return resp
+
 @app.get("/stream-control")
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
@@ -292,6 +331,11 @@ def reset():
 
 @app.context_processor
 def inject_report_branding():
- return {"report_header_image_url": REPORT_HEADER_IMAGE_URL, "terminal_lock": terminal_lock()}
+ lock=terminal_lock()
+ return {
+  "report_header_image_url": REPORT_HEADER_IMAGE_URL,
+  "terminal_lock": lock,
+  "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0
+ }
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))
