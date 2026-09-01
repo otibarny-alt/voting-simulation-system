@@ -115,6 +115,12 @@ def time_status(ts,expected):
 @app.get("/stream-control")
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
+ lock=terminal_lock()
+ # When the terminal is already locked, always resolve the control page from the
+ # signed lock. This prevents blank report URLs after navigating back to /stream-control.
+ if lock and lock.get("session_date")==today_iso():
+  ps=lock.get("poll_station","").strip()
+  st=lock.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
  return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
  open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
@@ -155,6 +161,9 @@ def close_stream():
 @app.get("/stream/opening-report")
 def opening_report():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
+ lock=terminal_lock()
+ if lock and lock.get("session_date")==today_iso():
+  ps=lock.get("poll_station","").strip(); st=lock.get("stream","").strip()
  row=stream_session(ps,st)
  if not row:
   return redirect(url_for("stream_control",poll_station=ps,stream=st))
@@ -166,6 +175,9 @@ def opening_report():
 @app.get("/stream/closing-report")
 def closing_report():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
+ lock=terminal_lock()
+ if lock and lock.get("session_date")==today_iso():
+  ps=lock.get("poll_station","").strip(); st=lock.get("stream","").strip()
  row=stream_session(ps,st)
  if not row:
   return redirect(url_for("stream_control",poll_station=ps,stream=st))
