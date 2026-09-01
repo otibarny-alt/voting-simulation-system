@@ -115,12 +115,6 @@ def time_status(ts,expected):
 @app.get("/stream-control")
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
- lock=terminal_lock()
- # When the terminal is already locked, always resolve the control page from the
- # signed lock. This prevents blank report URLs after navigating back to /stream-control.
- if lock and lock.get("session_date")==today_iso():
-  ps=lock.get("poll_station","").strip()
-  st=lock.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
  return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
  open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
@@ -158,56 +152,15 @@ def close_stream():
   c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=?",(now,row["id"])); c.commit(); c.close()
  return redirect(url_for("stream_control",poll_station=ps,stream=st))
 
-@app.get("/stream/opening-report")
-def opening_report():
+@app.get("/stream/report")
+def stream_report():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
- lock=terminal_lock()
- if lock and lock.get("session_date")==today_iso():
-  ps=lock.get("poll_station","").strip(); st=lock.get("stream","").strip()
  row=stream_session(ps,st)
- if not row:
-  return redirect(url_for("stream_control",poll_station=ps,stream=st))
- return render_template("opening_report.html",row=row,
-  open_time=VOTING_OPEN_TIME,
+ if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
+ c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
+ return render_template("stream_report.html",row=row,votes=votes,open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME))
-
-@app.get("/stream/closing-report")
-def closing_report():
- ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
- lock=terminal_lock()
- if lock and lock.get("session_date")==today_iso():
-  ps=lock.get("poll_station","").strip(); st=lock.get("stream","").strip()
- row=stream_session(ps,st)
- if not row:
-  return redirect(url_for("stream_control",poll_station=ps,stream=st))
- if not row["closed_at"]:
-  return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
-   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="Close the voting stream before printing the closing report.")
- c=con()
- results={}
- total_voters=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
- for key,label,count in ELECTIONS:
-  rows=c.execute("""SELECT candidate,COUNT(*) votes FROM demo_votes WHERE election=? AND poll_station=? AND stream=? GROUP BY candidate""",(key,ps,st)).fetchall()
-  vote_map={r["candidate"]:r["votes"] for r in rows}
-  cand=[]
-  for i in range(1,count+1):
-   name=f"Candidate {i}"
-   cand.append({"candidate":name,"votes":vote_map.get(name,0)})
-  cand.sort(key=lambda x:(-x["votes"], int(x["candidate"].split()[-1])))
-  rank=0; prev=None
-  for idx,item in enumerate(cand,1):
-   if item["votes"]!=prev: rank=idx
-   item["rank"]=rank; prev=item["votes"]
-  results[key]={"label":label,"candidates":cand,"votes_cast":sum(x["votes"] for x in cand)}
- c.close()
- return render_template("closing_report.html",row=row,results=results,total_voters=total_voters,
-  open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-  report_header_image_url=REPORT_HEADER_IMAGE_URL,
-  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),
-  close_ok=time_status(row["closed_at"],VOTING_CLOSE_TIME))
+  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),close_ok=time_status(row["closed_at"],VOTING_CLOSE_TIME))
 
 @app.get("/")
 def home(): return render_template("verify.html")

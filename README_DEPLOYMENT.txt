@@ -276,30 +276,3 @@ This is a per-browser/device training-terminal lock. Clearing browser cookies or
 browser/device creates a different terminal context; for a stronger multi-device simulation,
 terminal identity and locks should be stored centrally in a persistent simulation database.
 TRAINING / SIMULATION ONLY.
-
-
-V23 — FORMAL MORNING OPENING / END-OF-DAY CLOSING WORKFLOW
-TRAINING / SIMULATION ONLY.
-
-Morning: select hierarchy, verify 0 pre-cast simulated votes, open and lock the terminal, print a separate Opening Report, and obtain candidate-agent signatures for all six elective positions.
-End of day: close the locked stream, then print a separate Closing Results Report. It displays each configured candidate and the simulated votes recorded for that candidate in President, Governor, Senator, Woman Representative, MNA and MCA, followed by candidate-agent certification signatures.
-Opening and closing reports open in separate tabs.
-
-
-V24 — LOCKED STREAM REPORT ROUTING FIX
-Fixes the case where /stream-control is opened without polling_station/stream query parameters
-after the browser already has a signed terminal lock.
-
-Previously:
-- the terminal-lock banner showed the correct station/stream,
-- but the page's row object was empty,
-- so Polling Station, Stream and Opened appeared blank,
-- and report links were generated with blank parameters,
-- causing a new report tab to redirect back to the stream-control page.
-
-Now:
-- /stream-control resolves the active row directly from the signed terminal lock;
-- opening-report and closing-report also fall back to the signed terminal lock;
-- report links therefore open the actual report in the new tab;
-- the locked station/stream and opening timestamp display correctly.
-TRAINING / SIMULATION ONLY.

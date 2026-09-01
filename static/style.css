@@ -173,4 +173,3 @@
 }
 
 .terminal-lock-banner{border:2px solid #222;padding:12px;margin:12px 0;border-radius:8px;font-weight:600}
-\n.report-actions{margin-top:18px;padding-top:10px;border-top:1px solid #bbb}.report-link{font-weight:700}.result-section{margin-top:18px}.result-table{width:100%;border-collapse:collapse}.result-table th,.result-table td{border:1px solid #777;padding:5px}.report-warning{text-align:center}@media print{.opening-report .signature-section{page-break-inside:avoid}.closing-report .result-section{page-break-before:always}.closing-report .result-section:first-of-type{page-break-before:auto}.closing-report .result-table,.closing-report .agent-sign-table{font-size:8pt}}\n

@@ -55,12 +55,10 @@ $('sc_station').onchange=function(){
  fill($('sc_stream'),H.streams.filter(x=>norm(x.poll_station_key)==k),'Select Stream');
 };
 </script>
-{% elif row %}
+{% else %}
 <p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>
-<p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p><p><b>Step 1:</b> Print the Morning Opening Report and have the candidate agents sign it.<br><b>Step 2:</b> Continue with voting on this terminal. The polling station and stream remain locked.<br><b>Step 3:</b> At the end of the day, close the stream. Then print the Closing Results Report showing every candidate's recorded votes for all six elective positions.</p>
+<p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
 {% if not row["closed_at"] %}<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>{% endif %}
-<div class="report-actions"><p><a class="report-link" target="_blank" rel="noopener" href="/stream/opening-report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">Print Morning Opening Report</a> <small>(opens in a new tab)</small></p>{% if row["closed_at"] %}<p><a class="report-link" target="_blank" rel="noopener" href="/stream/closing-report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">Print End-of-Day Closing Results Report</a> <small>(opens in a new tab)</small></p>{% else %}<p><b>Closing results report:</b> available only after this stream is closed.</p>{% endif %}</div>
-{% else %}
-<div class="vote-error">The terminal lock exists, but today's opening record could not be found. Do not proceed with simulated voting until the stream is opened again for today.</div>
+<p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening & Closing Report</a> <small>(opens in a new tab)</small></p>
 {% endif %}</div></div>
