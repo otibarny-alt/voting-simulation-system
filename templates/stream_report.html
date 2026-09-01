@@ -9,10 +9,10 @@
 <tr><th>Pre-cast votes at opening</th><td>0 — VERIFIED CLEAN</td></tr>
 <tr><th>Scheduled opening</th><td>{{open_time or "Not configured"}}</td></tr><tr><th>Actual opening timestamp</th><td>{{row["opened_at"]}}</td></tr>
 <tr><th>Opening check</th><td>{% if open_ok is sameas true %}ON SCHEDULE{% elif open_ok is sameas false %}DIFFERS FROM CONFIGURED TIME{% else %}SCHEDULE NOT CONFIGURED{% endif %}</td></tr>
-<tr><th>Opening Station GPS Latitude</th><td id="opening-gps-lat">Capturing…</td></tr>
-<tr><th>Opening Station GPS Longitude</th><td id="opening-gps-lon">Capturing…</td></tr>
-<tr><th>GPS Accuracy</th><td id="opening-gps-accuracy">Capturing…</td></tr>
-<tr><th>GPS Capture Status</th><td id="opening-gps-status">Requesting current device location…</td></tr>
+<tr><th>Opening Station GPS Latitude</th><td id="opening-gps-lat">{{ "%.7f"|format(row["opening_lat"]) if row["opening_lat"] is not none else "Not captured at opening" }}</td></tr>
+<tr><th>Opening Station GPS Longitude</th><td id="opening-gps-lon">{{ "%.7f"|format(row["opening_lon"]) if row["opening_lon"] is not none else "Not captured at opening" }}</td></tr>
+<tr><th>GPS Accuracy</th><td id="opening-gps-accuracy">{{ (row["opening_accuracy"]|round(1)|string) + " metres" if row["opening_accuracy"] is not none else "Not available" }}</td></tr>
+<tr><th>GPS Capture Status</th><td id="opening-gps-status">{{ "Captured and stored when stream opened" if row["opening_lat"] is not none and row["opening_lon"] is not none else "Opening GPS was not stored" }}</td></tr>
 </table>
 <h2>Opening Certification — Candidate Agents</h2>
 <p>We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.</p>
@@ -38,3 +38,25 @@
 <p>Returning Officer: Name __________________ Signature __________________ Date/Time __________________</p>
 
 </div>
+<script>
+(function(){
+ const lat=document.getElementById('opening-gps-lat');
+ const lon=document.getElementById('opening-gps-lon');
+ const acc=document.getElementById('opening-gps-accuracy');
+ const status=document.getElementById('opening-gps-status');
+ if(!lat || lat.textContent.indexOf('Not captured')===-1) return;
+ if(!navigator.geolocation){ status.textContent='Opening GPS not stored; browser GPS unavailable'; return; }
+ navigator.geolocation.getCurrentPosition(
+  p=>{
+   lat.textContent=p.coords.latitude.toFixed(7);
+   lon.textContent=p.coords.longitude.toFixed(7);
+   acc.textContent=Math.round(p.coords.accuracy)+' metres';
+   status.textContent='Current device GPS shown as fallback; reopen stream to permanently store opening GPS';
+  },
+  e=>{
+   status.textContent=(e.code===1?'Location permission denied':'Opening GPS not stored and current GPS unavailable');
+  },
+  {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+ );
+})();
+</script>

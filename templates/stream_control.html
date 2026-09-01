@@ -19,6 +19,10 @@ The voting stream cannot be manually changed after pre-voting opening.
 {% if not row and not terminal_lock %}
 <p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
 <form method=post action=/stream/open id=streamOpenForm>
+<input type="hidden" name="opening_lat" id="opening_lat">
+<input type="hidden" name="opening_lon" id="opening_lon">
+<input type="hidden" name="opening_accuracy" id="opening_accuracy">
+<div id="opening_gps_status" class="gps-open-status">GPS not yet captured.</div>
 <div class=control-grid>
  <div><label>County</label><select id=sc_county name=county required><option value="">Select County</option></select></div>
  <div><label>Constituency</label><select id=sc_constituency name=constituency required disabled><option value="">Select Constituency</option></select></div>
@@ -27,7 +31,7 @@ The voting stream cannot be manually changed after pre-voting opening.
  <div><label>Stream</label><select id=sc_stream name=stream required disabled><option value="">Select Stream</option></select></div>
 </div>
 <p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Scheduled closing: <b>{{close_time or "Not configured"}}</b></p>
-<button>Verify 0 Pre-Cast Votes & Open Stream</button></form>
+<button type="button" id="open_stream_btn">Capture GPS, Verify 0 Pre-Cast Votes & Open Stream</button></form>
 <script>
 let H=null;
 const $=id=>document.getElementById(id);
@@ -62,6 +66,39 @@ $('sc_station').onchange=function(){
  const k=norm(this.value);
  fill($('sc_stream'),H.streams.filter(x=>norm(x.poll_station_key)==k),'Select Stream');
 };
+
+const openBtn=document.getElementById('open_stream_btn');
+if(openBtn){
+ openBtn.addEventListener('click',()=>{
+   const form=document.getElementById('streamOpenForm');
+   const status=document.getElementById('opening_gps_status');
+   if(!form.reportValidity()) return;
+   if(!navigator.geolocation){
+     status.textContent='GPS unavailable in this browser. Stream not opened.';
+     return;
+   }
+   openBtn.disabled=true;
+   status.textContent='Capturing current laptop/device GPS…';
+   navigator.geolocation.getCurrentPosition(
+     pos=>{
+       document.getElementById('opening_lat').value=pos.coords.latitude.toFixed(7);
+       document.getElementById('opening_lon').value=pos.coords.longitude.toFixed(7);
+       document.getElementById('opening_accuracy').value=pos.coords.accuracy.toFixed(1);
+       status.textContent='GPS captured. Opening stream…';
+       form.submit();
+     },
+     err=>{
+       let msg='GPS could not be captured.';
+       if(err.code===1) msg='Location permission denied. Allow Location for this site, then try again.';
+       else if(err.code===2) msg='Current GPS position unavailable. Check device location services.';
+       else if(err.code===3) msg='GPS request timed out. Try again.';
+       status.textContent=msg;
+       openBtn.disabled=false;
+     },
+     {enableHighAccuracy:true,timeout:20000,maximumAge:0}
+   );
+ });
+}
 </script>
 {% else %}
 <p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>

@@ -20,7 +20,12 @@ def con():
  c.execute('''CREATE TABLE IF NOT EXISTS stream_sessions(
  id INTEGER PRIMARY KEY AUTOINCREMENT,session_date TEXT NOT NULL,county TEXT,constituency TEXT,ward TEXT,
  poll_station TEXT,stream TEXT,opened_at TEXT,closed_at TEXT,opening_zero_votes INTEGER DEFAULT 0,
+ opening_lat REAL, opening_lon REAL, opening_accuracy REAL,
  UNIQUE(session_date,poll_station,stream))''')
+ cols={r[1] for r in c.execute("PRAGMA table_info(stream_sessions)").fetchall()}
+ if "opening_lat" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_lat REAL")
+ if "opening_lon" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_lon REAL")
+ if "opening_accuracy" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_accuracy REAL")
  return c
 
 def cfg():
@@ -254,9 +259,15 @@ def open_stream():
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
  now=datetime.now().astimezone().isoformat(timespec="seconds")
+ try: opening_lat=float(f.get("opening_lat","")) if f.get("opening_lat","") else None
+ except: opening_lat=None
+ try: opening_lon=float(f.get("opening_lon","")) if f.get("opening_lon","") else None
+ except: opening_lon=None
+ try: opening_accuracy=float(f.get("opening_accuracy","")) if f.get("opening_accuracy","") else None
+ except: opening_accuracy=None
  c.execute("""INSERT OR IGNORE INTO stream_sessions
- (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes)
- VALUES(?,?,?,?,?,?,?,1)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now))
+ (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
+ VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
  c.commit(); c.close()
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),

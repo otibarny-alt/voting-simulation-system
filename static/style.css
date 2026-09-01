@@ -201,3 +201,5 @@ button:disabled{opacity:.55;cursor:not-allowed}
 }
 
 .gps-help{font-size:.9em;margin-bottom:8px}
+
+.gps-open-status{margin:10px 0;padding:9px;border:1px solid #aaa;border-radius:6px;font-weight:600}

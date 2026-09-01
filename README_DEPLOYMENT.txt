@@ -446,3 +446,23 @@ TRAINING / SIMULATION ONLY.
 V22.8 — OPENING STATION GPS
 Morning Opening Report now captures current device GPS: latitude, longitude, accuracy and status.
 Location permission must be allowed. TRAINING / SIMULATION ONLY.
+
+
+V22.9 — PERSISTED OPENING GPS FIX
+The previous opening-report GPS script was not guaranteed to execute because the report template
+did not contain a closing </body> tag. V22.9 changes the workflow so GPS is captured BEFORE the
+stream is opened and stored with the stream-opening record.
+
+New opening workflow:
+1. Select County / Constituency / Ward / Polling Station / Stream.
+2. Click "Capture GPS, Verify 0 Pre-Cast Votes & Open Stream".
+3. Browser asks for Location permission.
+4. Stream opens only after a current GPS fix is obtained.
+5. Latitude, longitude and browser-reported accuracy are stored in stream_sessions.
+6. The morning opening report reads the stored opening GPS from the database, so opening a new
+   report tab does not need to obtain GPS again.
+
+Existing stream records opened before V22.9 will not contain stored opening GPS. For those records,
+the report attempts a browser GPS fallback and labels it clearly as a current-device fallback.
+
+TRAINING / SIMULATION ONLY.
