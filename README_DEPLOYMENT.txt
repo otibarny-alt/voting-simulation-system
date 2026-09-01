@@ -432,3 +432,13 @@ Changes:
 
 On Render/HTTPS, browser geolocation should work when Location permission is granted.
 TRAINING / SIMULATION ONLY.
+
+
+V22.7 — MORNING OPENING CERTIFICATION ONLY
+- Removed Closing Certification — Candidate Agents from the morning Opening Report only.
+- Removed Closing — Election Officials from the morning Opening Report.
+- Opening Certification — Candidate Agents remains.
+- Opening — Election Officials remains.
+- Closing candidate-agent certification remains in the final tally reports.
+- V22.6 date/time/GPS tally-report changes are retained.
+TRAINING / SIMULATION ONLY.

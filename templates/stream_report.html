@@ -33,24 +33,4 @@
 <p>Presiding Officer: Name __________________ Signature __________________ Date/Time __________________</p>
 <p>Returning Officer: Name __________________ Signature __________________ Date/Time __________________</p>
 
-<div class="closing-signatures">
-<h2>Closing Certification — Candidate Agents</h2>
-<p>We, the undersigned agents, acknowledge the closing of simulated voting for this polling-station stream and the results recorded at the close of voting.</p>
-
-{% for position,count in positions %}
-<div class="signature-section">
-<h3>{{position}}</h3>
-<table class="agent-sign-table">
-<tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>
-{% for n in range(1,count+1) %}
-<tr><td>Candidate {{n}}</td><td class=sig></td><td class=sig></td><td class=sig></td></tr>
-{% endfor %}
-</table>
-</div>
-{% endfor %}
-
-<h3>Closing — Election Officials</h3>
-<p>Presiding Officer: Name __________________ Signature __________________ Date/Time __________________</p>
-<p>Returning Officer: Name __________________ Signature __________________ Date/Time __________________</p>
-</div>
 </div>
