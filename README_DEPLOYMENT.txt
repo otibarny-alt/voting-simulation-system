@@ -367,3 +367,24 @@ If they do not match, or no membership polling station is available:
 The server re-checks the station-match flag at /membership/confirm so this is not only a browser/UI restriction.
 
 TRAINING / SIMULATION ONLY.
+
+
+V22.4 — TALLY PRINT DATE/TIME/GPS
+Built from V22.3.
+
+Each printed simulated tally report now records:
+- Report date
+- Report time (Africa/Nairobi / Kenya time)
+- GPS latitude
+- GPS longitude
+- Browser-reported GPS accuracy
+- GPS capture status
+
+The timestamp and GPS are captured when the operator clicks the individual Print button
+for President, Governor, Senator, Woman Rep, MNA or MCA.
+
+GPS uses the browser Geolocation API and therefore requires the user/device to allow Location
+permission for the Render site. If permission is denied or the device/browser cannot obtain
+a position, the report clearly prints that GPS was not captured rather than inventing a location.
+
+TRAINING / SIMULATION ONLY.

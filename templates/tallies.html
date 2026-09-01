@@ -11,6 +11,17 @@
  <h2>{{s.title}}</h2>
  <button type="button" class="print-tally no-print" onclick="printTally('tally-{{s.key}}','{{s.title|e}}')">Print {{s.title}}</button>
 </div>
+<div class="report-generation-meta">
+ <h4>Report Generation Details</h4>
+ <div class="report-meta-grid">
+  <div><b>Date:</b> <span class="report-date">—</span></div>
+  <div><b>Time:</b> <span class="report-time">—</span></div>
+  <div><b>GPS Latitude:</b> <span class="report-lat">Not captured</span></div>
+  <div><b>GPS Longitude:</b> <span class="report-lon">Not captured</span></div>
+  <div><b>GPS Accuracy:</b> <span class="report-accuracy">Not available</span></div>
+  <div><b>Location Status:</b> <span class="report-location-status">Waiting for print</span></div>
+ </div>
+</div>
 <table><tr><th>Rank</th><th>Candidate</th><th>Votes</th></tr>
 {% for c in s.candidates %}<tr><td><b>#{{c.rank}}</b></td><td>{{c.name}}</td><td><b>{{c.votes}}</b></td></tr>{% endfor %}
 </table>
@@ -73,14 +84,80 @@
 <div class=card><form method=post action=/reset-demo><button>Reset all simulated votes</button></form></div>
 </div>
 <script>
-function printTally(sectionId, title){
+function formatReportDateTime(){
+  const now=new Date();
+  const date=now.toLocaleDateString('en-KE',{
+    year:'numeric',month:'2-digit',day:'2-digit',
+    timeZone:'Africa/Nairobi'
+  });
+  const time=now.toLocaleTimeString('en-KE',{
+    hour:'2-digit',minute:'2-digit',second:'2-digit',
+    hour12:false,timeZone:'Africa/Nairobi'
+  });
+  return {date,time};
+}
+
+function setMeta(section, data){
+  section.querySelector('.report-date').textContent=data.date||'—';
+  section.querySelector('.report-time').textContent=data.time||'—';
+  section.querySelector('.report-lat').textContent=data.lat||'Not captured';
+  section.querySelector('.report-lon').textContent=data.lon||'Not captured';
+  section.querySelector('.report-accuracy').textContent=data.accuracy||'Not available';
+  section.querySelector('.report-location-status').textContent=data.status||'Not captured';
+}
+
+function getCurrentGPS(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){
+      resolve({status:'GPS unavailable in this browser'});
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos=>resolve({
+        lat:pos.coords.latitude.toFixed(6),
+        lon:pos.coords.longitude.toFixed(6),
+        accuracy:Math.round(pos.coords.accuracy)+' metres',
+        status:'Captured at report generation'
+      }),
+      err=>{
+        let msg='GPS permission denied or unavailable';
+        if(err && err.code===1) msg='GPS permission denied';
+        else if(err && err.code===2) msg='GPS position unavailable';
+        else if(err && err.code===3) msg='GPS request timed out';
+        resolve({status:msg});
+      },
+      {enableHighAccuracy:true,timeout:12000,maximumAge:0}
+    );
+  });
+}
+
+async function printTally(sectionId, title){
   const section=document.getElementById(sectionId);
   if(!section) return;
+
+  const dt=formatReportDateTime();
+  setMeta(section,{
+    date:dt.date,
+    time:dt.time,
+    status:'Requesting GPS location…'
+  });
+
+  const gps=await getCurrentGPS();
+  setMeta(section,{
+    date:dt.date,
+    time:dt.time,
+    lat:gps.lat,
+    lon:gps.lon,
+    accuracy:gps.accuracy,
+    status:gps.status
+  });
+
   document.body.classList.add('printing-one');
   document.querySelectorAll('.tally-section').forEach(el=>el.classList.remove('print-target'));
   section.classList.add('print-target');
   document.title=title+' - Simulated Tally';
   window.print();
+
   setTimeout(()=>{
     document.body.classList.remove('printing-one');
     section.classList.remove('print-target');

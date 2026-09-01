@@ -189,3 +189,13 @@
 .station-match{border:2px solid #198754;background:#eefaf2;padding:12px;border-radius:8px;font-weight:700;margin:16px 0}
 .station-mismatch{border:2px solid #b42318;background:#fff1f0;padding:12px;border-radius:8px;font-weight:700;margin:16px 0}
 button:disabled{opacity:.55;cursor:not-allowed}
+
+.report-generation-meta{margin:10px 0 16px;padding:10px;border:1px solid #aaa;border-radius:8px}
+.report-generation-meta h4{margin:0 0 8px}
+.report-meta-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:6px 18px}
+@media(max-width:760px){.report-meta-grid{grid-template-columns:1fr}}
+@media print{
+ .report-generation-meta{display:block!important;margin:4mm 0 5mm!important;padding:3mm!important;border:1px solid #777!important}
+ .report-generation-meta h4{font-size:9pt!important;margin:0 0 2mm!important}
+ .report-meta-grid{grid-template-columns:1fr 1fr!important;gap:1.5mm 8mm!important;font-size:8pt!important}
+}
