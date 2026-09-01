@@ -9,6 +9,10 @@
 <tr><th>Pre-cast votes at opening</th><td>0 — VERIFIED CLEAN</td></tr>
 <tr><th>Scheduled opening</th><td>{{open_time or "Not configured"}}</td></tr><tr><th>Actual opening timestamp</th><td>{{row["opened_at"]}}</td></tr>
 <tr><th>Opening check</th><td>{% if open_ok is sameas true %}ON SCHEDULE{% elif open_ok is sameas false %}DIFFERS FROM CONFIGURED TIME{% else %}SCHEDULE NOT CONFIGURED{% endif %}</td></tr>
+<tr><th>Opening Station GPS Latitude</th><td id="opening-gps-lat">Capturing…</td></tr>
+<tr><th>Opening Station GPS Longitude</th><td id="opening-gps-lon">Capturing…</td></tr>
+<tr><th>GPS Accuracy</th><td id="opening-gps-accuracy">Capturing…</td></tr>
+<tr><th>GPS Capture Status</th><td id="opening-gps-status">Requesting current device location…</td></tr>
 </table>
 <h2>Opening Certification — Candidate Agents</h2>
 <p>We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.</p>

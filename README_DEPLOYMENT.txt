@@ -442,3 +442,7 @@ V22.7 — MORNING OPENING CERTIFICATION ONLY
 - Closing candidate-agent certification remains in the final tally reports.
 - V22.6 date/time/GPS tally-report changes are retained.
 TRAINING / SIMULATION ONLY.
+
+V22.8 — OPENING STATION GPS
+Morning Opening Report now captures current device GPS: latitude, longitude, accuracy and status.
+Location permission must be allowed. TRAINING / SIMULATION ONLY.
