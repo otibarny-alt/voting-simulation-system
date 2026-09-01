@@ -280,9 +280,10 @@ def stream_report():
  row=stream_session(ps,st)
  if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
  c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
- return render_template("stream_report.html",row=row,votes=votes,open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+ return render_template("stream_report.html",row=row,
+  open_time=VOTING_OPEN_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),close_ok=time_status(row["closed_at"],VOTING_CLOSE_TIME))
+  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME))
 
 @app.get("/")
 def home(): return render_template("verify.html")

@@ -388,3 +388,47 @@ permission for the Render site. If permission is denied or the device/browser ca
 a position, the report clearly prints that GPS was not captured rather than inventing a location.
 
 TRAINING / SIMULATION ONLY.
+
+
+V22.5 — OPENING REPORT ONLY
+The stream report has been simplified to contain only morning opening details.
+
+Included:
+- Polling Station
+- Stream
+- Date
+- 0 pre-cast votes verification
+- Scheduled opening time
+- Actual opening timestamp
+- Opening time check
+- Candidate-agent opening verification/signatures
+- Election-official opening signatures
+- Dynamic report header
+
+Removed from this report:
+- Scheduled closing
+- Actual closing timestamp
+- Closing check
+- Distinct simulated voters recorded
+
+Closing information remains in the final vote-count/tally reports.
+TRAINING / SIMULATION ONLY.
+
+
+V22.6 — AUTOMATIC DATE/TIME/GPS CAPTURE FIX
+Built from V22.5.
+
+Changes:
+- Date and Kenya time are populated automatically when the tally dashboard loads.
+- GPS is requested automatically when the tally dashboard loads.
+- GPS is requested again immediately before each individual tally is printed.
+- A short render delay is used before opening print preview so the freshly captured values
+  are visible on the printed report.
+- All tally sections receive the same captured page-load GPS value.
+- If browser Location permission is denied, the report now states:
+  "Location permission denied — allow Location for this site".
+- If GPS cannot be obtained, the report gives the specific browser status instead of remaining
+  indefinitely at "Waiting for print".
+
+On Render/HTTPS, browser geolocation should work when Location permission is granted.
+TRAINING / SIMULATION ONLY.
