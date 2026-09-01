@@ -1,7 +1,8 @@
-import os, sqlite3, csv
+import os, sqlite3, csv, json
+import requests
 from datetime import datetime, date
 from itsdangerous import URLSafeSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, Response
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -31,6 +32,10 @@ AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
 REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
+KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip("/")
+MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
+KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
+
 TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
 TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
 
@@ -93,6 +98,70 @@ def hierarchy_payload():
 def api_hierarchy():
  from flask import jsonify
  return jsonify(hierarchy_payload())
+
+
+def kobo_headers():
+ return {"Authorization": f"Token {KOBO_API_TOKEN}"}
+
+def field(row,*names):
+ for n in names:
+  v=row.get(n)
+  if v not in (None,""):
+   return str(v).strip()
+ return ""
+
+def lookup_member(national_id):
+ if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("Kobo membership connection is not configured.")
+ url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/"
+ q={"basics/national_id_no":str(national_id)}
+ r=requests.get(url,headers=kobo_headers(),params={"query":json.dumps(q)},timeout=25)
+ r.raise_for_status()
+ data=r.json()
+ rows=data.get("results",data if isinstance(data,list) else [])
+ if not rows:
+  return None
+ # Most recent matching submission if duplicates exist.
+ rows=sorted(rows,key=lambda x:x.get("_id",0),reverse=True)
+ return rows[0]
+
+def member_view(row):
+ first=field(row,"members_particulars/first_name","members_particulars/first_name1")
+ other=field(row,"members_particulars/other_names","members_particulars/other_names1")
+ surname=field(row,"members_particulars/surname","members_particulars/surname1")
+ full=" ".join(x for x in (first,other,surname) if x).strip()
+ return {
+  "submission_id":row.get("_id"),
+  "national_id":field(row,"basics/national_id_no"),
+  "full_name":full or field(row,"stored_particulars_confirmed/full_name"),
+  "membership_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed"),
+  "polling_station":field(row,"electorals_units/poll_station_label","electorals_units/selected_poll_station1","stored_particulars_confirmed/selected_poll_station1_confirmed"),
+  "id_photo_name":field(row,"basics/id_photo"),
+  "passport_photo_name":field(row,"basics/passport_photo"),
+ }
+
+def submission_detail(submission_id):
+ url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/{submission_id}/"
+ r=requests.get(url,headers=kobo_headers(),timeout=25)
+ r.raise_for_status()
+ return r.json()
+
+def attachment_url(row,kind):
+ field_name="basics/id_photo" if kind=="id" else "basics/passport_photo"
+ wanted=field(row,field_name)
+ atts=row.get("_attachments") or []
+ # Prefer exact question xpath/field match.
+ for a in atts:
+  xpath=str(a.get("question_xpath") or a.get("question_name") or "")
+  if field_name in xpath:
+   return a.get("download_url") or a.get("url")
+ # Fall back to matching stored filename.
+ if wanted:
+  for a in atts:
+   fn=str(a.get("filename") or "")
+   if fn==wanted or fn.endswith("/"+wanted):
+    return a.get("download_url") or a.get("url")
+ return None
 
 def previous_vote(voter_id):
  c=con()
@@ -207,22 +276,88 @@ def home(): return render_template("verify.html")
 @app.post("/start")
 def start():
  voter=request.form.get("voter_id","").strip()
- if not voter: return render_template("verify.html",error="Enter a demo voter ID.")
+ if not voter:
+  return render_template("verify.html",error="Enter a demo voter ID.")
+
  previous=previous_vote(voter)
  if previous:
   station=previous["poll_station"] or "the recorded polling station"
   return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
+
  lock=terminal_lock()
  if not lock or lock.get("session_date")!=today_iso():
   return render_template("verify.html",error="This voting terminal is not locked to an opened stream. Complete the pre-voting stream opening first.")
+
  geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
  ss=stream_session(geo["poll_station"],geo["stream"])
  if not ss:
   return render_template("verify.html",error="The locked voting stream has no valid opening record for today.")
  if ss["closed_at"]:
   return render_template("verify.html",error="Voting for this locked stream has already been closed for today.")
- session.clear(); session["voter_id"]=voter; session["choices"]={}; session["geo"]=geo
+
+ try:
+  row=lookup_member(voter)
+ except Exception as e:
+  return render_template("verify.html",error=f"Unable to verify voter from Kobo Membership Portal: {e}")
+
+ if not row:
+  return render_template("verify.html",error=f"National ID {voter} was not found in the Kobo Membership Recruitment Portal.")
+
+ member=member_view(row)
+ session.clear()
+ session["pending_voter_id"]=voter
+ session["membership_submission_id"]=member["submission_id"]
+ session["membership_verified"]=True
+ session["geo"]=geo
+ return render_template("member_verify.html",member=member,geo=geo)
+
+@app.post("/membership/confirm")
+def confirm_member():
+ if not session.get("membership_verified") or not session.get("pending_voter_id"):
+  return redirect(url_for("home"))
+ voter=session.get("pending_voter_id")
+ previous=previous_vote(voter)
+ if previous:
+  station=previous["poll_station"] or "the recorded polling station"
+  session.clear()
+  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
+ geo=session.get("geo",{})
+ lock=terminal_lock()
+ if not lock or any(geo.get(k,"")!=lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")):
+  session.clear()
+  return render_template("verify.html",error="Terminal stream verification changed. Restart voter verification.")
+ ss=stream_session(geo.get("poll_station",""),geo.get("stream",""))
+ if not ss or ss["closed_at"]:
+  session.clear()
+  return render_template("verify.html",error="This stream is not open for simulated voting.")
+ session["voter_id"]=voter
+ session["choices"]={}
+ session.pop("pending_voter_id",None)
  return redirect(url_for("ballot",step=0))
+
+@app.post("/membership/cancel")
+def cancel_member():
+ keep_geo=session.get("geo")
+ session.clear()
+ return redirect(url_for("home"))
+
+@app.get("/membership-photo/<int:submission_id>/<kind>")
+def membership_photo(submission_id,kind):
+ if kind not in ("id","passport"):
+  return Response(status=404)
+ if session.get("membership_submission_id")!=submission_id:
+  return Response(status=403)
+ try:
+  row=submission_detail(submission_id)
+  media=attachment_url(row,kind)
+  if not media:
+   return Response(status=404)
+  r=requests.get(media,headers=kobo_headers(),timeout=25,stream=True)
+  r.raise_for_status()
+  return Response(r.iter_content(chunk_size=65536),
+                  content_type=r.headers.get("Content-Type","image/jpeg"))
+ except Exception:
+  return Response(status=404)
 
 @app.route("/ballot/<int:step>",methods=["GET","POST"])
 def ballot(step):

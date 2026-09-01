@@ -177,3 +177,11 @@
 .terminal-reset-form{margin:12px 0 18px}
 .reset-terminal-btn{padding:10px 16px;border:1px solid #333;border-radius:7px;cursor:pointer}
 .reset-blocked{margin:10px 0 16px;font-weight:600}
+
+.member-details{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:8px 20px;margin:14px 0 18px}
+.photo-verify-grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:20px;margin:18px 0}
+.photo-card{border:1px solid #bbb;border-radius:10px;padding:12px;text-align:center}
+.photo-card img{display:block;width:100%;max-width:420px;height:360px;object-fit:contain;margin:auto;background:#f4f4f4}
+.photo-missing{min-height:200px;display:flex;align-items:center;justify-content:center;border:1px dashed #aaa;padding:16px}
+.identity-warning{font-weight:700;border:2px solid #222;border-radius:8px;padding:12px;margin:18px 0}
+@media(max-width:760px){.member-details,.photo-verify-grid{grid-template-columns:1fr}.photo-card img{height:300px}}

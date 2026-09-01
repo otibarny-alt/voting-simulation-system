@@ -297,3 +297,36 @@ When reset succeeds:
 
 The working V22 ballot and stream-lock flow is otherwise unchanged.
 TRAINING / SIMULATION ONLY.
+
+
+V22.2 — KOBO MEMBERSHIP PHOTO VERIFICATION GATE
+Built from stable V22.1 training simulation.
+
+Before the simulated ballot begins:
+- Officer enters National ID.
+- App queries the Kobo Membership Recruitment Portal.
+- The matching member's ID Photo and Passport Photo are displayed side by side.
+- Member name, membership number and membership polling station are also displayed when available.
+- Officer must click "Identity Confirmed — Continue to Simulation Ballot".
+- A member not found in Kobo cannot proceed.
+- Existing duplicate-voter and locked-stream checks remain in place.
+
+Membership form fields used:
+basics/national_id_no
+basics/id_photo
+basics/passport_photo
+members_particulars/odm_membership_no
+members_particulars/first_name
+members_particulars/other_names
+members_particulars/surname
+electorals_units/poll_station_label or selected_poll_station1
+
+Required Render environment variables:
+KOBO_BASE_URL=https://kf.kobotoolbox.org
+MEMBERSHIP_ASSET_UID=<UID OF MEMBERSHIP RECRUITMENT PORTAL>
+KOBO_API_TOKEN=<YOUR EXISTING KOBO TOKEN>
+
+Photos are proxied server-side so the Kobo API token is not exposed to the browser.
+
+IMPORTANT: This package connects membership verification only to the NON-BINDING TRAINING /
+SIMULATION ballot. It is not designed or provided for recording binding political votes.

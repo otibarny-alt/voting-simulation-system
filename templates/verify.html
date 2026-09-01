@@ -4,7 +4,7 @@
 
 <div class=wrap>
  <div class=card>
-  <h2>Demo voter verification</h2>
+  <h2>Voter ID & Kobo Photo Verification</h2>
   <p class=muted id=terminal_help>Set this computer's voting stream once. Subsequent demo voters only enter their ID.</p>
   {% if error %}<div class='vote-error'>{{error}}</div>{% endif %}
 
@@ -37,7 +37,7 @@
     <input type=hidden name=ward id=ward_label>
     <input type=hidden name=poll_station id=poll_station_label>
     <input type=hidden name=stream id=stream_label>
-    <div class=actions><span></span><button id=start_btn>Start six-ballot demo</button></div>
+    <div class=actions><span></span><button id=start_btn>Verify voter photos</button></div>
    </div>
   </form><p><a href="/stream-control">Open / Close Voting Stream & Print Opening Report</a></p>
  </div>
