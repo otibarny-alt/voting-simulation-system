@@ -330,3 +330,40 @@ Photos are proxied server-side so the Kobo API token is not exposed to the brows
 
 IMPORTANT: This package connects membership verification only to the NON-BINDING TRAINING /
 SIMULATION ballot. It is not designed or provided for recording binding political votes.
+
+
+V22.3 — KOBO POLLING-STATION MATCH GATE
+Built from V22.2.
+
+The voter can proceed to the training/simulation ballot only when the polling station stored
+in the Kobo Membership Recruitment Portal matches the polling station locked on the voting terminal.
+
+Membership fields used for station matching, in priority order:
+- electorals_units/selected_poll_station1
+- particulars_confirmation/selected_poll_station1_confirmation
+- stored_particulars_confirmed/selected_poll_station1_calculation
+- stored_particulars_confirmed/selected_poll_station1_confirmed
+
+Display label:
+- electorals_units/poll_station_label
+
+The comparison normalizes capitalization, spaces, punctuation, and underscores so values such as:
+MWENA PRIMARY SCHOOL
+and
+mwena_primary_school
+are treated as the same station.
+
+If the stations match:
+- ID Photo and Passport Photo are shown
+- green POLLING STATION MATCH CONFIRMED message appears
+- officer can confirm identity and continue to the simulation ballot
+
+If they do not match, or no membership polling station is available:
+- red POLLING STATION MISMATCH message appears
+- both station values are displayed
+- Continue button is disabled
+- voter cannot enter the simulation ballot
+
+The server re-checks the station-match flag at /membership/confirm so this is not only a browser/UI restriction.
+
+TRAINING / SIMULATION ONLY.

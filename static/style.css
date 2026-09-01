@@ -185,3 +185,7 @@
 .photo-missing{min-height:200px;display:flex;align-items:center;justify-content:center;border:1px dashed #aaa;padding:16px}
 .identity-warning{font-weight:700;border:2px solid #222;border-radius:8px;padding:12px;margin:18px 0}
 @media(max-width:760px){.member-details,.photo-verify-grid{grid-template-columns:1fr}.photo-card img{height:300px}}
+
+.station-match{border:2px solid #198754;background:#eefaf2;padding:12px;border-radius:8px;font-weight:700;margin:16px 0}
+.station-mismatch{border:2px solid #b42318;background:#fff1f0;padding:12px;border-radius:8px;font-weight:700;margin:16px 0}
+button:disabled{opacity:.55;cursor:not-allowed}

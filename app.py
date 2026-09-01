@@ -1,4 +1,4 @@
-import os, sqlite3, csv, json
+import os, sqlite3, csv, json, re
 import requests
 from datetime import datetime, date
 from itsdangerous import URLSafeSerializer, BadSignature
@@ -110,6 +110,9 @@ def field(row,*names):
    return str(v).strip()
  return ""
 
+def station_key(v):
+ return re.sub(r"[^a-z0-9]+","_",str(v or "").strip().lower()).strip("_")
+
 def lookup_member(national_id):
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
   raise RuntimeError("Kobo membership connection is not configured.")
@@ -135,7 +138,18 @@ def member_view(row):
   "national_id":field(row,"basics/national_id_no"),
   "full_name":full or field(row,"stored_particulars_confirmed/full_name"),
   "membership_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed"),
-  "polling_station":field(row,"electorals_units/poll_station_label","electorals_units/selected_poll_station1","stored_particulars_confirmed/selected_poll_station1_confirmed"),
+  "polling_station_key":field(
+    row,
+    "electorals_units/selected_poll_station1",
+    "particulars_confirmation/selected_poll_station1_confirmation",
+    "stored_particulars_confirmed/selected_poll_station1_calculation",
+    "stored_particulars_confirmed/selected_poll_station1_confirmed"
+  ),
+  "polling_station_label":field(
+    row,
+    "electorals_units/poll_station_label",
+    "electorals_units/selected_poll_station1"
+  ),
   "id_photo_name":field(row,"basics/id_photo"),
   "passport_photo_name":field(row,"basics/passport_photo"),
  }
@@ -304,17 +318,39 @@ def start():
   return render_template("verify.html",error=f"National ID {voter} was not found in the Kobo Membership Recruitment Portal.")
 
  member=member_view(row)
+
+ membership_station = member.get("polling_station_key") or member.get("polling_station_label") or ""
+ locked_station = geo.get("poll_station","")
+ station_match = bool(membership_station and locked_station and station_key(membership_station)==station_key(locked_station))
+
  session.clear()
  session["pending_voter_id"]=voter
  session["membership_submission_id"]=member["submission_id"]
  session["membership_verified"]=True
+ session["membership_station_match"]=station_match
+ session["membership_station"]=membership_station
  session["geo"]=geo
- return render_template("member_verify.html",member=member,geo=geo)
+ return render_template("member_verify.html",member=member,geo=geo,station_match=station_match)
 
 @app.post("/membership/confirm")
 def confirm_member():
  if not session.get("membership_verified") or not session.get("pending_voter_id"):
   return redirect(url_for("home"))
+ if not session.get("membership_station_match"):
+  geo=session.get("geo",{})
+  voter=session.get("pending_voter_id")
+  try:
+   row=lookup_member(voter)
+   member=member_view(row) if row else {}
+  except Exception:
+   member={}
+  return render_template(
+   "member_verify.html",
+   member=member,
+   geo=geo,
+   station_match=False,
+   error="VOTING NOT ALLOWED: the polling station recorded in the Kobo Membership Portal does not match this terminal's locked polling station."
+  )
  voter=session.get("pending_voter_id")
  previous=previous_vote(voter)
  if previous:
