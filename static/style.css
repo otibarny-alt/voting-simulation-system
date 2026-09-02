@@ -319,3 +319,33 @@ input[type="button"]{
     font-size:16px !important;
   }
 }
+
+/* V22.18 — final review save emphasis */
+.final-save-actions{
+  justify-content:flex-end !important;
+  margin-top:26px !important;
+}
+.final-save-button{
+  min-width:390px;
+  max-width:100%;
+  padding:20px 30px !important;
+  border:4px solid #000 !important;
+  border-radius:12px !important;
+  font-size:24px !important;
+  font-weight:900 !important;
+  box-shadow:0 5px 0 #555;
+  cursor:pointer !important;
+}
+.final-save-button:hover{filter:brightness(1.12)}
+.final-save-button:active{transform:translateY(3px);box-shadow:0 2px 0 #555}
+.final-save-note{
+  margin-top:18px;
+  padding:14px 16px;
+  border:2px solid #111;
+  border-radius:10px;
+  background:#fff8d8;
+  font-size:17px;
+  font-weight:800;
+  text-align:center;
+}
+@media(max-width:600px){.final-save-button{min-width:0;width:100%;font-size:20px!important}}
