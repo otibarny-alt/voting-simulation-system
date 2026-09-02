@@ -494,3 +494,19 @@ later candidate reordering does not change the identity of previously cast simul
 
 If candidate data is unavailable, the ballot blocks the affected simulated position instead
 of falling back to placeholder candidates.
+
+
+V22.11 — SELECTED CANDIDATE PHOTOS ON REVIEW SCREEN
+===================================================
+TRAINING / SIMULATION ONLY.
+
+The final review screen now re-loads each selected candidate profile from the
+Candidate Registration Portal and displays a large candidate photograph for:
+President, Governor, Senator, Woman Representative, MNA and MCA.
+
+The photograph is displayed together with the election position, candidate name
+and Candidate ID. Each selection has a clearly labelled Change button.
+
+This visual review is intended to make confirmation easier for users who may have
+difficulty reading candidate names. Candidate photos supplement the names and do
+not replace the existing selection confirmation controls.

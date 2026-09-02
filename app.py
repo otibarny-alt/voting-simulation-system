@@ -505,7 +505,38 @@ def ballot(step):
 @app.get("/review")
 def review():
  if "voter_id" not in session:return redirect(url_for("home"))
- return render_template("review.html",elections=cfg(),choices=session.get("choices",{}),geo=session.get("geo",{}),voter_id=session.get("voter_id",""))
+ choices=session.get("choices",{})
+ geo=session.get("geo",{})
+ # Re-load the selected candidates so the review screen can show their photos
+ # and other visual identity information.
+ try:
+  catalog=candidate_portal_catalog(geo)
+ except Exception:
+  catalog={k:[] for k,_,_ in ELECTIONS}
+
+ review_choices={}
+ for e in cfg():
+  picked=choices.get(e["key"])
+  if not isinstance(picked,dict):
+   continue
+  item=dict(picked)
+  current=next(
+   (c for c in catalog.get(e["key"],[]) if c.get("candidate_id")==picked.get("candidate_id")),
+   None
+  )
+  if current:
+   item["photo_url"]=current.get("photo_url")
+   item["membership_no"]=current.get("membership_no") or item.get("membership_no","")
+   item["bio"]=current.get("bio","")
+  review_choices[e["key"]]=item
+
+ return render_template(
+  "review.html",
+  elections=cfg(),
+  choices=review_choices,
+  geo=geo,
+  voter_id=session.get("voter_id","")
+ )
 
 @app.post("/cast")
 def cast():

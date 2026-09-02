@@ -6,11 +6,38 @@
   <div class="voter-id">{{ voter_id }}</div>
   <div class="muted">Please confirm this is your ID before saving the simulated ballot.</div>
 </div>
-<table><tr><th>Election</th><th>Selected Candidate</th><th>Candidate ID</th><th>Change</th></tr>
-{% for e in elections %}{% set picked=choices.get(e.key) %}
-<tr><td>{{e.title}}</td>
-<td>{% if picked and picked.candidate_name %}<b>{{picked.candidate_name}}</b>{% else %}—{% endif %}</td>
-<td>{% if picked and picked.candidate_id %}{{picked.candidate_id}}{% else %}—{% endif %}</td>
-<td><a href='/ballot/{{loop.index0}}'>Edit</a></td></tr>{% endfor %}</table>
-<form method=post action=/cast><div class=actions><a class='btn secondary' href=/ballot/5>Back</a><button>Save simulated ballot set</button></div></form>
+
+<div class="review-help">
+  <b>Confirm your selections using the candidate photographs and names below.</b>
+</div>
+
+<div class="review-candidate-grid">
+{% for e in elections %}
+{% set picked=choices.get(e.key) %}
+<div class="review-candidate-card">
+  <div class="review-election">{{e.title}}</div>
+  <div class="review-photo">
+    {% if picked and picked.photo_url %}
+      <img src="{{picked.photo_url}}" alt="Photo of {{picked.candidate_name}}">
+    {% else %}
+      <div class="review-no-photo">No photo</div>
+    {% endif %}
+  </div>
+  <div class="review-candidate-name">
+    {% if picked and picked.candidate_name %}{{picked.candidate_name}}{% else %}—{% endif %}
+  </div>
+  {% if picked and picked.candidate_id %}
+    <div class="review-candidate-id">{{picked.candidate_id}}</div>
+  {% endif %}
+  <a class="btn review-edit" href="/ballot/{{loop.index0}}">Change {{e.title}} choice</a>
+</div>
+{% endfor %}
+</div>
+
+<form method=post action=/cast>
+  <div class=actions>
+    <a class='btn secondary' href=/ballot/5>Back</a>
+    <button>Save simulated ballot set</button>
+  </div>
+</form>
 </div></div>

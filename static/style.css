@@ -218,3 +218,17 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .candidate-meta{font-size:13px;color:#666;margin-bottom:8px}
 .candidate-bio{font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 @media(max-width:600px){.candidate-grid{grid-template-columns:1fr}.candidate-photo-wrap{width:95px;min-width:95px;height:119px}.candidate-name{font-size:18px}}
+
+.review-help{margin:18px 0;padding:14px 16px;border:2px solid #222;border-radius:10px;background:#fff8d8;font-size:18px}
+.review-candidate-grid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:18px;margin:20px 0 26px}
+.review-candidate-card{border:2px solid #d5d5d5;border-radius:14px;background:#fff;padding:14px;text-align:center;display:flex;flex-direction:column;align-items:center}
+.review-election{font-size:22px;font-weight:900;margin-bottom:10px;width:100%;padding-bottom:8px;border-bottom:1px solid #ddd}
+.review-photo{width:180px;height:225px;border-radius:10px;overflow:hidden;background:#eee;border:2px solid #bbb;margin:4px auto 12px}
+.review-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.review-no-photo{height:100%;display:flex;align-items:center;justify-content:center;color:#666;font-weight:700}
+.review-candidate-name{font-size:20px;font-weight:900;line-height:1.2;min-height:48px;display:flex;align-items:center;justify-content:center}
+.review-candidate-id{font-size:14px;color:#666;margin:7px 0 12px}
+.review-edit{margin-top:auto;width:100%;box-sizing:border-box}
+@media(max-width:900px){.review-candidate-grid{grid-template-columns:repeat(2,minmax(210px,1fr))}}
+@media(max-width:560px){.review-candidate-grid{grid-template-columns:1fr}.review-photo{width:200px;height:250px}.review-election{font-size:24px}.review-candidate-name{font-size:22px}}
+@media print{.review-edit,.actions{display:none!important}}
