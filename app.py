@@ -1,5 +1,7 @@
-import os, sqlite3, csv, json, re, hmac
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib
 import requests
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, date
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
@@ -45,6 +47,7 @@ MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 
 def candidate_portal_catalog(geo):
@@ -96,7 +99,144 @@ def current_catalog_or_empty(geo):
  except Exception:
   return {k:[] for k,_,_ in ELECTIONS}
 
+
+def pg_url():
+ url=DATABASE_URL
+ if url.startswith("postgres://"):
+  url="postgresql://"+url[len("postgres://"):]
+ return url
+
+def lock_db():
+ if not DATABASE_URL:
+  raise RuntimeError("DATABASE_URL is required for global device locking.")
+ return psycopg.connect(pg_url(), row_factory=dict_row)
+
+def init_global_lock_db():
+ if not DATABASE_URL:
+  return
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
+      session_date TEXT NOT NULL,
+      poll_station TEXT NOT NULL,
+      stream TEXT NOT NULL,
+      county TEXT,
+      constituency TEXT,
+      ward TEXT,
+      owner_token_hash TEXT NOT NULL,
+      locked_at TEXT NOT NULL,
+      released_at TEXT,
+      PRIMARY KEY(session_date,poll_station,stream)
+    )
+   """)
+  conn.commit()
+
+def token_hash(token):
+ return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+def global_lock_row(session_date,poll_station,stream):
+ if not DATABASE_URL:
+  return None
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT * FROM simulation_terminal_locks
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+    LIMIT 1
+   """,(session_date,poll_station,stream))
+   return cur.fetchone()
+
+def claim_global_lock(lock_data, owner_token):
+ """
+ Atomically reserve one stream to one device for the day.
+ Returns (True, row) when this device owns/claimed it; (False, row) when another device owns it.
+ """
+ if not DATABASE_URL:
+  raise RuntimeError("Global device locking is not configured. Set DATABASE_URL to Render PostgreSQL.")
+ now=datetime.now().astimezone().isoformat(timespec="seconds")
+ th=token_hash(owner_token)
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    INSERT INTO simulation_terminal_locks(
+      session_date,poll_station,stream,county,constituency,ward,owner_token_hash,locked_at,released_at
+    ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,NULL)
+    ON CONFLICT (session_date,poll_station,stream) DO NOTHING
+   """,(
+    lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],
+    lock_data.get("county",""),lock_data.get("constituency",""),lock_data.get("ward",""),
+    th,now
+   ))
+   claimed=cur.rowcount==1
+   cur.execute("""
+    SELECT * FROM simulation_terminal_locks
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+    LIMIT 1
+   """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
+   row=cur.fetchone()
+  conn.commit()
+ if claimed:
+  return True,row
+ # If an earlier record was explicitly released by the owning device, allow a fresh claim.
+ if row and row.get("released_at"):
+  with lock_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     UPDATE simulation_terminal_locks
+     SET county=%s,constituency=%s,ward=%s,owner_token_hash=%s,locked_at=%s,released_at=NULL
+     WHERE session_date=%s AND poll_station=%s AND stream=%s AND released_at IS NOT NULL
+    """,(
+     lock_data.get("county",""),lock_data.get("constituency",""),lock_data.get("ward",""),
+     th,now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]
+    ))
+    reclaimed=cur.rowcount==1
+    cur.execute("""
+     SELECT * FROM simulation_terminal_locks
+     WHERE session_date=%s AND poll_station=%s AND stream=%s
+     LIMIT 1
+    """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
+    row=cur.fetchone()
+   conn.commit()
+  return reclaimed,row
+ return bool(row and hmac.compare_digest(row.get("owner_token_hash",""),th)),row
+
+def owns_global_lock(lock_data, owner_token):
+ if not lock_data or not owner_token or not DATABASE_URL:
+  return False
+ row=global_lock_row(lock_data.get("session_date",""),lock_data.get("poll_station",""),lock_data.get("stream",""))
+ if not row or row.get("released_at"):
+  return False
+ return hmac.compare_digest(row.get("owner_token_hash",""),token_hash(owner_token))
+
+def release_global_lock(lock_data, owner_token):
+ """
+ Only the owning device can release its global lock.
+ """
+ if not owns_global_lock(lock_data,owner_token):
+  return False
+ now=datetime.now().astimezone().isoformat(timespec="seconds")
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    UPDATE simulation_terminal_locks
+    SET released_at=%s
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+      AND owner_token_hash=%s AND released_at IS NULL
+   """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
+   ok=cur.rowcount==1
+  conn.commit()
+ return ok
+
+# Create the lock table when the app starts. If PostgreSQL is temporarily unavailable,
+# requests will fail closed when they attempt lock-sensitive actions.
+try:
+ init_global_lock_db()
+except Exception as _lock_init_error:
+ print("Global lock database initialization warning:",_lock_init_error)
+
 TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
+TERMINAL_OWNER_COOKIE = "training_terminal_owner_token"
 TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
 
 def terminal_serializer():
@@ -104,12 +244,17 @@ def terminal_serializer():
 
 def terminal_lock():
  raw=request.cookies.get(TERMINAL_LOCK_COOKIE,"")
- if not raw: return None
+ owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+ if not raw or not owner:
+  return None
  try:
   data=terminal_serializer().loads(raw)
   if isinstance(data,dict) and data.get("poll_station") and data.get("stream"):
-   return data
- except BadSignature:
+   # A browser cookie alone is no longer sufficient. The central PostgreSQL
+   # registry must confirm this exact device owns the stream.
+   if owns_global_lock(data,owner):
+    return data
+ except (BadSignature,Exception):
   pass
  return None
 
@@ -271,26 +416,36 @@ def locked_stream_vote_count(lock):
 def terminal_reset():
  lock=terminal_lock()
  if not lock:
-  return redirect(url_for("stream_control"))
+  return render_template(
+   "stream_control.html",row=None,poll_station="",stream="",
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="Terminal reset denied: this browser/device does not own a valid central stream lock."
+  )
 
  votes=locked_stream_vote_count(lock)
  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
-
- can_reset = (votes == 0) or (row and row["closed_at"])
+ can_reset=(votes==0) or (row and row["closed_at"])
  if not can_reset:
   return render_template(
-   "stream_control.html",
-   row=row,
-   poll_station=lock.get("poll_station",""),
-   stream=lock.get("stream",""),
-   open_time=VOTING_OPEN_TIME,
-   close_time=VOTING_CLOSE_TIME,
+   "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
+   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error="Terminal reset blocked: simulated votes already exist in this open stream. Close the stream before changing station."
   )
 
+ owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+ if not release_global_lock(lock,owner):
+  return render_template(
+   "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
+   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="Terminal reset denied: only the device that originally locked this stream can release it."
+  )
+
  resp=redirect(url_for("stream_control"))
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
+ resp.delete_cookie(TERMINAL_OWNER_COOKIE)
  session.clear()
  return resp
 
@@ -305,6 +460,19 @@ def stream_control():
 @app.post("/stream/open")
 def open_stream():
  f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
+
+ # If this device already owns a valid lock, do not allow it to silently move to another stream.
+ existing_local=terminal_lock()
+ if existing_local and (existing_local.get("poll_station")!=ps or existing_local.get("stream")!=st):
+  return render_template(
+   "stream_control.html",
+   row=stream_session(existing_local.get("poll_station",""),existing_local.get("stream","")),
+   poll_station=existing_local.get("poll_station",""),stream=existing_local.get("stream",""),
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="This device is already centrally locked to another polling-station stream. Use the owner-device reset procedure first."
+  )
+
  c=con()
  precast=c.execute("SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
  if precast:
@@ -313,6 +481,31 @@ def open_stream():
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
+ c.close()
+
+ lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
+            "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,"session_date":today_iso()}
+ owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
+
+ try:
+  claimed,central_row=claim_global_lock(lock_data,owner_token)
+ except Exception as exc:
+  return render_template(
+   "stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"OPENING BLOCKED: central device-lock database unavailable. {exc}"
+  )
+
+ if not claimed:
+  locked_at=(central_row or {}).get("locked_at","")
+  return render_template(
+   "stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"OPENING BLOCKED: {ps} / {st} is already locked to another device. Lock time: {locked_at or 'recorded centrally'}. This device cannot unlock or take over that stream."
+  )
+
  now=datetime.now().astimezone().isoformat(timespec="seconds")
  try: opening_lat=float(f.get("opening_lat","")) if f.get("opening_lat","") else None
  except: opening_lat=None
@@ -320,20 +513,31 @@ def open_stream():
  except: opening_lon=None
  try: opening_accuracy=float(f.get("opening_accuracy","")) if f.get("opening_accuracy","") else None
  except: opening_accuracy=None
+
+ c=con()
  c.execute("""INSERT OR IGNORE INTO stream_sessions
  (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
  c.commit(); c.close()
+
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
- lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
-            "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,"session_date":today_iso()}
  resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
+                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ resp.set_cookie(TERMINAL_OWNER_COOKIE,owner_token,
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
  return resp
 
 @app.post("/stream/close")
 def close_stream():
  ps=request.form.get("poll_station","").strip(); st=request.form.get("stream","").strip()
+ lock=terminal_lock()
+ if not lock or lock.get("poll_station")!=ps or lock.get("stream")!=st:
+  return render_template(
+   "stream_control.html",row=stream_session(ps,st),poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="Close denied: only the device that owns the central lock for this polling-station stream can close it."
+  )
  row=stream_session(ps,st)
  if row and not row["closed_at"]:
   c=con(); now=datetime.now().astimezone().isoformat(timespec="seconds")

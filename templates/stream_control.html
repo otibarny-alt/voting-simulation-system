@@ -4,7 +4,7 @@
 {% if terminal_lock %}
 <div class="terminal-lock-banner"><b>THIS TERMINAL IS LOCKED</b><br>
 Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{terminal_lock.stream}}<br>
-The voting stream cannot be manually changed after pre-voting opening.
+The polling-station stream is centrally reserved to this device. Another device cannot unlock, close, reset, or take over this lock.
 </div>
 {% if terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
 <form method="post" action="/terminal/reset" class="terminal-reset-form"
@@ -104,6 +104,10 @@ if(openBtn){
 <p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>
 <p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
-{% if not row["closed_at"] %}<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>{% endif %}
+{% if not row["closed_at"] and terminal_lock and terminal_lock.poll_station==row["poll_station"] and terminal_lock.stream==row["stream"] %}
+<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>
+{% elif not row["closed_at"] %}
+<p class="reset-blocked"><b>Device ownership protected:</b> this browser does not own the central lock, so it cannot close or unlock this stream.</p>
+{% endif %}
 <p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening Report</a> <small>(opens in a new tab)</small></p>
 {% endif %}</div></div>

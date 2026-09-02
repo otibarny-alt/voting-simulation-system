@@ -592,3 +592,56 @@ The feed includes:
 - stream opening/closing status and timestamps.
 
 This endpoint is read-only and exists only to support the non-binding training/simulation dashboard.
+
+
+V22.16 — GLOBAL DEVICE-OWNERSHIP LOCK
+=====================================
+TRAINING / SIMULATION ONLY.
+
+PURPOSE
+Once a polling-station stream is opened and locked to one browser/device, another
+device anywhere cannot:
+- unlock it;
+- reset it;
+- close it;
+- take it over;
+- open the same station/stream as its own terminal.
+
+HOW IT WORKS
+The old signed browser cookie is no longer trusted by itself.
+
+V22.16 adds a central PostgreSQL table:
+simulation_terminal_locks
+
+When a device opens a stream:
+1. the browser receives a random owner token;
+2. only a SHA-256 hash of that owner token is stored centrally;
+3. the polling station + stream + date is reserved atomically in PostgreSQL;
+4. another device trying the same polling-station stream is blocked;
+5. Reset and Close validate both the local device token and the central PostgreSQL ownership record.
+
+A copied or manually constructed station/stream URL does not grant ownership.
+
+OWNER DEVICE RESET
+The existing controlled Reset Terminal function remains available only on the original
+owning device and only under the existing reset rules:
+- no simulated votes exist in the open stream, OR
+- the stream has formally been closed.
+
+When the legitimate owner resets, the central lock is marked released and may then be
+claimed by another device.
+
+IMPORTANT
+If the owner browser loses its cookies, that device also loses its ownership credential.
+For security, another device is NOT allowed to recover or release the lock automatically.
+
+RENDER REQUIREMENT
+Set DATABASE_URL on the voting simulation web service to a Render PostgreSQL
+Internal Database URL.
+
+The PostgreSQL database is required for cross-device / cross-instance locking.
+If DATABASE_URL or PostgreSQL is unavailable, lock-sensitive opening actions fail closed
+instead of falling back to insecure browser-only locking.
+
+This database is separate from the existing SQLite simulated vote store in V22.16;
+it is used specifically as the authoritative global terminal-lock registry.
