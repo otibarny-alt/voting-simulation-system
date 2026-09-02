@@ -565,3 +565,30 @@ Changes:
 - SKIP remains clearly distinct from selecting a candidate
 - mouse cursor changes to a pointing hand over SKIP and Save/Continue buttons
 - pointer cursor also applies to other button-style controls
+
+
+V22.15 — READ-ONLY PRESIDENTIAL DASHBOARD API
+=============================================
+TRAINING / SIMULATION ONLY.
+
+Adds:
+GET /api/dashboard/president
+
+The endpoint returns aggregated presidential simulation totals by polling-station stream.
+It does NOT return voter National IDs.
+
+Required Render environment variable:
+DASHBOARD_API_KEY=<long shared secret>
+
+The separate Presidential Simulation Results Dashboard sends this value in the
+X-Dashboard-Key request header.
+
+The feed includes:
+- active presidential candidate names and IDs;
+- candidate vote totals;
+- category skips;
+- participant totals;
+- stream County / Constituency / Ward / Polling Station / Stream;
+- stream opening/closing status and timestamps.
+
+This endpoint is read-only and exists only to support the non-binding training/simulation dashboard.

@@ -1,8 +1,8 @@
-import os, sqlite3, csv, json, re
+import os, sqlite3, csv, json, re, hmac
 import requests
 from datetime import datetime, date
 from itsdangerous import URLSafeSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session, Response
+from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -44,6 +44,7 @@ KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip(
 MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 
 
 def candidate_portal_catalog(geo):
@@ -580,6 +581,143 @@ def cast():
     geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
  c.commit(); c.close(); session["completed"]=True
  return redirect(url_for("complete"))
+
+
+def dashboard_api_authorized():
+ supplied=request.headers.get("X-Dashboard-Key","")
+ return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
+
+@app.get("/api/dashboard/president")
+def api_dashboard_president():
+ """
+ Read-only aggregate feed for the separate Presidential Simulation Results Dashboard.
+ No voter National IDs are returned.
+ """
+ if not dashboard_api_authorized():
+  return jsonify({"error":"Unauthorized"}),401
+
+ c=con()
+ rows=c.execute("""
+  SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,
+         COUNT(*) AS n
+  FROM demo_votes
+  WHERE election='president'
+  GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+  ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+ """).fetchall()
+ sessions=c.execute("""
+  SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
+  FROM stream_sessions
+  ORDER BY COALESCE(closed_at,opened_at) DESC
+ """).fetchall()
+ c.close()
+
+ streams={}
+ candidate_totals={}
+ skipped_total=0
+ participants_total=0
+
+ for r in rows:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  item=streams.setdefault(key,{
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "candidate_votes":{},
+   "candidate_names":{},
+   "candidate_selections":0,
+   "skipped":0,
+   "participants":0
+  })
+  cid=(r["candidate_id"] or "").strip()
+  n=int(r["n"] or 0)
+  if cid=="__SKIP__":
+   item["skipped"]+=n
+   skipped_total+=n
+  else:
+   item["candidate_votes"][cid]=item["candidate_votes"].get(cid,0)+n
+   item["candidate_names"][cid]=(r["candidate_name"] or cid)
+   item["candidate_selections"]+=n
+   candidate_totals[cid]=candidate_totals.get(cid,0)+n
+  item["participants"]+=n
+  participants_total+=n
+
+ # Add stream status/times without exposing individual voter records.
+ session_map={}
+ for r in sessions:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  session_map[key]={
+   "session_date":r["session_date"] or "",
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "opened_at":r["opened_at"] or "",
+   "closed_at":r["closed_at"] or ""
+  }
+  if key not in streams:
+   streams[key]={
+    "county":r["county"] or "",
+    "constituency":r["constituency"] or "",
+    "ward":r["ward"] or "",
+    "poll_station":r["poll_station"] or "",
+    "stream":key,
+    "candidate_votes":{},
+    "candidate_names":{},
+    "candidate_selections":0,
+    "skipped":0,
+    "participants":0
+   }
+
+ for key,item in streams.items():
+  sess=session_map.get(key,{})
+  item["opened_at"]=sess.get("opened_at","")
+  item["closed_at"]=sess.get("closed_at","")
+  item["session_date"]=sess.get("session_date","")
+  item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
+
+ # Pull the current national presidential candidate list so zero-vote candidates are visible.
+ candidates=[]
+ try:
+  catalog=candidate_portal_catalog({})
+  for cand in catalog.get("president",[]):
+   cid=cand.get("candidate_id","")
+   candidates.append({
+    "candidate_id":cid,
+    "name":cand.get("name",""),
+    "photo_url":cand.get("photo_url"),
+    "votes":candidate_totals.get(cid,0)
+   })
+ except Exception:
+  # Fallback to candidates seen in recorded simulation data.
+  names={}
+  for item in streams.values():
+   names.update(item.get("candidate_names",{}))
+  for cid,name in names.items():
+   candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
+
+ candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+
+ return jsonify({
+  "source":"training_simulation",
+  "simulation_only":True,
+  "election":"president",
+  "candidates":candidates,
+  "streams":list(streams.values()),
+  "totals":{
+   "candidate_selections":sum(candidate_totals.values()),
+   "skipped":skipped_total,
+   "participants":participants_total
+  }
+ })
+
 
 @app.get("/complete")
 def complete():
