@@ -15,7 +15,10 @@ ELECTIONS=[
 
 def con():
  c=sqlite3.connect(DB); c.row_factory=sqlite3.Row
- c.execute('CREATE TABLE IF NOT EXISTS demo_votes(id INTEGER PRIMARY KEY AUTOINCREMENT,voter_session TEXT,election TEXT,candidate INTEGER,county TEXT,constituency TEXT,ward TEXT,poll_station TEXT,stream TEXT)')
+ c.execute('CREATE TABLE IF NOT EXISTS demo_votes(id INTEGER PRIMARY KEY AUTOINCREMENT,voter_session TEXT,election TEXT,candidate INTEGER,candidate_id TEXT,candidate_name TEXT,county TEXT,constituency TEXT,ward TEXT,poll_station TEXT,stream TEXT)')
+ vote_cols={r[1] for r in c.execute("PRAGMA table_info(demo_votes)").fetchall()}
+ if "candidate_id" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_id TEXT")
+ if "candidate_name" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_name TEXT")
  c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_voter ON demo_votes(voter_session)')
  c.execute('''CREATE TABLE IF NOT EXISTS stream_sessions(
  id INTEGER PRIMARY KEY AUTOINCREMENT,session_date TEXT NOT NULL,county TEXT,constituency TEXT,ward TEXT,
@@ -29,7 +32,7 @@ def con():
  return c
 
 def cfg():
- return [{"key":k,"title":t,"count":n,"candidates":[{"slot":i,"name":f"Candidate {i}"} for i in range(1,n+1)]} for k,t,n in ELECTIONS]
+ return [{"key":k,"title":t,"count":n,"candidates":[]} for k,t,n in ELECTIONS]
 
 
 COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
@@ -40,6 +43,57 @@ REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_repo
 KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip("/")
 MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
+CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
+
+
+def candidate_portal_catalog(geo):
+ if not CANDIDATE_PORTAL_BASE_URL:
+  raise RuntimeError("Candidate Portal connection is not configured.")
+ r=requests.get(
+  f"{CANDIDATE_PORTAL_BASE_URL}/api/candidates",
+  params={
+   "county":geo.get("county",""),
+   "constituency":geo.get("constituency",""),
+   "ward":geo.get("ward","")
+  },
+  timeout=20
+ )
+ r.raise_for_status()
+ payload=r.json()
+ rows=payload.get("results",[]) if isinstance(payload,dict) else []
+ catalog={k:[] for k,_,_ in ELECTIONS}
+ for row in rows:
+  key=str(row.get("position","")).strip().lower()
+  if key not in catalog:
+   continue
+  catalog[key].append({
+   "candidate_id":str(row.get("candidate_id","")).strip(),
+   "name":str(row.get("full_name","")).strip() or "Unnamed candidate",
+   "membership_no":str(row.get("membership_no","")).strip(),
+   "bio":str(row.get("bio","")).strip(),
+   "photo_url":row.get("photo_url"),
+   "county":str(row.get("county","")).strip(),
+   "constituency":str(row.get("constituency","")).strip(),
+   "ward":str(row.get("ward","")).strip()
+  })
+ for key in catalog:
+  catalog[key].sort(key=lambda x:(x["name"].lower(),x["candidate_id"]))
+  for idx,cand in enumerate(catalog[key],start=1):
+   cand["slot"]=idx
+ return catalog
+
+def election_with_candidates(step,geo):
+ e=cfg()[step]
+ catalog=candidate_portal_catalog(geo)
+ e["candidates"]=catalog.get(e["key"],[])
+ e["count"]=len(e["candidates"])
+ return e
+
+def current_catalog_or_empty(geo):
+ try:
+  return candidate_portal_catalog(geo)
+ except Exception:
+  return {k:[] for k,_,_ in ELECTIONS}
 
 TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
 TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
@@ -410,17 +464,43 @@ def membership_photo(submission_id,kind):
 @app.route("/ballot/<int:step>",methods=["GET","POST"])
 def ballot(step):
  if "voter_id" not in session:return redirect(url_for("home"))
- c=cfg()
- if step<0 or step>=len(c):return redirect(url_for("review"))
- e=c[step]
+ structure=cfg()
+ if step<0 or step>=len(structure):return redirect(url_for("review"))
+ geo=session.get("geo",{})
+ try:
+  e=election_with_candidates(step,geo)
+ except Exception:
+  e=structure[step]
+  return render_template(
+   "ballot.html",e=e,step=step,total=len(structure),
+   error="Candidate data could not be loaded from the Candidate Registration Portal. Check the portal connection and try again.",
+   selected=None
+  )
+ if not e["candidates"]:
+  return render_template(
+   "ballot.html",e=e,step=step,total=len(structure),
+   error=f"No active {e['title']} candidates are registered for this electoral area.",
+   selected=None
+  )
+
  if request.method=="POST":
-  try: choice=int(request.form.get("candidate","0"))
-  except: choice=0
-  if not 1<=choice<=e["count"]:
-   return render_template("ballot.html",e=e,step=step,total=len(c),error="Choose one candidate.")
-  choices=dict(session.get("choices",{})); choices[e["key"]]=choice; session["choices"]=choices
-  return redirect(url_for("ballot",step=step+1)) if step+1<len(c) else redirect(url_for("review"))
- return render_template("ballot.html",e=e,step=step,total=len(c),selected=session.get("choices",{}).get(e["key"]))
+  selected_id=str(request.form.get("candidate","")).strip()
+  selected=next((x for x in e["candidates"] if x["candidate_id"]==selected_id),None)
+  if not selected:
+   return render_template("ballot.html",e=e,step=step,total=len(structure),error="Choose one registered candidate.",selected=None)
+  choices=dict(session.get("choices",{}))
+  choices[e["key"]]={
+   "candidate_id":selected["candidate_id"],
+   "candidate_name":selected["name"],
+   "membership_no":selected.get("membership_no",""),
+   "slot":selected["slot"]
+  }
+  session["choices"]=choices
+  return redirect(url_for("ballot",step=step+1)) if step+1<len(structure) else redirect(url_for("review"))
+
+ saved=session.get("choices",{}).get(e["key"],{})
+ selected_id=saved.get("candidate_id") if isinstance(saved,dict) else None
+ return render_template("ballot.html",e=e,step=step,total=len(structure),selected=selected_id)
 
 @app.get("/review")
 def review():
@@ -440,8 +520,15 @@ def cast():
   session.clear()
   return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
  for e in cfg():
-  c.execute("INSERT INTO demo_votes(voter_session,election,candidate,county,constituency,ward,poll_station,stream) VALUES(?,?,?,?,?,?,?,?)",
-   (voter,e["key"],choices[e["key"]],geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
+  picked=choices.get(e["key"])
+  if not isinstance(picked,dict) or not picked.get("candidate_id"):
+   c.close()
+   return redirect(url_for("review"))
+  c.execute("""INSERT INTO demo_votes(
+   voter_session,election,candidate,candidate_id,candidate_name,county,constituency,ward,poll_station,stream
+  ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+   (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
+    geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
  c.commit(); c.close(); session["completed"]=True
  return redirect(url_for("complete"))
 
@@ -453,11 +540,25 @@ def complete():
 @app.get("/tallies")
 def tallies():
  c=con()
- vote_rows=c.execute("SELECT election,candidate,COUNT(*) votes FROM demo_votes GROUP BY election,candidate ORDER BY election,candidate").fetchall()
+ vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes
+ FROM demo_votes
+ GROUP BY election,candidate,candidate_id,candidate_name
+ ORDER BY election,candidate_name,candidate""").fetchall()
  geo_rows=c.execute("SELECT election,poll_station,stream,COUNT(DISTINCT voter_session) votes_cast FROM demo_votes GROUP BY election,poll_station,stream ORDER BY election,poll_station,stream").fetchall()
  c.close()
 
- vote_map={(r["election"],int(r["candidate"])):int(r["votes"]) for r in vote_rows}
+ vote_map={}
+ legacy_vote_map={}
+ vote_name_map={}
+ for r in vote_rows:
+  cid=(r["candidate_id"] or "").strip()
+  if cid:
+   vote_map[(r["election"],cid)]=vote_map.get((r["election"],cid),0)+int(r["votes"])
+   vote_name_map[(r["election"],cid)]=(r["candidate_name"] or cid)
+  else:
+   try: legacy_slot=int(r["candidate"])
+   except: legacy_slot=0
+   legacy_vote_map[(r["election"],legacy_slot)]=legacy_vote_map.get((r["election"],legacy_slot),0)+int(r["votes"])
  reg_index=registered_voter_index()
  hp=hierarchy_payload()
  stream_to_station={norm_key(x["name"]):norm_key(x.get("poll_station_key","")) for x in hp["streams"]}
@@ -468,9 +569,36 @@ def tallies():
  for r in geo_rows: geo_by_election.setdefault(r["election"],[]).append(r)
 
  tally_sections=[]
+ lock=terminal_lock()
+ tally_geo=lock or {}
+ catalog=current_catalog_or_empty(tally_geo)
+
  for e in cfg():
-  candidates=[{"slot":cand["slot"],"name":cand["name"],"votes":vote_map.get((e["key"],cand["slot"]),0)} for cand in e["candidates"]]
-  candidates.sort(key=lambda x:(-x["votes"],x["slot"]))
+  candidates=[]
+  seen=set()
+  for cand in catalog.get(e["key"],[]):
+   cid=cand["candidate_id"]
+   seen.add(cid)
+   candidates.append({
+    "slot":cand["slot"],"candidate_id":cid,"name":cand["name"],
+    "membership_no":cand.get("membership_no",""),
+    "votes":vote_map.get((e["key"],cid),0)
+   })
+  for (ek,cid),votes in vote_map.items():
+   if ek==e["key"] and cid not in seen:
+    candidates.append({
+     "slot":999999,"candidate_id":cid,
+     "name":vote_name_map.get((ek,cid),cid),
+     "membership_no":"","votes":votes
+    })
+  for (ek,slot),votes in legacy_vote_map.items():
+   if ek==e["key"]:
+    candidates.append({
+     "slot":slot,"candidate_id":f"LEGACY-{slot}",
+     "name":f"Legacy Candidate {slot}",
+     "membership_no":"","votes":votes
+    })
+  candidates.sort(key=lambda x:(-x["votes"],x["name"].lower()))
   previous_votes=None; previous_rank=0
   for position,cand in enumerate(candidates,start=1):
    if previous_votes is None or cand["votes"]!=previous_votes: previous_rank=position

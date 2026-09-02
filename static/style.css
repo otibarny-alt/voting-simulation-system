@@ -203,3 +203,18 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .gps-help{font-size:.9em;margin-bottom:8px}
 
 .gps-open-status{margin:10px 0;padding:9px;border:1px solid #aaa;border-radius:6px;font-weight:600}
+
+.candidate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin-top:16px}
+.candidate-profile-card{border:2px solid #ddd;border-radius:12px;background:#fff;overflow:hidden}
+.candidate-profile-card input{position:absolute;opacity:0;pointer-events:none}
+.candidate-profile-card label{display:flex;gap:14px;padding:14px;cursor:pointer;height:100%;margin:0}
+.candidate-profile-card:has(input:checked){border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.08)}
+.candidate-profile-card:has(input:checked) label{background:#f0f6ff}
+.candidate-photo-wrap{width:110px;min-width:110px;height:138px;border-radius:8px;overflow:hidden;background:#eee;border:1px solid #ccc}
+.candidate-photo-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.candidate-no-photo{height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:#666;font-size:13px}
+.candidate-profile-text{min-width:0}
+.candidate-name{font-weight:800;font-size:20px;line-height:1.15;margin-bottom:6px}
+.candidate-meta{font-size:13px;color:#666;margin-bottom:8px}
+.candidate-bio{font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+@media(max-width:600px){.candidate-grid{grid-template-columns:1fr}.candidate-photo-wrap{width:95px;min-width:95px;height:119px}.candidate-name{font-size:18px}}

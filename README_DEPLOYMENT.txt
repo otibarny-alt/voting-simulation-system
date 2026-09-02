@@ -466,3 +466,31 @@ Existing stream records opened before V22.9 will not contain stored opening GPS.
 the report attempts a browser GPS fallback and labels it clearly as a current-device fallback.
 
 TRAINING / SIMULATION ONLY.
+
+
+V22.10 — CANDIDATE REGISTRATION PORTAL INTEGRATION
+==================================================
+TRAINING / SIMULATION ONLY — NOT FOR OFFICIAL OR BINDING ELECTION USE.
+
+Add this Render environment variable to the TRAINING BALLOT web service:
+CANDIDATE_PORTAL_BASE_URL=https://your-candidate-registration-service.onrender.com
+
+Do not add a trailing slash.
+
+Candidate scope:
+President = National
+Governor = County
+Senator = County
+Woman Representative = County
+MNA = Constituency
+MCA = Ward
+
+The training ballot sends its locked County, Constituency and Ward to the Candidate
+Registration Portal API and receives only active candidates applicable to that location.
+
+The ballot displays candidate photo, full name, Candidate ID, membership number and bio.
+Simulated vote records now store stable Candidate ID and Candidate Name snapshots so
+later candidate reordering does not change the identity of previously cast simulation votes.
+
+If candidate data is unavailable, the ballot blocks the affected simulated position instead
+of falling back to placeholder candidates.

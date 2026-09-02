@@ -1,15 +1,50 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>{{e.title}} — Training Ballot</b><span>Ballot {{step+1}} of {{total}}</span></header><div class=demo>TRAINING / SIMULATION ONLY — not an official ballot.</div><div class=wrap><div class=card><h2>Select one {{e.title}} candidate</h2>{% if error %}<p>{{error}}</p>{% endif %}<div id=selection_status class=muted aria-live=polite>Select a candidate.</div><form method=post><div class=grid>{% for c in e.candidates %}<div class=candidate><input id=c{{c.slot}} type=radio name=candidate value={{c.slot}} {% if selected==c.slot %}checked{% endif %}><label for=c{{c.slot}}><div class=photo>{{c.slot}}</div><b>{{c.name}}</b></label></div>{% endfor %}</div><div class=actions>{% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}<button>Save choice & continue</button></div></form></div></div>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'>
+<header><b>{{e.title}} — Training Ballot</b><span>Ballot {{step+1}} of {{total}}</span></header>
+<div class=demo>TRAINING / SIMULATION ONLY — not an official ballot.</div>
+<div class=wrap><div class=card>
+<h2>Select one {{e.title}} candidate</h2>
+{% if error %}<div class=vote-error>{{error}}</div>{% endif %}
+{% if e.candidates %}
+<div id=selection_status class=muted aria-live=polite>Select a candidate.</div>
+<form method=post>
+<div class="candidate-grid">
+{% for c in e.candidates %}
+<div class="candidate-profile-card">
+ <input id="c{{loop.index}}" type=radio name=candidate value="{{c.candidate_id}}" {% if selected==c.candidate_id %}checked{% endif %}>
+ <label for="c{{loop.index}}">
+  <div class="candidate-photo-wrap">
+   {% if c.photo_url %}<img src="{{c.photo_url}}" alt="{{c.name}}">{% else %}<div class="candidate-no-photo">No photo</div>{% endif %}
+  </div>
+  <div class="candidate-profile-text">
+   <div class="candidate-name">{{c.name}}</div>
+   <div class="candidate-meta">{{c.candidate_id}}{% if c.membership_no %} · {{c.membership_no}}{% endif %}</div>
+   {% if c.bio %}<div class="candidate-bio">{{c.bio}}</div>{% endif %}
+  </div>
+ </label>
+</div>
+{% endfor %}
+</div>
+<div class=actions>
+ {% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}
+ <button>Save choice & continue</button>
+</div>
+</form>
+{% else %}
+<div class="vote-error">Voting cannot continue until candidate data is available for this position and electoral area.</div>
+<div class=actions>{% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% endif %}</div>
+{% endif %}
+</div></div>
 <script>
 const radios=[...document.querySelectorAll('input[name="candidate"]')];
 const status=document.getElementById('selection_status');
 function updateSelection(){
+ if(!status) return;
  const r=radios.find(x=>x.checked);
  if(r){
-   const label=document.querySelector('label[for="'+r.id+'"] b');
-   status.textContent=(label?label.textContent:'Candidate '+r.value)+' selected.';
- }else{
-   status.textContent='Select a candidate.';
- }
+   const card=r.closest('.candidate-profile-card');
+   const name=card?card.querySelector('.candidate-name'):null;
+   status.textContent=(name?name.textContent:'Candidate')+' selected.';
+ }else status.textContent='Select a candidate.';
 }
 radios.forEach(r=>r.addEventListener('change',updateSelection));
 updateSelection();
