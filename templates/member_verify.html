@@ -5,15 +5,15 @@
 <div class=demo>TRAINING / SIMULATION ONLY — not official voting.</div>
 <div class=wrap>
  <div class=card>
-  <h2>Kobo Membership Photo Verification</h2>
+  <h2>ODM Membership Photo Verification</h2>
   <p>Compare the voter physically present with the two photographs below before continuing to the simulated ballot.</p>
 
   <div class="member-details">
    <div><b>National ID:</b> {{member.national_id}}</div>
    <div><b>Name:</b> {{member.full_name or "Not available"}}</div>
    <div><b>ODM Membership No:</b> {{member.membership_no or "Not available"}}</div>
-   <div><b>Kobo Polling Station:</b> {{member.polling_station_label or member.polling_station_key or "Not available"}}</div>
-   <div><b>Kobo Polling Station Key:</b> {{member.polling_station_key or "Not available"}}</div>
+   <div><b>ODM Polling Station:</b> {{member.polling_station_label or member.polling_station_key or "Not available"}}</div>
+   <div><b>ODM Polling Station Key:</b> {{member.polling_station_key or "Not available"}}</div>
    <div><b>Locked Voting Station:</b> {{geo.poll_station}}</div>
    <div><b>Locked Stream:</b> {{geo.stream}}</div>
   </div>
@@ -42,18 +42,18 @@
   {% if station_match %}
   <div class="station-match">
    ✓ POLLING STATION MATCH CONFIRMED<br>
-   This voter is registered in the Kobo Membership Portal at the same polling station as this locked voting terminal.
+   This voter is registered in the ODM Membership Portal at the same polling station as this locked voting terminal.
   </div>
   {% else %}
   <div class="station-mismatch">
    ✕ POLLING STATION MISMATCH — VOTING DISALLOWED<br>
-   Kobo station: <b>{{member.polling_station_label or member.polling_station_key or "Not available"}}</b><br>
+   ODM station: <b>{{member.polling_station_label or member.polling_station_key or "Not available"}}</b><br>
    Locked voting station: <b>{{geo.poll_station}}</b>
   </div>
   {% endif %}
 
   <div class="identity-warning">
-   Continue only after the officer has visually confirmed that the person presenting the ID matches the Kobo membership photographs.
+   Continue only after the officer has visually confirmed that the person presenting the ID matches the ODM membership photographs.
   </div>
 
   <div class=actions>

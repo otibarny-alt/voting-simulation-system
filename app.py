@@ -174,7 +174,7 @@ def station_key(v):
 
 def lookup_member(national_id):
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
-  raise RuntimeError("Kobo membership connection is not configured.")
+  raise RuntimeError("ODM membership connection is not configured.")
  url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/"
  q={"basics/national_id_no":str(national_id)}
  r=requests.get(url,headers=kobo_headers(),params={"query":json.dumps(q)},timeout=25)
@@ -378,10 +378,10 @@ def start():
  try:
   row=lookup_member(voter)
  except Exception as e:
-  return render_template("verify.html",error=f"Unable to verify voter from Kobo Membership Portal: {e}")
+  return render_template("verify.html",error=f"Unable to verify voter from ODM Membership Portal: {e}")
 
  if not row:
-  return render_template("verify.html",error=f"National ID {voter} was not found in the Kobo Membership Recruitment Portal.")
+  return render_template("verify.html",error=f"National ID {voter} was not found in the ODM Membership Registration Database.")
 
  member=member_view(row)
 
@@ -415,7 +415,7 @@ def confirm_member():
    member=member,
    geo=geo,
    station_match=False,
-   error="VOTING NOT ALLOWED: the polling station recorded in the Kobo Membership Portal does not match this terminal's locked polling station."
+   error="VOTING NOT ALLOWED: the polling station recorded in the ODM Membership Registration Database does not match this terminal's locked polling station."
   )
  voter=session.get("pending_voter_id")
  previous=previous_vote(voter)

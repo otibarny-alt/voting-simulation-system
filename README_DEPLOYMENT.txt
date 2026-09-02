@@ -299,16 +299,16 @@ The working V22 ballot and stream-lock flow is otherwise unchanged.
 TRAINING / SIMULATION ONLY.
 
 
-V22.2 — KOBO MEMBERSHIP PHOTO VERIFICATION GATE
+V22.2 — ODM MEMBERSHIP PHOTO VERIFICATION GATE
 Built from stable V22.1 training simulation.
 
 Before the simulated ballot begins:
 - Officer enters National ID.
-- App queries the Kobo Membership Recruitment Portal.
+- App queries the ODM Membership Registration Database.
 - The matching member's ID Photo and Passport Photo are displayed side by side.
 - Member name, membership number and membership polling station are also displayed when available.
 - Officer must click "Identity Confirmed — Continue to Simulation Ballot".
-- A member not found in Kobo cannot proceed.
+- A member not found in the ODM Membership Registration Database cannot proceed.
 - Existing duplicate-voter and locked-stream checks remain in place.
 
 Membership form fields used:
@@ -326,17 +326,17 @@ KOBO_BASE_URL=https://kf.kobotoolbox.org
 MEMBERSHIP_ASSET_UID=<UID OF MEMBERSHIP RECRUITMENT PORTAL>
 KOBO_API_TOKEN=<YOUR EXISTING KOBO TOKEN>
 
-Photos are proxied server-side so the Kobo API token is not exposed to the browser.
+Photos are proxied server-side so the membership database API token is not exposed to the browser.
 
 IMPORTANT: This package connects membership verification only to the NON-BINDING TRAINING /
 SIMULATION ballot. It is not designed or provided for recording binding political votes.
 
 
-V22.3 — KOBO POLLING-STATION MATCH GATE
+V22.3 — ODM POLLING-STATION MATCH GATE
 Built from V22.2.
 
 The voter can proceed to the training/simulation ballot only when the polling station stored
-in the Kobo Membership Recruitment Portal matches the polling station locked on the voting terminal.
+in the ODM Membership Registration Database matches the polling station locked on the voting terminal.
 
 Membership fields used for station matching, in priority order:
 - electorals_units/selected_poll_station1
