@@ -52,6 +52,12 @@
 {% endif %}
 </div></div>
 <script>
+document.querySelectorAll('button[type="submit"]').forEach(function(btn){
+ btn.addEventListener('click',function(){
+  document.querySelectorAll('button[type="submit"]').forEach(function(x){x.classList.remove('button-selected');});
+  btn.classList.add('button-selected');
+ });
+});
 const radios=[...document.querySelectorAll('input[name="candidate"]')];
 const status=document.getElementById('selection_status');
 function updateSelection(){

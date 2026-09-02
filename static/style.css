@@ -349,3 +349,50 @@ input[type="button"]{
   text-align:center;
 }
 @media(max-width:600px){.final-save-button{min-width:0;width:100%;font-size:20px!important}}
+
+/* V22.19 — centered final save + clear selected/clicked button states */
+.final-save-actions{
+  justify-content:center !important;
+  align-items:center !important;
+}
+.final-save-button{
+  background:#111 !important;
+  color:#fff !important;
+  margin-left:auto !important;
+  margin-right:auto !important;
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease,transform .08s ease,box-shadow .12s ease;
+}
+.final-save-button:hover{background:#2b2b2b !important;filter:none !important}
+.final-save-button:focus-visible,
+.final-save-button.button-selected,
+.final-save-button:active{
+  background:#198754 !important;
+  border-color:#0f5132 !important;
+  color:#fff !important;
+  box-shadow:0 4px 0 #0f5132 !important;
+}
+.review-edit{
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease;
+}
+.review-edit:hover{background:#303030 !important}
+.review-edit:focus-visible,
+.review-edit.button-selected,
+.review-edit:active{
+  background:#0d6efd !important;
+  border-color:#084298 !important;
+  color:#fff !important;
+}
+.actions button:not(.skip-button):not(.final-save-button):focus-visible,
+.actions button:not(.skip-button):not(.final-save-button).button-selected,
+.actions button:not(.skip-button):not(.final-save-button):active{
+  background:#198754 !important;
+  border-color:#0f5132 !important;
+  color:#fff !important;
+}
+.skip-button:focus-visible,
+.skip-button.button-selected,
+.skip-button:active{
+  background:#b26a00 !important;
+  border-color:#7a4900 !important;
+  color:#fff !important;
+}
