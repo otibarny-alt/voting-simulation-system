@@ -254,3 +254,68 @@ button:disabled{opacity:.55;cursor:not-allowed}
  .candidate-photo-wrap{width:150px;min-width:150px;height:188px}
  .skip-button{font-size:20px!important}
 }
+
+
+/* V22.14 — softer skip section + pointer cursors */
+.skip-zone{
+  margin-top:20px;
+  border:1px solid #d9a5aa !important;
+  border-radius:10px !important;
+  background:#fff8f8 !important;
+  padding:12px 14px !important;
+  text-align:center;
+}
+
+.skip-warning{
+  gap:3px !important;
+  margin-bottom:10px !important;
+}
+
+.skip-warning strong{
+  font-size:16px !important;
+  color:#7d1a24 !important;
+}
+
+.skip-warning span{
+  font-size:14px !important;
+  font-weight:600 !important;
+  color:#555 !important;
+}
+
+.skip-button{
+  width:auto !important;
+  min-width:320px;
+  max-width:100%;
+  background:#8f1f2d !important;
+  color:#fff !important;
+  border:1px solid #741824 !important;
+  border-radius:8px !important;
+  padding:11px 18px !important;
+  font-size:17px !important;
+  font-weight:800 !important;
+  letter-spacing:0 !important;
+  cursor:pointer !important;
+}
+
+.skip-button:hover{
+  filter:brightness(.95);
+}
+
+button,
+.btn,
+input[type="submit"],
+input[type="button"]{
+  cursor:pointer !important;
+}
+
+.actions button{
+  cursor:pointer !important;
+}
+
+@media(max-width:600px){
+  .skip-button{
+    min-width:0;
+    width:100% !important;
+    font-size:16px !important;
+  }
+}

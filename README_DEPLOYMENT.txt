@@ -548,3 +548,20 @@ Per-stream and per-polling-station tables also show category skips separately.
 
 Skip records are stored with the internal candidate_id sentinel "__SKIP__".
 They are excluded from candidate ranking and candidate vote totals.
+
+
+V22.14 — SOFTER SKIP SECTION + POINTER CURSORS
+=============================================
+TRAINING / SIMULATION ONLY.
+
+The SKIP section has been visually reduced so it remains clear without dominating
+the candidate-selection screen.
+
+Changes:
+- thinner border
+- lighter background
+- smaller warning heading and explanation
+- smaller, narrower SKIP button
+- SKIP remains clearly distinct from selecting a candidate
+- mouse cursor changes to a pointing hand over SKIP and Save/Continue buttons
+- pointer cursor also applies to other button-style controls
