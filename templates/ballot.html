@@ -33,9 +33,9 @@
  </button>
 </div>
 
-<div class=actions>
+<div class="actions ballot-save-actions">
  {% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}
- <button type="submit" name="action" value="choose">Save selected candidate & continue</button>
+ <button type="submit" name="action" value="choose" class="ballot-save-button">SAVE SELECTED CANDIDATE & CONTINUE</button>
 </div>
 </form>
 {% else %}
