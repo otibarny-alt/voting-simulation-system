@@ -1,7 +1,11 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'>
 <header><b>{{e.title}} — Training Ballot</b><span>Ballot {{step+1}} of {{total}}</span></header>
 <div class=demo>TRAINING / SIMULATION ONLY — not an official ballot.</div>
-<div class=wrap><div class=card>
+<div class=wrap>
+<div class="odm-screen-header project-screen-brand">
+ <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
+</div>
+<div class=card>
 <h2>Select one {{e.title}} candidate</h2>
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if previously_skipped %}<div class="skip-previous">You previously chose to SKIP this category. You may select a candidate now or skip again.</div>{% endif %}

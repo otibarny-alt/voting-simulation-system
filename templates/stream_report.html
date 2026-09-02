@@ -1,5 +1,9 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
-<div class=report-page><div class=no-print><button onclick="window.print()">Print A4 Report</button></div>
+<div class=report-page>
+<div class="odm-screen-header project-screen-brand">
+ <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
+</div>
+<div class=no-print><button onclick="window.print()">Print A4 Report</button></div>
 {% if report_header_image_url %}
 <div class="print-report-header"><img src="{{report_header_image_url}}" alt="Report Header"></div>
 {% endif %}

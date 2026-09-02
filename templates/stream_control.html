@@ -1,6 +1,10 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
 <header><b>Voting Stream Control</b><a href="/">Training ballot</a></header><div class=demo>TRAINING / SIMULATION ONLY</div>
-<div class=wrap><div class=card><h2>Pre-Opening / Closing Control</h2>
+<div class=wrap>
+<div class="odm-screen-header project-screen-brand">
+ <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
+</div>
+<div class=card><h2>Pre-Opening / Closing Control</h2>
 {% if terminal_lock %}
 <div class="terminal-lock-banner"><b>THIS TERMINAL IS LOCKED</b><br>
 Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{terminal_lock.stream}}<br>

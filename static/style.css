@@ -459,3 +459,11 @@ input[type="button"]{
   .odm-screen-header { margin-bottom: 10px; padding-bottom: 6px; }
   .odm-screen-header-image { width: 100%; }
 }
+
+/* V22.23: consistent ODM project identity header on every application screen */
+.project-screen-brand {
+  margin-top: 0;
+}
+@media print {
+  .project-screen-brand { display:none !important; }
+}

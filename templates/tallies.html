@@ -2,6 +2,10 @@
 <header><b>Simulated Tally Dashboard</b><a href=/>Training ballot</a></header>
 <div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
 <div class=wrap>
+<div class="odm-screen-header project-screen-brand">
+ <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
+</div>
+
 {% for s in sections %}
 <div class="card tally-section" id="tally-{{s.key}}">
 {% if report_header_image_url %}
