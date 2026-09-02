@@ -645,3 +645,33 @@ instead of falling back to insecure browser-only locking.
 
 This database is separate from the existing SQLite simulated vote store in V22.16;
 it is used specifically as the authoritative global terminal-lock registry.
+
+
+V22.17 — OPENING REPORT USES REGISTERED CANDIDATE NAMES
+=======================================================
+TRAINING / SIMULATION ONLY.
+
+The Voting Stream Opening Report no longer prints hard-coded rows such as:
+Candidate 1, Candidate 2, Candidate 3, etc.
+
+When the report is opened, the simulation uses the stream's stored:
+- County
+- Constituency
+- Ward
+
+to query the connected Candidate Registration & Profile Portal.
+
+The Opening Certification — Candidate Agents section now lists the actual active
+registered candidate names applicable to that stream:
+- President: national candidates
+- Governor: candidates for the stream's county
+- Senator: candidates for the stream's county
+- Woman Representative: candidates for the stream's county
+- MNA: candidates for the stream's constituency
+- MCA: candidates for the stream's ward
+
+If a position has no active registered candidate, the report states that no active
+registered candidate was found instead of displaying placeholder Candidate numbers.
+
+The Candidate Registration Portal connection continues to use:
+CANDIDATE_PORTAL_BASE_URL

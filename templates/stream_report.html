@@ -17,17 +17,26 @@
 <h2>Opening Certification — Candidate Agents</h2>
 <p>We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.</p>
 
-{% set positions = [
- ("President",10),("Governor",6),("Senator",6),
- ("Woman Representative",6),("MNA",6),("MCA",6)
-] %}
-{% for position,count in positions %}
+{% if candidate_error %}
+<div class="vote-error">{{candidate_error}}</div>
+{% endif %}
+
+{% for position in position_rows %}
 <div class="signature-section">
-<h3>{{position}}</h3>
+<h3>{{position.title}}</h3>
 <table class="agent-sign-table">
 <tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>
-{% for n in range(1,count+1) %}
-<tr><td>Candidate {{n}}</td><td class=sig></td><td class=sig></td><td class=sig></td></tr>
+{% for candidate in position.candidates %}
+<tr>
+ <td><b>{{candidate.name}}</b></td>
+ <td class=sig></td>
+ <td class=sig></td>
+ <td class=sig></td>
+</tr>
+{% else %}
+<tr>
+ <td colspan="4"><b>No active registered candidate found for {{position.title}} in this electoral area.</b></td>
+</tr>
 {% endfor %}
 </table>
 </div>

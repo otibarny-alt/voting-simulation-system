@@ -550,10 +550,37 @@ def stream_report():
  row=stream_session(ps,st)
  if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
  c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
+
+ geo={
+  "county":row["county"] or "",
+  "constituency":row["constituency"] or "",
+  "ward":row["ward"] or "",
+  "poll_station":row["poll_station"] or "",
+  "stream":row["stream"] or ""
+ }
+
+ candidate_error=""
+ try:
+  catalog=candidate_portal_catalog(geo)
+ except Exception as exc:
+  catalog={k:[] for k,_,_ in ELECTIONS}
+  candidate_error=f"Registered candidate names could not be loaded from the Candidate Registration Portal: {exc}"
+
+ position_rows=[
+  {"key":"president","title":"President","candidates":catalog.get("president",[])},
+  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
+  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
+  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
+  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
+  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])}
+ ]
+
  return render_template("stream_report.html",row=row,
   open_time=VOTING_OPEN_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME))
+  open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),
+  position_rows=position_rows,
+  candidate_error=candidate_error)
 
 @app.get("/")
 def home(): return render_template("verify.html")
