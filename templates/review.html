@@ -7,27 +7,25 @@
   <div class="muted">Please confirm this is your ID before saving the simulated ballot.</div>
 </div>
 
-<div class="review-help">
-  <b>Confirm your selections using the candidate photographs and names below.</b>
-</div>
+<div class="review-help"><b>Confirm each category using the candidate photograph and name. A red SKIPPED card means you deliberately made no selection in that category.</b></div>
 
 <div class="review-candidate-grid">
 {% for e in elections %}
 {% set picked=choices.get(e.key) %}
-<div class="review-candidate-card">
+<div class="review-candidate-card {% if picked and picked.skipped %}review-skipped-card{% endif %}">
   <div class="review-election">{{e.title}}</div>
-  <div class="review-photo">
-    {% if picked and picked.photo_url %}
-      <img src="{{picked.photo_url}}" alt="Photo of {{picked.candidate_name}}">
-    {% else %}
-      <div class="review-no-photo">No photo</div>
-    {% endif %}
-  </div>
-  <div class="review-candidate-name">
-    {% if picked and picked.candidate_name %}{{picked.candidate_name}}{% else %}—{% endif %}
-  </div>
-  {% if picked and picked.candidate_id %}
-    <div class="review-candidate-id">{{picked.candidate_id}}</div>
+  {% if picked and picked.skipped %}
+    <div class="review-skip-symbol">SKIPPED</div>
+    <div class="review-skip-text">No candidate selected in this category</div>
+  {% else %}
+    <div class="review-photo">
+      {% if picked and picked.photo_url %}
+        <img src="{{picked.photo_url}}" alt="Photo of {{picked.candidate_name}}">
+      {% else %}
+        <div class="review-no-photo">No photo</div>
+      {% endif %}
+    </div>
+    <div class="review-candidate-name">{% if picked and picked.candidate_name %}{{picked.candidate_name}}{% else %}—{% endif %}</div>
   {% endif %}
   <a class="btn review-edit" href="/ballot/{{loop.index0}}">Change {{e.title}} choice</a>
 </div>

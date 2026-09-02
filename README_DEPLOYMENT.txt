@@ -510,3 +510,41 @@ and Candidate ID. Each selection has a clearly labelled Change button.
 This visual review is intended to make confirmation easier for users who may have
 difficulty reading candidate names. Candidate photos supplement the names and do
 not replace the existing selection confirmation controls.
+
+
+V22.13 — DELIBERATE CATEGORY SKIP + SKIP STATISTICS
+===================================================
+TRAINING / SIMULATION ONLY.
+
+Each ballot category now includes a very prominent red SKIP button.
+
+The voter is explicitly told that:
+- SKIP means no candidate receives their selection in that category;
+- the voter is intentionally leaving that category without a candidate choice;
+- after confirmation, the system moves to the next category.
+
+The browser displays a confirmation dialog before recording a skip.
+
+Candidate choices are visually simplified to:
+- candidate photograph
+- candidate name
+
+Candidate ID, membership number and biography are no longer displayed in the choice cards.
+
+REVIEW SCREEN
+A skipped category appears as a prominent red SKIPPED card.
+A selected candidate appears with photograph and name.
+
+TALLY / PARTICIPATION STATISTICS
+For each elective category, reports now show:
+- votes cast for candidates;
+- voters who skipped the category;
+- registered voters;
+- skipped / registered-voters count and percentage;
+- total category participation;
+- registered voters who gave no response in that category.
+
+Per-stream and per-polling-station tables also show category skips separately.
+
+Skip records are stored with the internal candidate_id sentinel "__SKIP__".
+They are excluded from candidate ranking and candidate vote totals.

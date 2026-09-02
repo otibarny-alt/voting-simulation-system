@@ -4,9 +4,10 @@
 <div class=wrap><div class=card>
 <h2>Select one {{e.title}} candidate</h2>
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
+{% if previously_skipped %}<div class="skip-previous">You previously chose to SKIP this category. You may select a candidate now or skip again.</div>{% endif %}
 {% if e.candidates %}
-<div id=selection_status class=muted aria-live=polite>Select a candidate.</div>
-<form method=post>
+<div id=selection_status class=muted aria-live=polite>Select a candidate, or deliberately skip this category.</div>
+<form method=post id="ballotForm">
 <div class="candidate-grid">
 {% for c in e.candidates %}
 <div class="candidate-profile-card">
@@ -15,23 +16,39 @@
   <div class="candidate-photo-wrap">
    {% if c.photo_url %}<img src="{{c.photo_url}}" alt="{{c.name}}">{% else %}<div class="candidate-no-photo">No photo</div>{% endif %}
   </div>
-  <div class="candidate-profile-text">
-   <div class="candidate-name">{{c.name}}</div>
-   <div class="candidate-meta">{{c.candidate_id}}{% if c.membership_no %} · {{c.membership_no}}{% endif %}</div>
-   {% if c.bio %}<div class="candidate-bio">{{c.bio}}</div>{% endif %}
-  </div>
+  <div class="candidate-name">{{c.name}}</div>
  </label>
 </div>
 {% endfor %}
 </div>
+
+<div class="skip-zone">
+ <div class="skip-warning">
+  <strong>DO NOT WANT TO CHOOSE A CANDIDATE IN THIS CATEGORY?</strong>
+  <span>Use SKIP only if you intentionally want to make no selection for {{e.title}} and move to the next category.</span>
+ </div>
+ <button type="submit" name="action" value="skip" class="skip-button"
+   onclick="return confirm('You are choosing to SKIP the {{e.title}} category. No candidate will receive your selection in this category. You will move to the next category. Do you want to continue?');">
+   SKIP {{e.title|upper}} — NO SELECTION
+ </button>
+</div>
+
 <div class=actions>
  {% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% else %}<span></span>{% endif %}
- <button>Save choice & continue</button>
+ <button type="submit" name="action" value="choose">Save selected candidate & continue</button>
 </div>
 </form>
 {% else %}
-<div class="vote-error">Voting cannot continue until candidate data is available for this position and electoral area.</div>
-<div class=actions>{% if step>0 %}<a class='btn secondary' href='/ballot/{{step-1}}'>Back</a>{% endif %}</div>
+<div class="vote-error">No active candidates are available for this category.</div>
+<form method=post>
+ <div class="skip-zone">
+  <div class="skip-warning"><strong>NO CANDIDATE AVAILABLE.</strong><span>You may deliberately skip this category and continue.</span></div>
+  <button type="submit" name="action" value="skip" class="skip-button"
+   onclick="return confirm('You are choosing to SKIP the {{e.title}} category and move to the next category. Continue?');">
+   SKIP {{e.title|upper}} — NO SELECTION
+  </button>
+ </div>
+</form>
 {% endif %}
 </div></div>
 <script>
@@ -44,7 +61,7 @@ function updateSelection(){
    const card=r.closest('.candidate-profile-card');
    const name=card?card.querySelector('.candidate-name'):null;
    status.textContent=(name?name.textContent:'Candidate')+' selected.';
- }else status.textContent='Select a candidate.';
+ }else status.textContent='Select a candidate, or deliberately skip this category.';
 }
 radios.forEach(r=>r.addEventListener('change',updateSelection));
 updateSelection();

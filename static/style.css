@@ -232,3 +232,25 @@ button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:900px){.review-candidate-grid{grid-template-columns:repeat(2,minmax(210px,1fr))}}
 @media(max-width:560px){.review-candidate-grid{grid-template-columns:1fr}.review-photo{width:200px;height:250px}.review-election{font-size:24px}.review-candidate-name{font-size:22px}}
 @media print{.review-edit,.actions{display:none!important}}
+
+/* V22.13 deliberate skip option */
+.candidate-profile-card label{flex-direction:column;align-items:center;text-align:center}
+.candidate-photo-wrap{width:170px;min-width:170px;height:213px}
+.candidate-name{font-size:22px;font-weight:900;text-align:center;margin-top:8px}
+.skip-zone{margin-top:24px;border:4px solid #b00020;border-radius:14px;background:#fff0f1;padding:18px;text-align:center}
+.skip-warning{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.skip-warning strong{font-size:20px;color:#8a0018}
+.skip-warning span{font-size:16px;font-weight:700}
+.skip-button{width:100%;background:#b00020!important;color:#fff!important;border:4px solid #64000f!important;border-radius:10px!important;padding:18px 20px!important;font-size:24px!important;font-weight:900!important;letter-spacing:.4px}
+.skip-button:hover{filter:brightness(.92)}
+.skip-previous{border:3px solid #b00020;background:#fff0f1;color:#8a0018;font-weight:900;padding:12px;border-radius:10px;margin-bottom:14px}
+.review-skipped-card{border:4px solid #b00020!important;background:#fff0f1!important}
+.review-skip-symbol{font-size:30px;font-weight:1000;color:#b00020;padding:35px 8px 10px}
+.review-skip-text{font-size:18px;font-weight:800;color:#7a0015;min-height:80px}
+.skip-summary{border:2px solid #b00020!important}
+.skip-summary strong{color:#b00020}
+.skip-summary small{display:block;margin-top:4px;font-weight:800}
+@media(max-width:600px){
+ .candidate-photo-wrap{width:150px;min-width:150px;height:188px}
+ .skip-button{font-size:20px!important}
+}

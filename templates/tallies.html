@@ -29,19 +29,21 @@
 <div class=participation>
 <h3>Voter Participation Summary</h3>
 <div class=summary-grid>
-<div class=summary-box><span>Total Votes Cast</span><strong>{{s.total_votes_cast}}</strong></div>
+<div class=summary-box><span>Votes Cast for a Candidate</span><strong>{{s.total_votes_cast}}</strong></div>
+<div class="summary-box skip-summary"><span>Voters Who Skipped This Category</span><strong>{{s.total_skipped}}</strong></div>
 <div class=summary-box><span>Registered Voters — Streams</span><strong>{{s.stream_registered_total}}</strong></div>
-<div class=summary-box><span>Registered Voters — Stations</span><strong>{{s.station_registered_total}}</strong></div>
-<div class=summary-box><span>Total Votes Not Cast</span><strong>{{s.total_not_cast}}</strong></div>
+<div class="summary-box skip-summary"><span>Skipped / Registered Voters</span><strong>{{s.total_skipped}} / {{s.stream_registered_total}}</strong><small>{{"%.1f"|format(s.skip_rate)}}%</small></div>
+<div class=summary-box><span>Category Participation</span><strong>{{s.total_participation}}</strong></div>
+<div class=summary-box><span>No Response in Category</span><strong>{{s.total_not_cast}}</strong></div>
 </div>
-<h4>Registered Voters / Votes Cast Per Stream</h4>
-<table><tr><th>Stream</th><th>Votes Cast</th><th>Registered Voters</th><th>Votes Not Cast</th></tr>
-{% for x in s.streams %}<tr><td>{{x.name}}</td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
-{% else %}<tr><td colspan=4>No simulated votes yet.</td></tr>{% endfor %}</table>
-<h4>Registered Voters / Votes Cast Per Polling Station</h4>
-<table><tr><th>Polling Station</th><th>No. of Streams</th><th>Votes Cast</th><th>Registered Voters</th><th>Votes Not Cast</th></tr>
-{% for x in s.stations %}<tr><td>{{x.name}}</td><td><b>{{x.streams_count}}</b></td><td>{{x.votes_cast}}</td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
-{% else %}<tr><td colspan=5>No simulated votes yet.</td></tr>{% endfor %}</table>
+<h4>Candidate Votes / Skips Per Stream</h4>
+<table><tr><th>Stream</th><th>Candidate Votes</th><th>Skipped Category</th><th>Registered Voters</th><th>No Response</th></tr>
+{% for x in s.streams %}<tr><td>{{x.name}}</td><td>{{x.votes_cast}}</td><td><b>{{x.skipped}}</b></td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
+{% else %}<tr><td colspan=5>No simulated participation yet.</td></tr>{% endfor %}</table>
+<h4>Candidate Votes / Skips Per Polling Station</h4>
+<table><tr><th>Polling Station</th><th>No. of Streams</th><th>Candidate Votes</th><th>Skipped Category</th><th>Registered Voters</th><th>No Response</th></tr>
+{% for x in s.stations %}<tr><td>{{x.name}}</td><td><b>{{x.streams_count}}</b></td><td>{{x.votes_cast}}</td><td><b>{{x.skipped}}</b></td><td>{{x.registered}}</td><td>{{x.not_cast}}</td></tr>
+{% else %}<tr><td colspan=6>No simulated participation yet.</td></tr>{% endfor %}</table>
 
 
 <div class="agent-certification">

@@ -484,23 +484,38 @@ def ballot(step):
   )
 
  if request.method=="POST":
+  action=str(request.form.get("action","choose")).strip().lower()
+  choices=dict(session.get("choices",{}))
+
+  if action=="skip":
+   choices[e["key"]]={
+    "candidate_id":"__SKIP__",
+    "candidate_name":"SKIPPED",
+    "membership_no":"",
+    "slot":0,
+    "skipped":True
+   }
+   session["choices"]=choices
+   return redirect(url_for("ballot",step=step+1)) if step+1<len(structure) else redirect(url_for("review"))
+
   selected_id=str(request.form.get("candidate","")).strip()
   selected=next((x for x in e["candidates"] if x["candidate_id"]==selected_id),None)
   if not selected:
-   return render_template("ballot.html",e=e,step=step,total=len(structure),error="Choose one registered candidate.",selected=None)
-  choices=dict(session.get("choices",{}))
+   return render_template("ballot.html",e=e,step=step,total=len(structure),error="Choose one registered candidate or use the SKIP button.",selected=None)
   choices[e["key"]]={
    "candidate_id":selected["candidate_id"],
    "candidate_name":selected["name"],
    "membership_no":selected.get("membership_no",""),
-   "slot":selected["slot"]
+   "slot":selected["slot"],
+   "skipped":False
   }
   session["choices"]=choices
   return redirect(url_for("ballot",step=step+1)) if step+1<len(structure) else redirect(url_for("review"))
 
  saved=session.get("choices",{}).get(e["key"],{})
- selected_id=saved.get("candidate_id") if isinstance(saved,dict) else None
- return render_template("ballot.html",e=e,step=step,total=len(structure),selected=selected_id)
+ selected_id=saved.get("candidate_id") if isinstance(saved,dict) and not saved.get("skipped") else None
+ return render_template("ballot.html",e=e,step=step,total=len(structure),selected=selected_id,
+                        previously_skipped=bool(isinstance(saved,dict) and saved.get("skipped")))
 
 @app.get("/review")
 def review():
@@ -520,14 +535,17 @@ def review():
   if not isinstance(picked,dict):
    continue
   item=dict(picked)
-  current=next(
-   (c for c in catalog.get(e["key"],[]) if c.get("candidate_id")==picked.get("candidate_id")),
-   None
-  )
-  if current:
-   item["photo_url"]=current.get("photo_url")
-   item["membership_no"]=current.get("membership_no") or item.get("membership_no","")
-   item["bio"]=current.get("bio","")
+  if picked.get("skipped") or picked.get("candidate_id")=="__SKIP__":
+   item["skipped"]=True
+   item["photo_url"]=None
+  else:
+   current=next(
+    (c for c in catalog.get(e["key"],[]) if c.get("candidate_id")==picked.get("candidate_id")),
+    None
+   )
+   if current:
+    item["photo_url"]=current.get("photo_url")
+   item["skipped"]=False
   review_choices[e["key"]]=item
 
  return render_template(
@@ -575,7 +593,12 @@ def tallies():
  FROM demo_votes
  GROUP BY election,candidate,candidate_id,candidate_name
  ORDER BY election,candidate_name,candidate""").fetchall()
- geo_rows=c.execute("SELECT election,poll_station,stream,COUNT(DISTINCT voter_session) votes_cast FROM demo_votes GROUP BY election,poll_station,stream ORDER BY election,poll_station,stream").fetchall()
+ geo_rows=c.execute("""SELECT election,poll_station,stream,
+ COUNT(DISTINCT voter_session) participation,
+ COUNT(DISTINCT CASE WHEN candidate_id='__SKIP__' THEN voter_session END) skipped
+ FROM demo_votes
+ GROUP BY election,poll_station,stream
+ ORDER BY election,poll_station,stream""").fetchall()
  c.close()
 
  vote_map={}
@@ -583,6 +606,8 @@ def tallies():
  vote_name_map={}
  for r in vote_rows:
   cid=(r["candidate_id"] or "").strip()
+  if cid=="__SKIP__":
+   continue
   if cid:
    vote_map[(r["election"],cid)]=vote_map.get((r["election"],cid),0)+int(r["votes"])
    vote_name_map[(r["election"],cid)]=(r["candidate_name"] or cid)
@@ -635,32 +660,53 @@ def tallies():
    if previous_votes is None or cand["votes"]!=previous_votes: previous_rank=position
    cand["rank"]=previous_rank; previous_votes=cand["votes"]
 
-  stream_summary=[]; station_acc={}; election_cast=0; stream_registered_total=0
+  stream_summary=[]; station_acc={}; election_cast=0; election_skipped=0; election_participation=0; stream_registered_total=0
   for r in geo_by_election.get(e["key"],[]):
    sk=norm_key(r["stream"]); pk=norm_key(r["poll_station"]) or stream_to_station.get(sk,"")
-   cast=int(r["votes_cast"] or 0); registered=reg_index.get(sk,0)
-   election_cast+=cast; stream_registered_total+=registered
-   stream_summary.append({"name":stream_labels.get(sk,(r["stream"] or "").replace("_"," ").title()),
-                          "votes_cast":cast,"registered":registered,"not_cast":max(0,registered-cast)})
-   st=station_acc.setdefault(pk,{"name":station_labels.get(pk,(r["poll_station"] or "").replace("_"," ").title()),
-                                "votes_cast":0,"registered":0})
+   participation=int(r["participation"] or 0)
+   skipped=int(r["skipped"] or 0)
+   cast=max(0,participation-skipped)
+   registered=reg_index.get(sk,0)
+   election_cast+=cast
+   election_skipped+=skipped
+   election_participation+=participation
+   stream_registered_total+=registered
+   stream_summary.append({
+    "name":stream_labels.get(sk,(r["stream"] or "").replace("_"," ").title()),
+    "votes_cast":cast,
+    "skipped":skipped,
+    "participation":participation,
+    "registered":registered,
+    "not_cast":max(0,registered-participation)
+   })
+   st=station_acc.setdefault(pk,{
+    "name":station_labels.get(pk,(r["poll_station"] or "").replace("_"," ").title()),
+    "votes_cast":0,"skipped":0,"participation":0,"registered":0
+   })
    st["votes_cast"]+=cast
+   st["skipped"]+=skipped
+   st["participation"]+=participation
 
   # A station's registered total includes every stream assigned to that station.
   for pk,st in station_acc.items():
    station_streams=[sk for sk,parent in stream_to_station.items() if parent==pk]
    st["streams_count"]=len(station_streams)
    st["registered"]=sum(reg_index.get(sk,0) for sk in station_streams)
-   st["not_cast"]=max(0,st["registered"]-st["votes_cast"])
+   st["not_cast"]=max(0,st["registered"]-st["participation"])
 
   station_summary=sorted(station_acc.values(),key=lambda x:x["name"])
   stream_summary.sort(key=lambda x:x["name"])
   station_registered_total=sum(x["registered"] for x in station_summary)
 
+  skip_rate=(100.0*election_skipped/stream_registered_total) if stream_registered_total else 0.0
   tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates,
-   "total_votes_cast":election_cast,"stream_registered_total":stream_registered_total,
+   "total_votes_cast":election_cast,
+   "total_skipped":election_skipped,
+   "total_participation":election_participation,
+   "skip_rate":skip_rate,
+   "stream_registered_total":stream_registered_total,
    "station_registered_total":station_registered_total,
-   "total_not_cast":max(0,stream_registered_total-election_cast),
+   "total_not_cast":max(0,stream_registered_total-election_participation),
    "streams":stream_summary,"stations":station_summary})
 
  return render_template("tallies.html",sections=tally_sections)
