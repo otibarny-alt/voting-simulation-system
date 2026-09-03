@@ -699,3 +699,15 @@ On the Voting Stream Control screen:
 - the heading is centered;
 - it appears inside an orange ribbon directly below the ODM project header;
 - the rest of the stream-control functionality remains unchanged.
+
+
+V22.28 — RESET BUTTON ALIGNMENT FIX
+===================================
+The previous V22.27 CSS targeted the wrong form class.
+
+The actual template uses:
+terminal-reset-form
+reset-terminal-btn
+
+V22.28 targets those exact classes, centers the Reset Terminal for New Stream
+button, and changes the button to orange immediately when clicked.

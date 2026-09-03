@@ -13,7 +13,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 {% if terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
 <form method="post" action="/terminal/reset" class="terminal-reset-form"
       onsubmit="return confirm('Reset this terminal and choose a different polling station/stream?');">
- <button type="submit" class="reset-terminal-btn" class="reset-terminal-button">Reset Terminal for New Stream</button>
+ <button type="submit" class="reset-terminal-btn reset-terminal-button" onclick="this.classList.add('reset-clicked')">Reset Terminal for New Stream</button>
 </form>
 {% else %}
 <p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes. Close the stream first.</p>
