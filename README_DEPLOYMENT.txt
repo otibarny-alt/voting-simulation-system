@@ -762,3 +762,23 @@ A manually crafted POST request therefore cannot bypass the disabled screen.
 
 The user must use "Open Voting Stream & Print Opening Report" to complete the
 pre-opening process before voter verification can begin.
+
+
+V22.35 — RESET BEFORE ACTIVE TERMINAL LOCK
+==========================================
+TRAINING / SIMULATION ONLY.
+
+A previous central terminal assignment is no longer treated as an active voting lock.
+
+Correct workflow:
+1. If the device still has a previous assignment, Voting Stream Control shows
+   "PREVIOUS TERMINAL ASSIGNMENT DETECTED — RESET REQUIRED".
+2. Voter ID entry stays disabled.
+3. The operator presses Reset Terminal for New Stream.
+4. The previous central lock is released.
+5. The operator selects a new County / Constituency / Ward / Polling Station / Stream.
+6. GPS is captured, zero pre-cast votes are verified, and the new stream is opened.
+7. Only then is the terminal treated as locked for voting and voter verification is enabled.
+
+The central PostgreSQL ownership protection is retained so another device cannot take over
+an active stream.

@@ -445,6 +445,7 @@ def terminal_reset():
 
  session.clear()
  session["awaiting_new_stream_after_reset"]=True
+ session["terminal_reset_completed"]=True
  resp=redirect(url_for("stream_control"))
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
  resp.delete_cookie(TERMINAL_OWNER_COOKIE)
@@ -454,12 +455,14 @@ def terminal_reset():
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
+ current_lock=terminal_lock()
  return render_template(
   "stream_control.html",
   row=row,poll_station=ps,stream=st,
   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-  post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked"))
+  post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked")),
+  reset_required=bool(current_lock and not session.get("active_stream_after_reset"))
  )
 
 @app.post("/stream/open")
@@ -525,10 +528,12 @@ def open_stream():
  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
  c.commit(); c.close()
 
- if session.pop("awaiting_new_stream_after_reset",False):
+ if session.pop("awaiting_new_stream_after_reset",False) and session.get("terminal_reset_completed"):
   session["post_reset_new_stream_locked"]=True
+  session["active_stream_after_reset"]=True
  else:
   session.pop("post_reset_new_stream_locked",None)
+  session.pop("active_stream_after_reset",None)
 
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
@@ -598,6 +603,10 @@ def voting_stream_ready():
   return False,None,None
  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
  if not row or not row["opened_at"] or row["closed_at"]:
+  return False,lock,row
+ # A previous/stale device lock is not active for voter entry.
+ # The operator must first reset the terminal, then open a new stream.
+ if not session.get("active_stream_after_reset"):
   return False,lock,row
  return True,lock,row
 
@@ -1115,13 +1124,18 @@ def inject_report_branding():
  row=None
  if lock:
   row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
-  ready=bool(row and row["opened_at"] and not row["closed_at"] and lock.get("session_date")==today_iso())
+  ready=bool(
+   row and row["opened_at"] and not row["closed_at"]
+   and lock.get("session_date")==today_iso()
+   and session.get("active_stream_after_reset")
+  )
  return {
   "report_header_image_url": REPORT_HEADER_IMAGE_URL,
   "terminal_lock": lock,
   "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0,
   "stream_ready": ready,
-  "stream_row": row
+  "stream_row": row,
+  "reset_required": bool(lock and not session.get("active_stream_after_reset"))
  }
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))

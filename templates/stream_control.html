@@ -11,9 +11,14 @@
 <div class="pre-opening-ribbon">Pre-Opening Control</div>
 {% endif %}
 {% if terminal_lock %}
-<div class="terminal-lock-banner"><b>THIS TERMINAL IS LOCKED</b><br>
-Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{terminal_lock.stream}}<br>
+<div class="terminal-lock-banner">
+{% if reset_required %}
+<b>PREVIOUS TERMINAL ASSIGNMENT DETECTED — RESET REQUIRED</b><br>
+This terminal is <b>not yet locked for voting</b>. Reset the terminal first, then select and open the new voting stream.
+{% else %}
+<b>THIS TERMINAL IS LOCKED</b><br>
 The polling-station stream is centrally reserved to this device. Another device cannot unlock, close, reset, or take over this lock.
+{% endif %}
 </div>
 {% if post_reset_new_stream_locked %}
 <div class="terminal-reset-form">

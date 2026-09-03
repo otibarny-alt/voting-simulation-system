@@ -41,8 +41,11 @@
    <div class="unassigned-station-panel">
     <div class="unassigned-title">This computer is not yet assigned to any polling station.</div>
     <div class="unassigned-help">
-     Open and assign a voting stream first. Voter ID entry will remain disabled until
-     the voting stream has been locked and the pre-opening report has been generated.
+     {% if reset_required %}
+     A previous terminal assignment exists. Reset the terminal first, then select and open the new voting stream and generate the pre-opening report.
+     {% else %}
+     Open and assign a voting stream first. Voter ID entry will remain disabled until the voting stream has been locked and the pre-opening report has been generated.
+     {% endif %}
     </div>
    </div>
 
