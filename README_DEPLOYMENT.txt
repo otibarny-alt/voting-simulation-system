@@ -688,3 +688,14 @@ On the voter verification screen:
   "ODM Voter ID & Photo Verification" ribbon;
 - the button has a black background, orange border, hover/press feedback and pointer cursor;
 - the rest of the verification screen is unchanged.
+
+
+V22.26 — PRE-OPENING CONTROL ORANGE RIBBON
+==========================================
+TRAINING / SIMULATION ONLY.
+
+On the Voting Stream Control screen:
+- "Pre-Opening / Closing Control" has been changed to "Pre-Opening Control";
+- the heading is centered;
+- it appears inside an orange ribbon directly below the ODM project header;
+- the rest of the stream-control functionality remains unchanged.

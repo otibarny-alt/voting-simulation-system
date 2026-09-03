@@ -540,3 +540,25 @@ input[type="button"]{
     padding:12px 14px;
   }
 }
+
+
+/* V22.26 — Pre-Opening Control ribbon */
+.pre-opening-ribbon{
+  background:#f58220;
+  color:#111;
+  text-align:center;
+  font-size:30px;
+  font-weight:900;
+  line-height:1.2;
+  padding:14px 18px;
+  margin:0 0 18px;
+  border-radius:8px;
+  letter-spacing:.2px;
+}
+
+@media(max-width:600px){
+  .pre-opening-ribbon{
+    font-size:22px;
+    padding:12px 14px;
+  }
+}
