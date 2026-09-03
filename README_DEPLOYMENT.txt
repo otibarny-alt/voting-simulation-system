@@ -711,3 +711,13 @@ reset-terminal-btn
 
 V22.28 targets those exact classes, centers the Reset Terminal for New Stream
 button, and changes the button to orange immediately when clicked.
+
+
+V22.29 — TRAINING BALLOT BUTTON ON STREAM CONTROL
+=================================================
+TRAINING / SIMULATION ONLY.
+
+On the Stream Control screen, the previous "Reset Terminal for New Stream"
+control has been replaced with a centered "Training Ballot" button.
+It opens the Training Ballot/home screen and retains the same button styling,
+pointer cursor and orange click feedback.

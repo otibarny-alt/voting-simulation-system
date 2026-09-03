@@ -11,10 +11,9 @@ Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{termin
 The polling-station stream is centrally reserved to this device. Another device cannot unlock, close, reset, or take over this lock.
 </div>
 {% if terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
-<form method="post" action="/terminal/reset" class="terminal-reset-form"
-      onsubmit="return confirm('Reset this terminal and choose a different polling station/stream?');">
- <button type="submit" class="reset-terminal-btn reset-terminal-button" onclick="this.classList.add('reset-clicked')">Reset Terminal for New Stream</button>
-</form>
+<div class="terminal-reset-form">
+ <a href="/" class="reset-terminal-btn reset-terminal-button training-ballot-button" onclick="this.classList.add('reset-clicked')">Training Ballot</a>
+</div>
 {% else %}
 <p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes. Close the stream first.</p>
 {% endif %}
