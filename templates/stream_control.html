@@ -160,6 +160,9 @@ if(openBtn){
   <b>VOTING STREAM PERMANENTLY CLOSED</b><br>
   This stream cannot be reopened after formal closing.
  </div>
+ <div class="closed-tally-action">
+  <a class="closed-tally-btn" href="/tallies">Open / View / Print Tally Dashboard</a>
+ </div>
 {% endif %}
 <p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening Report</a> <small>(opens in a new tab)</small></p>
 {% endif %}</div></div>

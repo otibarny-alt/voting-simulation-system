@@ -981,3 +981,48 @@ input[type="button"]{
   font-weight:900;
   color:#111;
 }
+
+
+/* V22.43 — tally dashboard becomes available immediately after formal closing */
+.closed-tally-action{
+  display:flex;
+  justify-content:center;
+  margin:20px 0 10px;
+}
+
+.closed-tally-btn{
+  display:inline-block;
+  min-width:420px;
+  box-sizing:border-box;
+  text-align:center;
+  background:#111;
+  color:#fff !important;
+  text-decoration:none !important;
+  border:3px solid #f58220;
+  border-radius:10px;
+  padding:15px 24px;
+  font-size:19px;
+  font-weight:900;
+  cursor:pointer;
+  box-shadow:0 3px 0 #b95400;
+}
+
+.closed-tally-btn:hover{
+  background:#f58220;
+  color:#111 !important;
+}
+
+.closed-tally-btn:active{
+  background:#198754;
+  color:#fff !important;
+  transform:translateY(2px);
+  box-shadow:0 1px 0 #0c4c2e;
+}
+
+@media(max-width:600px){
+  .closed-tally-btn{
+    min-width:0;
+    width:100%;
+    font-size:17px;
+  }
+}

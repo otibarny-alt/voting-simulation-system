@@ -878,3 +878,23 @@ The stream-control route now also derives Polling Station and Stream from the
 authoritative terminal lock when the screen is opened without query parameters.
 This prevents the UI from incorrectly saying the browser does not own the stream
 simply because the URL omitted the polling-station/stream values.
+
+
+V22.43 — TALLIES AVAILABLE AFTER FORMAL CLOSING
+===============================================
+TRAINING / SIMULATION ONLY.
+
+This fixes the case where the tally dashboard remained unavailable after the
+voting stream had already been formally closed.
+
+On successful closing:
+- active voting access is removed;
+- a signed read-only closed-stream reference is stored on the same device;
+- the closed stream remains permanently non-reopenable;
+- /tallies becomes available for that closed stream;
+- the Voting Control screen displays:
+  "Open / View / Print Tally Dashboard";
+- the completion screen also enables the tally dashboard only when closed.
+
+Before formal closing, /tallies still returns the locked screen and cannot be viewed
+or printed.

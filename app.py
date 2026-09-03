@@ -274,6 +274,7 @@ except Exception as _lock_init_error:
 TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
 TERMINAL_OWNER_COOKIE = "training_terminal_owner_token"
 TERMINAL_ACTIVE_COOKIE = "training_terminal_active_stream"
+TERMINAL_CLOSED_COOKIE = "training_terminal_closed_stream"
 TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
 
 def terminal_serializer():
@@ -438,6 +439,20 @@ def time_status(ts,expected):
  except Exception: return None
 
 
+def closed_stream_cookie():
+ raw=request.cookies.get(TERMINAL_CLOSED_COOKIE,"")
+ if not raw:
+  return None
+ try:
+  data=terminal_serializer().loads(raw)
+ except BadSignature:
+  return None
+ if not isinstance(data,dict):
+  return None
+ if not data.get("session_date") or not data.get("poll_station") or not data.get("stream"):
+  return None
+ return data
+
 def terminal_active_after_reset(lock=None):
  if not lock:
   lock=terminal_lock()
@@ -506,6 +521,7 @@ def terminal_reset():
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
  resp.delete_cookie(TERMINAL_OWNER_COOKIE)
  resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
+ resp.delete_cookie(TERMINAL_CLOSED_COOKIE)
  return resp
 
 @app.get("/stream-control")
@@ -704,8 +720,19 @@ def close_stream():
  c.commit(); c.close()
 
  # Once closed, the terminal cannot vote again on this stream.
+ # Preserve a signed read-only reference so the closed stream's tally dashboard
+ # remains available for opening, viewing and printing.
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
+ resp.set_cookie(
+  TERMINAL_CLOSED_COOKIE,
+  terminal_serializer().dumps({
+   "session_date":lock.get("session_date",today_iso()),
+   "poll_station":ps,
+   "stream":st
+  }),
+  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
+ )
  return resp
 
 @app.get("/stream/report")
@@ -1138,12 +1165,18 @@ def complete():
 
 def tallies_available():
  lock=terminal_lock()
- if not lock:
-  return False,None,None
- row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
- if not row or not row["closed_at"]:
-  return False,lock,row
- return True,lock,row
+ if lock:
+  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+  if row and row["closed_at"]:
+   return True,lock,row
+
+ closed_ref=closed_stream_cookie()
+ if closed_ref and closed_ref.get("session_date")==today_iso():
+  row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+  if row and row["closed_at"]:
+   return True,closed_ref,row
+
+ return False,lock,None
 
 @app.get("/tallies")
 def tallies():
@@ -1192,8 +1225,8 @@ def tallies():
  for r in geo_rows: geo_by_election.setdefault(r["election"],[]).append(r)
 
  tally_sections=[]
- lock=terminal_lock()
- tally_geo=lock or {}
+ available,tally_ref,closed_row=tallies_available()
+ tally_geo=tally_ref or {}
  catalog=current_catalog_or_empty(tally_geo)
 
  for e in cfg():
@@ -1296,12 +1329,18 @@ def inject_report_branding():
    and lock.get("session_date")==today_iso()
    and terminal_active_after_reset(lock)
   )
+ closed_ref=closed_stream_cookie()
+ closed_row=None
+ if closed_ref and closed_ref.get("session_date")==today_iso():
+  closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+
  return {
   "report_header_image_url": REPORT_HEADER_IMAGE_URL,
   "terminal_lock": lock,
   "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0,
   "stream_ready": ready,
-  "stream_row": row,
+  "stream_row": row or closed_row,
+  "closed_stream_row": closed_row,
   "reset_required": bool(lock and not terminal_active_after_reset(lock))
  }
 
