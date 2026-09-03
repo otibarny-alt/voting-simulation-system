@@ -281,7 +281,7 @@ TRAINING / SIMULATION ONLY.
 V22.1 — CONTROLLED TERMINAL RESET
 Built directly from stable V22.
 
-Adds "Reset Terminal for New Stream" on the Stream Control page.
+Adds "Training Ballot" on the Stream Control page.
 
 Reset is allowed only when:
 1. No simulated ballot has yet been cast in the currently locked polling-station stream; OR
@@ -695,7 +695,7 @@ V22.26 — PRE-OPENING CONTROL ORANGE RIBBON
 TRAINING / SIMULATION ONLY.
 
 On the Voting Stream Control screen:
-- "Pre-Opening / Closing Control" has been changed to "Pre-Opening Control";
+- "Pre-Opening / Closing Control" has been changed to "Voting Control";
 - the heading is centered;
 - it appears inside an orange ribbon directly below the ODM project header;
 - the rest of the stream-control functionality remains unchanged.
@@ -709,5 +709,15 @@ The actual template uses:
 terminal-reset-form
 reset-terminal-btn
 
-V22.28 targets those exact classes, centers the Reset Terminal for New Stream
+V22.28 targets those exact classes, centers the Training Ballot
 button, and changes the button to orange immediately when clicked.
+
+
+V22.29 — TRAINING BALLOT BUTTON ON STREAM CONTROL
+=================================================
+TRAINING / SIMULATION ONLY.
+
+On the Stream Control screen, the previous "Training Ballot"
+control has been replaced with a centered "Training Ballot" button.
+It opens the Training Ballot/home screen and retains the same button styling,
+pointer cursor and orange click feedback.

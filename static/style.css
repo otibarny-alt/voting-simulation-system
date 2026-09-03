@@ -542,7 +542,7 @@ input[type="button"]{
 }
 
 
-/* V22.26 — Pre-Opening Control ribbon */
+/* V22.26 — Voting Control ribbon */
 .pre-opening-ribbon{
   background:#f58220;
   color:#111;
@@ -647,4 +647,19 @@ input[type="button"]{
     min-width:0;
     width:100%;
   }
+}
+
+
+/* V22.29 — Training Ballot button replaces Reset Terminal control */
+.training-ballot-button{
+  text-decoration:none !important;
+  text-align:center;
+}
+.training-ballot-button:visited{
+  color:#fff !important;
+}
+.training-ballot-button:active,
+.training-ballot-button.reset-clicked{
+  background:#f58220 !important;
+  color:#111 !important;
 }
