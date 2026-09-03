@@ -1238,6 +1238,7 @@ def tallies():
    candidates.append({
     "slot":cand["slot"],"candidate_id":cid,"name":cand["name"],
     "membership_no":cand.get("membership_no",""),
+    "photo_url":cand.get("photo_url"),
     "votes":vote_map.get((e["key"],cid),0)
    })
   for (ek,cid),votes in vote_map.items():
@@ -1245,14 +1246,14 @@ def tallies():
     candidates.append({
      "slot":999999,"candidate_id":cid,
      "name":vote_name_map.get((ek,cid),cid),
-     "membership_no":"","votes":votes
+     "membership_no":"","photo_url":None,"votes":votes
     })
   for (ek,slot),votes in legacy_vote_map.items():
    if ek==e["key"]:
     candidates.append({
      "slot":slot,"candidate_id":f"LEGACY-{slot}",
      "name":f"Legacy Candidate {slot}",
-     "membership_no":"","votes":votes
+     "membership_no":"","photo_url":None,"votes":votes
     })
   candidates.sort(key=lambda x:(-x["votes"],x["name"].lower()))
   previous_votes=None; previous_rank=0

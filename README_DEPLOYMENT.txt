@@ -907,3 +907,18 @@ TRAINING / SIMULATION ONLY.
 Removed the visible "Reset all simulated votes" control from the bottom of
 the tally dashboard. The tally dashboard remains a post-closing results,
 viewing and printing screen.
+
+
+V22.45 — CANDIDATE IMAGES ON FINAL TALLY REPORT
+===============================================
+TRAINING / SIMULATION ONLY.
+
+The post-closing final tally report now displays each registered candidate's
+Candidate Portal photograph beside the candidate name and vote count.
+
+Candidate photographs are also displayed in the candidate-agent certification
+table at a smaller print-friendly size.
+
+The photographs use the existing photo_url supplied by the connected Candidate
+Registration & Profile Portal. Candidates without an available photo display a
+"No photo" placeholder.

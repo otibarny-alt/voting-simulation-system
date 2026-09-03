@@ -27,8 +27,25 @@
   <div><b>Location Status:</b> <span class="report-location-status">Waiting for print</span></div>
  </div>
 </div>
-<table><tr><th>Rank</th><th>Candidate</th><th>Votes</th></tr>
-{% for c in s.candidates %}<tr><td><b>#{{c.rank}}</b></td><td>{{c.name}}{% if c.candidate_id %}<br><small>{{c.candidate_id}}</small>{% endif %}</td><td><b>{{c.votes}}</b></td></tr>{% endfor %}
+<table class="candidate-tally-table">
+<tr><th>Rank</th><th>Photo</th><th>Candidate</th><th>Votes</th></tr>
+{% for c in s.candidates %}
+<tr>
+ <td><b>#{{c.rank}}</b></td>
+ <td class="tally-photo-cell">
+  {% if c.photo_url %}
+   <img class="tally-candidate-photo" src="{{c.photo_url}}" alt="{{c.name}}">
+  {% else %}
+   <div class="tally-photo-placeholder">No photo</div>
+  {% endif %}
+ </td>
+ <td>
+  <b>{{c.name}}</b>
+  {% if c.candidate_id %}<br><small>{{c.candidate_id}}</small>{% endif %}
+ </td>
+ <td><b>{{c.votes}}</b></td>
+</tr>
+{% endfor %}
 </table>
 <div class=participation>
 <h3>Voter Participation Summary</h3>
@@ -57,7 +74,14 @@
   <tr><th>Candidate</th><th>Agent Name</th><th>Signature</th><th>Date / Time</th></tr>
   {% for c in s.candidates %}
   <tr>
-   <td>{{c.name}}{% if c.candidate_id %}<br><small>{{c.candidate_id}}</small>{% endif %}</td>
+   <td>
+    <div class="cert-candidate">
+     {% if c.photo_url %}
+      <img class="cert-candidate-photo" src="{{c.photo_url}}" alt="{{c.name}}">
+     {% endif %}
+     <div>{{c.name}}{% if c.candidate_id %}<br><small>{{c.candidate_id}}</small>{% endif %}</div>
+    </div>
+   </td>
    <td class="signature-space"></td>
    <td class="signature-space"></td>
    <td class="signature-space"></td>
