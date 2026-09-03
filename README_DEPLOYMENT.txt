@@ -898,3 +898,12 @@ On successful closing:
 
 Before formal closing, /tallies still returns the locked screen and cannot be viewed
 or printed.
+
+
+V22.44 — REMOVE RESET BUTTON FROM TALLY VIEW
+============================================
+TRAINING / SIMULATION ONLY.
+
+Removed the visible "Reset all simulated votes" control from the bottom of
+the tally dashboard. The tally dashboard remains a post-closing results,
+viewing and printing screen.
