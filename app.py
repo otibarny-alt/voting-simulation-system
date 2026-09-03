@@ -2,13 +2,16 @@ import os, sqlite3, csv, json, re, hmac, secrets, hashlib
 import requests
 import psycopg
 from psycopg.rows import dict_row
-from datetime import datetime, date
+from datetime import datetime, date, time as dt_time
+from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 DB=os.getenv("DEMO_DB_PATH","training_votes.db")
+KENYA_TZ=ZoneInfo("Africa/Nairobi")
+OFFICIAL_CLOSE_TIME="18:00"
 
 ELECTIONS=[
  ("president","President",10),("governor","Governor",6),("senator","Senator",6),
@@ -49,6 +52,17 @@ CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
+
+def kenya_now():
+ return datetime.now(KENYA_TZ)
+
+def official_close_reached():
+ now=kenya_now()
+ close_t=dt_time(18,0)
+ return now.time() >= close_t
+
+def close_time_message():
+ return "18:00 (6:00 PM) Africa/Nairobi"
 
 def candidate_portal_catalog(geo):
  if not CANDIDATE_PORTAL_BASE_URL:
@@ -127,9 +141,11 @@ def init_global_lock_db():
       owner_token_hash TEXT NOT NULL,
       locked_at TEXT NOT NULL,
       released_at TEXT,
+      closed_at TEXT,
       PRIMARY KEY(session_date,poll_station,stream)
     )
    """)
+   cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
   conn.commit()
 
 def token_hash(token):
@@ -178,6 +194,10 @@ def claim_global_lock(lock_data, owner_token):
   conn.commit()
  if claimed:
   return True,row
+ # A formally closed stream can never be reopened on the same election/session date.
+ if row and row.get("closed_at"):
+  return False,row
+
  # If an earlier record was explicitly released by the owning device, allow a fresh claim.
  if row and row.get("released_at"):
   with lock_db() as conn:
@@ -208,6 +228,22 @@ def owns_global_lock(lock_data, owner_token):
  if not row or row.get("released_at"):
   return False
  return hmac.compare_digest(row.get("owner_token_hash",""),token_hash(owner_token))
+
+def mark_global_stream_closed(lock_data, owner_token):
+ if not owns_global_lock(lock_data,owner_token):
+  return False
+ now=kenya_now().isoformat(timespec="seconds")
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    UPDATE simulation_terminal_locks
+    SET closed_at=%s
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+      AND owner_token_hash=%s AND closed_at IS NULL
+   """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
+   ok=cur.rowcount==1
+  conn.commit()
+ return ok
 
 def release_global_lock(lock_data, owner_token):
  """
@@ -483,12 +519,35 @@ def stream_control():
   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
   post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked")),
-  reset_required=bool(current_lock and not terminal_active_after_reset(current_lock))
+  reset_required=bool(current_lock and not terminal_active_after_reset(current_lock)),
+  can_close_now=official_close_reached(),
+  official_close_time=close_time_message()
  )
 
 @app.post("/stream/open")
 def open_stream():
  f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
+
+ # A stream formally closed today is permanently closed and cannot be reopened.
+ previous_session=stream_session(ps,st)
+ if previous_session and previous_session["closed_at"]:
+  return render_template(
+   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="REOPENING BLOCKED: this voting stream has already been formally closed and cannot be reopened.",
+   can_close_now=official_close_reached(),official_close_time=close_time_message()
+  )
+
+ central_existing=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
+ if central_existing and central_existing.get("closed_at"):
+  return render_template(
+   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="REOPENING BLOCKED: this voting stream has already been formally closed and cannot be reopened.",
+   can_close_now=official_close_reached(),official_close_time=close_time_message()
+  )
 
  # If this device already owns a valid lock, do not allow it to silently move to another stream.
  existing_local=terminal_lock()
@@ -535,7 +594,7 @@ def open_stream():
    error=f"OPENING BLOCKED: {ps} / {st} is already locked to another device. Lock time: {locked_at or 'recorded centrally'}. This device cannot unlock or take over that stream."
   )
 
- now=datetime.now().astimezone().isoformat(timespec="seconds")
+ now=kenya_now().isoformat(timespec="seconds")
  try: opening_lat=float(f.get("opening_lat","")) if f.get("opening_lat","") else None
  except: opening_lat=None
  try: opening_lon=float(f.get("opening_lon","")) if f.get("opening_lon","") else None
@@ -579,18 +638,58 @@ def open_stream():
 def close_stream():
  ps=request.form.get("poll_station","").strip(); st=request.form.get("stream","").strip()
  lock=terminal_lock()
+
  if not lock or lock.get("poll_station")!=ps or lock.get("stream")!=st:
   return render_template(
    "stream_control.html",row=stream_session(ps,st),poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="Close denied: only the device that owns the central lock for this polling-station stream can close it."
+   error="Close denied: only the device that owns the central lock for this polling-station stream can close it.",
+   can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
+
  row=stream_session(ps,st)
- if row and not row["closed_at"]:
-  c=con(); now=datetime.now().astimezone().isoformat(timespec="seconds")
-  c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=?",(now,row["id"])); c.commit(); c.close()
- return redirect(url_for("stream_control",poll_station=ps,stream=st))
+ if not row:
+  return redirect(url_for("stream_control",poll_station=ps,stream=st))
+
+ if row["closed_at"]:
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="This voting stream has already been formally closed and cannot be reopened.",
+   can_close_now=False,official_close_time=close_time_message()
+  )
+
+ # Official closing is fixed at 18:00 East Africa Time.
+ if not official_close_reached():
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"CLOSING BLOCKED: voting cannot be closed before {close_time_message()}.",
+   can_close_now=False,official_close_time=close_time_message()
+  )
+
+ owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+ if not mark_global_stream_closed(lock,owner):
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="Closing blocked: the central lock could not be marked permanently closed.",
+   can_close_now=True,official_close_time=close_time_message()
+  )
+
+ now=kenya_now().isoformat(timespec="seconds")
+ c=con()
+ c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=? AND closed_at IS NULL",(now,row["id"]))
+ c.commit(); c.close()
+
+ # Once closed, the terminal cannot vote again on this stream.
+ resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
+ resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
+ return resp
 
 @app.get("/stream/report")
 def stream_report():

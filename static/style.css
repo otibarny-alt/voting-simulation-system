@@ -777,3 +777,50 @@ input[type="button"]{
   text-align:center !important;
   font-weight:600 !important;
 }
+
+
+/* V22.38 — strict official 6 PM closure */
+.closing-time-lock{
+  margin:18px 0;
+  padding:16px 18px;
+  text-align:center;
+  border:2px solid #d28a00;
+  border-radius:10px;
+  background:#fff8df;
+  font-size:17px;
+  line-height:1.4;
+}
+
+.close-stream-form{
+  display:flex;
+  justify-content:center;
+  margin:18px 0;
+}
+
+.close-stream-btn{
+  background:#b00020 !important;
+  color:#fff !important;
+  border:2px solid #700014 !important;
+  border-radius:9px !important;
+  padding:14px 22px !important;
+  font-size:18px !important;
+  font-weight:800 !important;
+  cursor:pointer !important;
+}
+
+.close-stream-btn:active{
+  background:#f58220 !important;
+  color:#111 !important;
+}
+
+.stream-permanently-closed{
+  margin:18px 0;
+  padding:18px;
+  text-align:center;
+  border:3px solid #8c0018;
+  border-radius:10px;
+  background:#fff0f2;
+  color:#8c0018;
+  font-size:18px;
+  font-weight:800;
+}

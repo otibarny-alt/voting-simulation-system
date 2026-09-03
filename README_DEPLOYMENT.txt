@@ -809,3 +809,31 @@ Correct behavior:
    authorized owner device performs a controlled reset.
 
 The central PostgreSQL device-ownership lock remains authoritative.
+
+
+V22.38 — STRICT 6:00 PM CLOSING + NO REOPEN
+===========================================
+TRAINING / SIMULATION ONLY.
+
+Official closing is fixed at 18:00 (6:00 PM) Africa/Nairobi.
+
+BEFORE 18:00
+- Close Voting Stream is not available.
+- The control screen states that voting cannot be closed before 18:00.
+- A direct/manually crafted POST to /stream/close is also rejected server-side.
+- The stream remains locked and active for subsequent voters.
+
+AT/AFTER 18:00
+- The owning device may formally close the stream.
+- The close action marks the central PostgreSQL lock with closed_at.
+- The local stream session is also marked closed.
+- The active voting cookie is removed.
+
+AFTER FORMAL CLOSING
+- The stream cannot be reopened.
+- Resetting/releasing the device does not make that same closed stream reusable.
+- /stream/open checks both local stream_sessions and the central PostgreSQL lock.
+- The central claim function refuses to reclaim a row with closed_at set.
+
+This prevents reopening on another device or Render instance as long as DATABASE_URL
+points to the shared PostgreSQL database.

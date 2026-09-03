@@ -50,7 +50,7 @@ The polling-station stream is centrally reserved to this device. Another device 
  <div><label>Polling Station</label><select id=sc_station name=poll_station required disabled><option value="">Select Polling Station</option></select></div>
  <div><label>Stream</label><select id=sc_stream name=stream required disabled><option value="">Select Stream</option></select></div>
 </div>
-<p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Scheduled closing: <b>{{close_time or "Not configured"}}</b></p>
+<p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Official closing: <b>18:00 (6:00 PM)</b></p>
 <div class="open-stream-submit-row"><button type="button" id="open_stream_btn" class="open-stream-submit-btn">Capture GPS, Verify 0 Pre-Cast Votes & Open Stream</button></div></form>
 <script>
 let H=null;
@@ -128,9 +128,26 @@ if(openBtn){
 <p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
 {% if not row["closed_at"] and terminal_lock and terminal_lock.poll_station==row["poll_station"] and terminal_lock.stream==row["stream"] %}
-<form method=post action=/stream/close><input type=hidden name=poll_station value="{{row['poll_station']}}"><input type=hidden name=stream value="{{row['stream']}}"><button>Close Voting Stream</button></form>
+ {% if can_close_now %}
+ <form method=post action=/stream/close class="close-stream-form"
+       onsubmit="return confirm('Close this voting stream permanently? It cannot be reopened after closing.');">
+  <input type=hidden name=poll_station value="{{row['poll_station']}}">
+  <input type=hidden name=stream value="{{row['stream']}}">
+  <button class="close-stream-btn">Close Voting Stream Permanently</button>
+ </form>
+ {% else %}
+ <div class="closing-time-lock">
+  <b>Voting cannot be closed before {{official_close_time}}.</b><br>
+  This stream will remain locked and active for subsequent voters until the official closing time.
+ </div>
+ {% endif %}
 {% elif not row["closed_at"] %}
 <p class="reset-blocked"><b>Device ownership protected:</b> this browser does not own the central lock, so it cannot close or unlock this stream.</p>
+{% else %}
+<div class="stream-permanently-closed">
+ <b>VOTING STREAM PERMANENTLY CLOSED</b><br>
+ This stream cannot be reopened after formal closing.
+</div>
 {% endif %}
 <p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening Report</a> <small>(opens in a new tab)</small></p>
 {% endif %}</div></div>
