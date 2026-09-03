@@ -13,7 +13,10 @@
 {% endif %}
 <div class="tally-heading">
  <h2>{{s.title}}</h2>
- <button type="button" class="print-tally no-print" onclick="printTally('tally-{{s.key}}','{{s.title|e}}')">Print {{s.title}}</button>
+ <div class="tally-actions no-print">
+  <button type="button" class="print-tally" onclick="printTally('tally-{{s.key}}','{{s.title|e}}')">Print {{s.title}}</button>
+  <button type="button" class="email-tally" onclick="emailTally('tally-{{s.key}}','{{s.key}}','{{s.title|e}}',this)">Email {{s.title}}</button>
+ </div>
 </div>
 <div class="report-generation-meta">
  <h4>Report Generation Details</h4>
@@ -209,6 +212,37 @@ async function captureAllReportDetails(){
     },
     {enableHighAccuracy:true,timeout:15000,maximumAge:30000}
   );
+}
+
+async function emailTally(sectionId,election,title,button){
+  const section=document.getElementById(sectionId);
+  if(!section) return;
+  const recipient=window.prompt('Enter the email address for the '+title+' tally report:');
+  if(recipient===null) return;
+  const email=recipient.trim();
+  if(!email) { alert('Please enter an email address.'); return; }
+
+  await captureGpsForSection(section);
+  const clone=section.cloneNode(true);
+  clone.querySelectorAll('.no-print,button').forEach(el=>el.remove());
+  const oldText=button.textContent;
+  button.disabled=true;
+  button.textContent='Sending…';
+  try{
+    const response=await fetch('/email-tally',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:email,election:election,title:title,report_html:clone.outerHTML})
+    });
+    const result=await response.json();
+    if(!response.ok || !result.ok) throw new Error(result.error || 'Email could not be sent.');
+    alert(result.message);
+  }catch(err){
+    alert(err.message || 'Email could not be sent.');
+  }finally{
+    button.disabled=false;
+    button.textContent=oldText;
+  }
 }
 
 async function printTally(sectionId,title){

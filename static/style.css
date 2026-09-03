@@ -1100,3 +1100,10 @@ input[type="button"]{
     height:94px;
   }
 }
+
+/* V22.46 — per-report email control */
+.tally-actions{display:flex;gap:12px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.email-tally{background:#f58220;color:#111;border:2px solid #111;border-radius:10px;padding:14px 22px;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 2px 0 #8a4300}
+.email-tally:hover{filter:brightness(.96)}
+.email-tally:disabled{opacity:.55;cursor:wait}
+@media(max-width:700px){.tally-actions{width:100%;justify-content:center}.email-tally,.print-tally{width:100%}}

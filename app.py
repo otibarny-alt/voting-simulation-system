@@ -1,8 +1,9 @@
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib
 import requests
 import psycopg
 from psycopg.rows import dict_row
 from datetime import datetime, date, time as dt_time
+from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
@@ -12,6 +13,13 @@ app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 DB=os.getenv("DEMO_DB_PATH","training_votes.db")
 KENYA_TZ=ZoneInfo("Africa/Nairobi")
 OFFICIAL_CLOSE_TIME="18:00"
+SMTP_HOST=os.getenv("SMTP_HOST","").strip()
+SMTP_PORT=int(os.getenv("SMTP_PORT","587") or 587)
+SMTP_USERNAME=os.getenv("SMTP_USERNAME","").strip()
+SMTP_PASSWORD=os.getenv("SMTP_PASSWORD","").strip()
+SMTP_FROM_EMAIL=os.getenv("SMTP_FROM_EMAIL",SMTP_USERNAME).strip()
+SMTP_FROM_NAME=os.getenv("SMTP_FROM_NAME","ODM Training Tally Reports").strip()
+SMTP_USE_TLS=os.getenv("SMTP_USE_TLS","true").strip().lower() not in ("0","false","no")
 
 ELECTIONS=[
  ("president","President",10),("governor","Governor",6),("senator","Senator",6),
@@ -1311,6 +1319,49 @@ def tallies():
    "streams":stream_summary,"stations":station_summary})
 
  return render_template("tallies.html",sections=tally_sections)
+
+
+@app.post("/email-tally")
+def email_tally():
+ available,lock,row=tallies_available()
+ if not available:
+  return jsonify({"ok":False,"error":"Tally reports are available only after the voting stream has been officially closed."}),403
+ data=request.get_json(silent=True) or {}
+ recipient=str(data.get("email","")).strip()
+ election=str(data.get("election","")).strip().lower()
+ report_html=str(data.get("report_html","")).strip()
+ allowed={k:t for k,t,_ in ELECTIONS}
+ if election not in allowed:
+  return jsonify({"ok":False,"error":"Invalid tally report."}),400
+ if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",recipient):
+  return jsonify({"ok":False,"error":"Enter a valid email address."}),400
+ if not report_html:
+  return jsonify({"ok":False,"error":"The report content is empty."}),400
+ if not SMTP_HOST or not SMTP_FROM_EMAIL:
+  return jsonify({"ok":False,"error":"Email is not configured on the server. Set the SMTP environment variables in Render."}),503
+ report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
+ safe_title=allowed[election]
+ ref=lock or closed_stream_cookie() or {}
+ station=ref.get("poll_station","")
+ stream=ref.get("stream","")
+ subject=f"{safe_title} Tally Report - {station} - {stream}"
+ css="body{font-family:Arial,sans-serif;color:#111}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{border:1px solid #bbb;padding:8px;text-align:left}img{max-width:120px;height:auto}.report-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.summary-box{border:1px solid #bbb;padding:8px}.signature-space{height:48px}"
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body><div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+ msg=EmailMessage()
+ msg["Subject"]=subject
+ msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+ msg["To"]=recipient
+ msg.set_content(f"{safe_title} training/simulation tally report for {station} / {stream}. Please view this message in HTML format.")
+ msg.add_alternative(html,subtype="html")
+ try:
+  with smtplib.SMTP(SMTP_HOST,SMTP_PORT,timeout=25) as server:
+   if SMTP_USE_TLS: server.starttls()
+   if SMTP_USERNAME: server.login(SMTP_USERNAME,SMTP_PASSWORD)
+   server.send_message(msg)
+ except Exception:
+  app.logger.exception("Tally email failed")
+  return jsonify({"ok":False,"error":"Email could not be sent. Check the SMTP settings on Render."}),502
+ return jsonify({"ok":True,"message":f"{safe_title} tally report emailed to {recipient}."})
 
 @app.post("/reset-demo")
 def reset():

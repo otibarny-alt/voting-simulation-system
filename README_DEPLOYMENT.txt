@@ -922,3 +922,24 @@ table at a smaller print-friendly size.
 The photographs use the existing photo_url supplied by the connected Candidate
 Registration & Profile Portal. Candidates without an available photo display a
 "No photo" placeholder.
+
+V22.46 — EMAIL INDIVIDUAL CLOSED TALLY REPORTS
+===============================================
+TRAINING / SIMULATION ONLY.
+
+Each election tally now has an Email button beside its Print button. The officer
+enters the destination email address and only that election's report is emailed.
+The same post-closing access gate is enforced server-side, so reports cannot be
+emailed before the voting stream has been officially closed.
+
+Add these Render environment variables:
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-sending-email@example.com
+SMTP_PASSWORD=your-provider-app-password
+SMTP_FROM_EMAIL=your-sending-email@example.com
+SMTP_FROM_NAME=ODM Training Tally Reports
+SMTP_USE_TLS=true
+
+For Gmail, SMTP_PASSWORD should be a Google App Password, not the normal account
+password. Other SMTP providers can be used by changing the host, port and login.
