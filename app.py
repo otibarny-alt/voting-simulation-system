@@ -443,19 +443,24 @@ def terminal_reset():
    error="Terminal reset denied: only the device that originally locked this stream can release it."
   )
 
+ session.clear()
+ session["awaiting_new_stream_after_reset"]=True
  resp=redirect(url_for("stream_control"))
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
  resp.delete_cookie(TERMINAL_OWNER_COOKIE)
- session.clear()
  return resp
 
 @app.get("/stream-control")
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
- return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
- open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
- report_header_image_url=REPORT_HEADER_IMAGE_URL)
+ return render_template(
+  "stream_control.html",
+  row=row,poll_station=ps,stream=st,
+  open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+  report_header_image_url=REPORT_HEADER_IMAGE_URL,
+  post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked"))
+ )
 
 @app.post("/stream/open")
 def open_stream():
@@ -520,6 +525,11 @@ def open_stream():
  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
  c.commit(); c.close()
 
+ if session.pop("awaiting_new_stream_after_reset",False):
+  session["post_reset_new_stream_locked"]=True
+ else:
+  session.pop("post_reset_new_stream_locked",None)
+
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
@@ -583,7 +593,9 @@ def stream_report():
   candidate_error=candidate_error)
 
 @app.get("/")
-def home(): return render_template("verify.html")
+def home():
+ session.pop("post_reset_new_stream_locked",None)
+ return render_template("verify.html")
 
 @app.post("/start")
 def start():

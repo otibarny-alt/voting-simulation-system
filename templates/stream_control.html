@@ -4,16 +4,28 @@
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
-<div class=card><div class="pre-opening-ribbon">Voting Control</div>
+<div class=card>
+{% if post_reset_new_stream_locked %}
+<div class="pre-opening-ribbon">Voting Control</div>
+{% else %}
+<div class="pre-opening-ribbon">Pre-Opening Control</div>
+{% endif %}
 {% if terminal_lock %}
 <div class="terminal-lock-banner"><b>THIS TERMINAL IS LOCKED</b><br>
 Polling Station: {{terminal_lock.poll_station}} &nbsp; | &nbsp; Stream: {{terminal_lock.stream}}<br>
 The polling-station stream is centrally reserved to this device. Another device cannot unlock, close, reset, or take over this lock.
 </div>
-{% if terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
+{% if post_reset_new_stream_locked %}
 <div class="terminal-reset-form">
- <a href="/" class="reset-terminal-btn reset-terminal-button training-ballot-button" onclick="this.classList.add('reset-clicked')">Training Ballot</a>
+ <a href="/" class="reset-terminal-btn reset-terminal-button training-ballot-after-reset"
+    onclick="this.classList.add('reset-clicked')">Training Ballot</a>
 </div>
+{% elif terminal_lock_vote_count == 0 or (row and row["closed_at"]) %}
+<form method="post" action="/terminal/reset" class="terminal-reset-form"
+      onsubmit="return confirm('Reset this terminal and choose a different polling station/stream?');">
+ <button type="submit" class="reset-terminal-btn reset-terminal-button"
+         onclick="this.classList.add('reset-clicked')">Reset Terminal for New Stream</button>
+</form>
 {% else %}
 <p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes. Close the stream first.</p>
 {% endif %}

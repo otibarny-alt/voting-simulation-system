@@ -281,7 +281,7 @@ TRAINING / SIMULATION ONLY.
 V22.1 — CONTROLLED TERMINAL RESET
 Built directly from stable V22.
 
-Adds "Training Ballot" on the Stream Control page.
+Adds "Reset Terminal for New Stream" on the Stream Control page.
 
 Reset is allowed only when:
 1. No simulated ballot has yet been cast in the currently locked polling-station stream; OR
@@ -695,7 +695,7 @@ V22.26 — PRE-OPENING CONTROL ORANGE RIBBON
 TRAINING / SIMULATION ONLY.
 
 On the Voting Stream Control screen:
-- "Pre-Opening / Closing Control" has been changed to "Voting Control";
+- "Pre-Opening / Closing Control" has been changed to "Pre-Opening Control";
 - the heading is centered;
 - it appears inside an orange ribbon directly below the ODM project header;
 - the rest of the stream-control functionality remains unchanged.
@@ -709,15 +709,29 @@ The actual template uses:
 terminal-reset-form
 reset-terminal-btn
 
-V22.28 targets those exact classes, centers the Training Ballot
+V22.28 targets those exact classes, centers the Reset Terminal for New Stream
 button, and changes the button to orange immediately when clicked.
 
 
-V22.29 — TRAINING BALLOT BUTTON ON STREAM CONTROL
-=================================================
+V22.31 — CORRECT POST-RESET NEW-STREAM WORKFLOW
+===============================================
 TRAINING / SIMULATION ONLY.
 
-On the Stream Control screen, the previous "Training Ballot"
-control has been replaced with a centered "Training Ballot" button.
-It opens the Training Ballot/home screen and retains the same button styling,
-pointer cursor and orange click feedback.
+This fixes the V22.30 behavior that removed the Reset Terminal control too early.
+
+NORMAL LOCKED STREAM
+- The screen remains "Pre-Opening Control".
+- "Reset Terminal for New Stream" remains available under the existing safe-reset rules.
+- The user can therefore actually reset the current terminal.
+
+AFTER A SUCCESSFUL RESET
+1. The terminal returns to the stream-selection screen.
+2. The user selects and opens/locks a NEW polling-station stream.
+3. Only after that new stream has successfully been locked:
+   - the orange ribbon changes to "Voting Control";
+   - the center button changes to "Training Ballot".
+4. Clicking Training Ballot opens the voter verification/training ballot screen.
+
+The temporary post-reset display state is consumed when the Training Ballot is opened.
+If the user later returns to Voting Stream Control, the normal controlled-reset button
+is available again under the existing reset rules.
