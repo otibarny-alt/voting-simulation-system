@@ -648,11 +648,3 @@ input[type="button"]{
     width:100%;
   }
 }
-
-
-/* V22.31 — post-reset new-stream state only */
-.training-ballot-after-reset{
-  text-decoration:none !important;
-  text-align:center;
-  box-sizing:border-box;
-}

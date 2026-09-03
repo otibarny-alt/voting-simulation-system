@@ -711,27 +711,3 @@ reset-terminal-btn
 
 V22.28 targets those exact classes, centers the Reset Terminal for New Stream
 button, and changes the button to orange immediately when clicked.
-
-
-V22.31 — CORRECT POST-RESET NEW-STREAM WORKFLOW
-===============================================
-TRAINING / SIMULATION ONLY.
-
-This fixes the V22.30 behavior that removed the Reset Terminal control too early.
-
-NORMAL LOCKED STREAM
-- The screen remains "Pre-Opening Control".
-- "Reset Terminal for New Stream" remains available under the existing safe-reset rules.
-- The user can therefore actually reset the current terminal.
-
-AFTER A SUCCESSFUL RESET
-1. The terminal returns to the stream-selection screen.
-2. The user selects and opens/locks a NEW polling-station stream.
-3. Only after that new stream has successfully been locked:
-   - the orange ribbon changes to "Voting Control";
-   - the center button changes to "Training Ballot".
-4. Clicking Training Ballot opens the voter verification/training ballot screen.
-
-The temporary post-reset display state is consumed when the Training Ballot is opened.
-If the user later returns to Voting Stream Control, the normal controlled-reset button
-is available again under the existing reset rules.
