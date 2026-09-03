@@ -6,7 +6,15 @@
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
 <div class=card>
-<h2>Select one {{e.title}} candidate</h2>
+{% set vote_titles = {
+  'president': 'President Vote',
+  'governor': 'Governor Vote',
+  'senator': 'Senator Vote',
+  'woman_rep': 'Women Rep Vote',
+  'mna': 'MP Vote',
+  'mca': 'MCA Vote'
+} %}
+<h2 class="ballot-vote-title ballot-vote-title-{{e.key}}">{{ vote_titles.get(e.key, e.title ~ ' Vote') }}</h2>
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if previously_skipped %}<div class="skip-previous">You previously chose to SKIP this category. You may select a candidate now or skip again.</div>{% endif %}
 {% if e.candidates %}

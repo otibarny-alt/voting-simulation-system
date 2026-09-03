@@ -824,3 +824,30 @@ input[type="button"]{
   font-size:18px;
   font-weight:800;
 }
+
+
+/* V22.39 — pronounced centered ballot category ribbons */
+.ballot-vote-title{
+  display:block !important;
+  width:100% !important;
+  box-sizing:border-box !important;
+  margin:0 auto 24px !important;
+  padding:18px 22px !important;
+  text-align:center !important;
+  font-size:34px !important;
+  line-height:1.15 !important;
+  font-weight:900 !important;
+  letter-spacing:.4px !important;
+  color:#fff !important;
+  background:#e00000 !important;
+  border:3px solid #9f001b !important;
+  border-radius:10px !important;
+  box-shadow:0 5px 0 #790015, 0 8px 16px rgba(0,0,0,.18) !important;
+  text-shadow:0 2px 2px rgba(0,0,0,.35) !important;
+}
+.ballot-vote-title-governor{background:#f58220 !important;color:#111 !important;border-color:#b55300 !important;box-shadow:0 5px 0 #8f4100,0 8px 16px rgba(0,0,0,.18) !important;text-shadow:none !important;}
+.ballot-vote-title-senator{background:#111 !important;color:#fff !important;border-color:#000 !important;box-shadow:0 5px 0 #555,0 8px 16px rgba(0,0,0,.18) !important;}
+.ballot-vote-title-woman_rep{background:#ffbf00 !important;color:#111 !important;border-color:#b77700 !important;box-shadow:0 5px 0 #8e5d00,0 8px 16px rgba(0,0,0,.18) !important;text-shadow:none !important;}
+.ballot-vote-title-mna{background:#0057b8 !important;color:#fff !important;border-color:#003b7c !important;box-shadow:0 5px 0 #002b5b,0 8px 16px rgba(0,0,0,.18) !important;}
+.ballot-vote-title-mca{background:#008b45 !important;color:#fff !important;border-color:#005b2e !important;box-shadow:0 5px 0 #004323,0 8px 16px rgba(0,0,0,.18) !important;}
+@media(max-width:700px){.ballot-vote-title{font-size:27px !important;padding:15px 12px !important;}}
