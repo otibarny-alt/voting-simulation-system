@@ -648,18 +648,3 @@ input[type="button"]{
     width:100%;
   }
 }
-
-
-/* V22.29 — Training Ballot button replaces Reset Terminal control */
-.training-ballot-button{
-  text-decoration:none !important;
-  text-align:center;
-}
-.training-ballot-button:visited{
-  color:#fff !important;
-}
-.training-ballot-button:active,
-.training-ballot-button.reset-clicked{
-  background:#f58220 !important;
-  color:#111 !important;
-}
