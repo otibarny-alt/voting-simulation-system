@@ -972,3 +972,12 @@ input[type="button"]{
     font-size:17px !important;
   }
 }
+
+
+/* V22.42 — show selected polling-station stream */
+.assigned-stream-name{
+  display:inline-block;
+  margin-left:8px;
+  font-weight:900;
+  color:#111;
+}
