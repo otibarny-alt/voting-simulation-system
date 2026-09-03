@@ -742,3 +742,38 @@ input[type="button"]{
 #open_stream_btn.open-stream-submit-btn:active,#open_stream_btn.open-stream-submit-btn.selected{background:#ff7f0e;color:#111;transform:translateY(3px);box-shadow:0 1px 0 #9c4b00;}
 #open_stream_btn.open-stream-submit-btn:disabled{opacity:1;cursor:wait;}
 @media(max-width:650px){#open_stream_btn.open-stream-submit-btn{min-width:0;width:100%;font-size:16px;}}
+
+
+/* V22.36 — centered, large, pronounced voter ID entry */
+.next-voter-title{
+  text-align:center !important;
+  margin:30px auto 18px !important;
+  font-size:30px !important;
+  font-weight:800 !important;
+}
+
+.voter-id-input{
+  display:block !important;
+  width:min(650px, 90%) !important;
+  height:72px !important;
+  margin:0 auto 28px !important;
+  padding:14px 22px !important;
+  box-sizing:border-box !important;
+  border:3px solid #111 !important;
+  border-radius:10px !important;
+  background:#fff !important;
+  font-size:28px !important;
+  font-weight:700 !important;
+  text-align:center !important;
+  box-shadow:0 4px 10px rgba(0,0,0,.15) !important;
+}
+
+.voter-id-input:focus{
+  outline:4px solid #ff821c !important;
+  outline-offset:3px !important;
+}
+
+.voter-id-input::placeholder{
+  text-align:center !important;
+  font-weight:600 !important;
+}

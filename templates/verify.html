@@ -31,8 +31,8 @@
 
    <form method=post action=/start id=voter_form>
     <div id=voter_panel>
-     <h3>Next voter</h3>
-     <input name=voter_id id=voter_id placeholder='Enter voter ID' required autocomplete=off autofocus>
+     <h3 class="next-voter-title">Next voter</h3>
+     <input name=voter_id id=voter_id class=voter-id-input placeholder='Enter voter ID' required autocomplete=off autofocus>
      <div class=actions><span></span><button id=start_btn>Verify voter photos</button></div>
     </div>
    </form>
@@ -50,8 +50,8 @@
    </div>
 
    <div class="blocked-voter-panel">
-    <h3>Next voter</h3>
-    <input placeholder="Enter voter ID" disabled aria-disabled="true">
+    <h3 class="next-voter-title">Next voter</h3>
+    <input class="voter-id-input" placeholder="Enter voter ID" disabled aria-disabled="true">
     <div class=actions><span></span><button type=button disabled aria-disabled="true">Verify voter photos</button></div>
     <div class="voter-entry-blocked">
      Voter verification is unavailable until the pre-opening process is complete.
