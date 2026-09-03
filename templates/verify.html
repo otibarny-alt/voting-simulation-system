@@ -20,12 +20,7 @@
    <p class=muted>Voting stream is retained on this computer for each subsequent voter.</p>
 
    <div class="locked-station-panel">
-    <div class=muted>This computer is assigned to</div>
-    <div class="locked-station-name">
-     {{ terminal_lock.poll_station|replace('_',' ')|upper }}
-     —
-     {{ terminal_lock.stream|replace('_',' ')|upper }}
-    </div>
+    <div class="locked-station-name">This computer is assigned to polling station stream</div>
     <div class="locked-station-hierarchy">
      {{ terminal_lock.county|replace('_',' ')|upper }}
      › {{ terminal_lock.constituency|replace('_',' ')|upper }}

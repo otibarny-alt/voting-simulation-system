@@ -733,3 +733,12 @@ input[type="button"]{
   .unassigned-help{font-size:15px}
   .locked-station-name{font-size:20px}
 }
+
+
+/* V22.33 — centered, pronounced pre-opening action */
+.open-stream-submit-row{display:flex;justify-content:center;align-items:center;margin:24px 0 8px;}
+#open_stream_btn.open-stream-submit-btn{display:inline-block;min-width:520px;max-width:95%;padding:17px 28px;font-size:19px;font-weight:800;border:3px solid #ff7f0e;border-radius:11px;background:#111;color:#fff;box-shadow:0 4px 0 #b95600;transition:background .12s ease,color .12s ease,transform .08s ease,box-shadow .08s ease;}
+#open_stream_btn.open-stream-submit-btn:hover{background:#292929;}
+#open_stream_btn.open-stream-submit-btn:active,#open_stream_btn.open-stream-submit-btn.selected{background:#ff7f0e;color:#111;transform:translateY(3px);box-shadow:0 1px 0 #9c4b00;}
+#open_stream_btn.open-stream-submit-btn:disabled{opacity:1;cursor:wait;}
+@media(max-width:650px){#open_stream_btn.open-stream-submit-btn{min-width:0;width:100%;font-size:16px;}}
