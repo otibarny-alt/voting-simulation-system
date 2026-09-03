@@ -648,3 +648,88 @@ input[type="button"]{
     width:100%;
   }
 }
+
+
+/* V22.31 — post-reset new-stream state only */
+.training-ballot-after-reset{
+  text-decoration:none !important;
+  text-align:center;
+  box-sizing:border-box;
+}
+
+
+/* V22.32 — central stream assignment required before voter entry */
+.unassigned-station-panel{
+  border:3px solid #b00020;
+  background:#fff4f5;
+  border-radius:12px;
+  padding:22px 24px;
+  margin:16px 0 22px;
+  text-align:center;
+}
+
+.unassigned-title{
+  font-size:25px;
+  font-weight:900;
+  color:#8c0018;
+  margin-bottom:8px;
+}
+
+.unassigned-help{
+  max-width:920px;
+  margin:0 auto;
+  font-size:17px;
+  font-weight:700;
+  line-height:1.4;
+  color:#555;
+}
+
+.blocked-voter-panel input[disabled],
+.blocked-voter-panel button[disabled]{
+  opacity:.45;
+  cursor:not-allowed !important;
+}
+
+.voter-entry-blocked{
+  margin-top:12px;
+  padding:10px 12px;
+  border-radius:8px;
+  background:#fff4f5;
+  border:1px solid #d8a0a7;
+  color:#8c0018;
+  font-weight:800;
+}
+
+.locked-station-panel{
+  border:3px solid #111;
+  border-radius:12px;
+  padding:22px 26px;
+  margin:16px 0 22px;
+}
+
+.locked-station-name{
+  font-size:26px;
+  font-weight:900;
+  margin:8px 0;
+}
+
+.locked-station-hierarchy{
+  font-size:18px;
+  color:#666;
+  margin-bottom:14px;
+}
+
+.stream-lock-status{
+  display:inline-block;
+  padding:10px 14px;
+  border:1px solid #aaa;
+  border-radius:8px;
+  background:#fff;
+  font-weight:700;
+}
+
+@media(max-width:600px){
+  .unassigned-title{font-size:20px}
+  .unassigned-help{font-size:15px}
+  .locked-station-name{font-size:20px}
+}

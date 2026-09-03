@@ -443,19 +443,24 @@ def terminal_reset():
    error="Terminal reset denied: only the device that originally locked this stream can release it."
   )
 
+ session.clear()
+ session["awaiting_new_stream_after_reset"]=True
  resp=redirect(url_for("stream_control"))
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
  resp.delete_cookie(TERMINAL_OWNER_COOKIE)
- session.clear()
  return resp
 
 @app.get("/stream-control")
 def stream_control():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
  row=stream_session(ps,st) if ps and st else None
- return render_template("stream_control.html",row=row,poll_station=ps,stream=st,
- open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
- report_header_image_url=REPORT_HEADER_IMAGE_URL)
+ return render_template(
+  "stream_control.html",
+  row=row,poll_station=ps,stream=st,
+  open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+  report_header_image_url=REPORT_HEADER_IMAGE_URL,
+  post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked"))
+ )
 
 @app.post("/stream/open")
 def open_stream():
@@ -520,6 +525,11 @@ def open_stream():
  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
  c.commit(); c.close()
 
+ if session.pop("awaiting_new_stream_after_reset",False):
+  session["post_reset_new_stream_locked"]=True
+ else:
+  session.pop("post_reset_new_stream_locked",None)
+
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
@@ -582,30 +592,42 @@ def stream_report():
   position_rows=position_rows,
   candidate_error=candidate_error)
 
+def voting_stream_ready():
+ lock=terminal_lock()
+ if not lock or lock.get("session_date")!=today_iso():
+  return False,None,None
+ row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ if not row or not row["opened_at"] or row["closed_at"]:
+  return False,lock,row
+ return True,lock,row
+
 @app.get("/")
-def home(): return render_template("verify.html")
+def home():
+ session.pop("post_reset_new_stream_locked",None)
+ ready,lock,row=voting_stream_ready()
+ return render_template("verify.html",stream_ready=ready,stream_row=row)
 
 @app.post("/start")
 def start():
+ ready,lock,ss=voting_stream_ready()
+ if not ready:
+  return render_template(
+   "verify.html",
+   stream_ready=False,
+   stream_row=ss,
+   error="Voter ID entry is blocked until this computer has been assigned to an opened voting stream and the pre-opening report has been generated."
+  )
+
  voter=request.form.get("voter_id","").strip()
  if not voter:
-  return render_template("verify.html",error="Enter a demo voter ID.")
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error="Enter a demo voter ID.")
 
  previous=previous_vote(voter)
  if previous:
   station=previous["poll_station"] or "the recorded polling station"
   return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
 
- lock=terminal_lock()
- if not lock or lock.get("session_date")!=today_iso():
-  return render_template("verify.html",error="This voting terminal is not locked to an opened stream. Complete the pre-voting stream opening first.")
-
  geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
- ss=stream_session(geo["poll_station"],geo["stream"])
- if not ss:
-  return render_template("verify.html",error="The locked voting stream has no valid opening record for today.")
- if ss["closed_at"]:
-  return render_template("verify.html",error="Voting for this locked stream has already been closed for today.")
 
  try:
   row=lookup_member(voter)
@@ -1089,10 +1111,17 @@ def reset():
 @app.context_processor
 def inject_report_branding():
  lock=terminal_lock()
+ ready=False
+ row=None
+ if lock:
+  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+  ready=bool(row and row["opened_at"] and not row["closed_at"] and lock.get("session_date")==today_iso())
  return {
   "report_header_image_url": REPORT_HEADER_IMAGE_URL,
   "terminal_lock": lock,
-  "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0
+  "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0,
+  "stream_ready": ready,
+  "stream_row": row
  }
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))

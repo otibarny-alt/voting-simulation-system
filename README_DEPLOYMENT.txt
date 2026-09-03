@@ -711,3 +711,54 @@ reset-terminal-btn
 
 V22.28 targets those exact classes, centers the Reset Terminal for New Stream
 button, and changes the button to orange immediately when clicked.
+
+
+V22.31 — CORRECT POST-RESET NEW-STREAM WORKFLOW
+===============================================
+TRAINING / SIMULATION ONLY.
+
+This fixes the V22.30 behavior that removed the Reset Terminal control too early.
+
+NORMAL LOCKED STREAM
+- The screen remains "Pre-Opening Control".
+- "Reset Terminal for New Stream" remains available under the existing safe-reset rules.
+- The user can therefore actually reset the current terminal.
+
+AFTER A SUCCESSFUL RESET
+1. The terminal returns to the stream-selection screen.
+2. The user selects and opens/locks a NEW polling-station stream.
+3. Only after that new stream has successfully been locked:
+   - the orange ribbon changes to "Voting Control";
+   - the center button changes to "Training Ballot".
+4. Clicking Training Ballot opens the voter verification/training ballot screen.
+
+The temporary post-reset display state is consumed when the Training Ballot is opened.
+If the user later returns to Voting Stream Control, the normal controlled-reset button
+is available again under the existing reset rules.
+
+
+V22.32 — STREAM ASSIGNMENT REQUIRED BEFORE VOTER ENTRY
+======================================================
+TRAINING / SIMULATION ONLY.
+
+INITIAL VERIFICATION SCREEN
+The initial screen now displays:
+"This computer is not yet assigned to any polling station."
+
+Before pre-opening:
+- voter ID input is disabled;
+- Verify voter photos is disabled;
+- the screen does not use browser localStorage to pretend a stream is assigned;
+- the authoritative central terminal lock is used instead.
+
+A voter ID becomes available only when:
+1. this device owns a valid central polling-station/stream lock;
+2. the stream has a successful opening record for today;
+3. the stream has not been closed.
+
+SERVER-SIDE ENFORCEMENT
+The /start voter-verification endpoint independently checks the same conditions.
+A manually crafted POST request therefore cannot bypass the disabled screen.
+
+The user must use "Open Voting Stream & Print Opening Report" to complete the
+pre-opening process before voter verification can begin.

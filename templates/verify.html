@@ -7,181 +7,58 @@
   <div class="odm-screen-header project-screen-brand">
    <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
   </div>
+
   <div class="odm-verification-ribbon">ODM Voter ID &amp; Photo Verification</div>
+
   <div class="open-stream-action-row">
    <a class="open-stream-action-btn" href="/stream-control">Open Voting Stream &amp; Print Opening Report</a>
   </div>
-  <p class=muted id=terminal_help>Set this computer's voting stream once. Subsequent demo voters only enter their ID.</p>
+
   {% if error %}<div class='vote-error'>{{error}}</div>{% endif %}
 
-  <div id=locked_panel style="display:none" class="terminal-lock">
+  {% if stream_ready and terminal_lock %}
+   <p class=muted>Voting stream is retained on this computer for each subsequent voter.</p>
+
+   <div class="locked-station-panel">
     <div class=muted>This computer is assigned to</div>
-    <div id=locked_stream class=terminal-title></div>
-    <div id=locked_path class=muted></div>
-    <button type=button id=change_terminal class="secondary" style="margin-top:12px">Voting stream locked</button>
-  </div>
-
-  <form method=post action=/start id=voter_form>
-   <div id=setup_panel>
-    <h3>Voting room / terminal setup</h3>
-    <div class=grid style='margin-top:10px'>
-     <select id=county><option value="">Select County</option></select>
-     <select id=constituency disabled><option value="">Select Constituency</option></select>
-     <select id=ward disabled><option value="">Select Ward</option></select>
-     <select id=poll_station disabled><option value="">Select Polling Station</option></select>
-     <select id=stream disabled><option value="">Select Stream</option></select>
+    <div class="locked-station-name">
+     {{ terminal_lock.poll_station|replace('_',' ')|upper }}
+     —
+     {{ terminal_lock.stream|replace('_',' ')|upper }}
     </div>
-    <p id=hierarchy_status class=muted>Loading electoral units from county_main.csv…</p>
-    <button type=button id=lock_terminal disabled>Use this stream on this computer</button>
+    <div class="locked-station-hierarchy">
+     {{ terminal_lock.county|replace('_',' ')|upper }}
+     › {{ terminal_lock.constituency|replace('_',' ')|upper }}
+     › {{ terminal_lock.ward|replace('_',' ')|upper }}
+    </div>
+    <div class="stream-lock-status">Voting stream locked — pre-opening completed</div>
    </div>
 
-   <div id=voter_panel style="display:none;margin-top:20px">
-    <h3>Next voter</h3>
-    <input name=voter_id id=voter_id placeholder='Enter voter ID' required autocomplete=off>
-    <input type=hidden name=county id=county_label>
-    <input type=hidden name=constituency id=constituency_label>
-    <input type=hidden name=ward id=ward_label>
-    <input type=hidden name=poll_station id=poll_station_label>
-    <input type=hidden name=stream id=stream_label>
-    <div class=actions><span></span><button id=start_btn>Verify voter photos</button></div>
+   <form method=post action=/start id=voter_form>
+    <div id=voter_panel>
+     <h3>Next voter</h3>
+     <input name=voter_id id=voter_id placeholder='Enter voter ID' required autocomplete=off autofocus>
+     <div class=actions><span></span><button id=start_btn>Verify voter photos</button></div>
+    </div>
+   </form>
+
+  {% else %}
+   <div class="unassigned-station-panel">
+    <div class="unassigned-title">This computer is not yet assigned to any polling station.</div>
+    <div class="unassigned-help">
+     Open and assign a voting stream first. Voter ID entry will remain disabled until
+     the voting stream has been locked and the pre-opening report has been generated.
+    </div>
    </div>
-  </form>
+
+   <div class="blocked-voter-panel">
+    <h3>Next voter</h3>
+    <input placeholder="Enter voter ID" disabled aria-disabled="true">
+    <div class=actions><span></span><button type=button disabled aria-disabled="true">Verify voter photos</button></div>
+    <div class="voter-entry-blocked">
+     Voter verification is unavailable until the pre-opening process is complete.
+    </div>
+   </div>
+  {% endif %}
  </div>
 </div>
-
-<script>
-const STORAGE_KEY="training_ballot_terminal_v1";
-const els={
- county:document.getElementById("county"),
- constituency:document.getElementById("constituency"),
- ward:document.getElementById("ward"),
- poll_station:document.getElementById("poll_station"),
- stream:document.getElementById("stream")
-};
-let H=null;
-const norm=v=>(v||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
-
-function fill(el,rows,label){
- el.innerHTML=`<option value="">Select ${label}</option>`;
- rows.forEach(r=>{
-  const o=document.createElement("option");
-  o.value=r.name; o.textContent=r.label; o.dataset.label=r.label;
-  el.appendChild(o);
- });
- el.disabled=false;
-}
-function clearAfter(names){
- names.forEach(n=>{
-  const label=n==="poll_station"?"Polling Station":n[0].toUpperCase()+n.slice(1);
-  els[n].innerHTML=`<option value="">Select ${label}</option>`;
-  els[n].disabled=true;
- });
-}
-function selectedLabel(n){
- const o=els[n].selectedOptions[0];
- return o&&o.value ? (o.dataset.label||o.textContent) : "";
-}
-function setupReady(){
- return Object.values(els).every(x=>x.value);
-}
-function updateLockButton(){
- document.getElementById("lock_terminal").disabled=!setupReady();
-}
-function setHidden(g){
- ["county","constituency","ward","poll_station","stream"].forEach(n=>{
-   document.getElementById(n+"_label").value=g[n]||"";
- });
-}
-function showLocked(g){
- setHidden(g);
- Object.values(els).forEach(el=>el.disabled=true);
- document.getElementById("setup_panel").style.display="none";
- document.getElementById("locked_panel").style.display="block";
- document.getElementById("voter_panel").style.display="block";
- document.getElementById("locked_stream").textContent=(g.poll_station||"")+" — "+(g.stream||"");
- document.getElementById("locked_path").textContent=[g.county,g.constituency,g.ward].filter(Boolean).join(" › ");
- document.getElementById("terminal_help").textContent="Voting stream is retained on this computer for each subsequent voter.";
- setTimeout(()=>document.getElementById("voter_id").focus(),50);
-}
-function showSetup(){
- els.county.disabled=false;
- document.getElementById("locked_panel").style.display="none";
- document.getElementById("voter_panel").style.display="none";
- document.getElementById("setup_panel").style.display="block";
- document.getElementById("terminal_help").textContent="Select the voting stream for this computer once.";
-}
-function currentGeo(){
- return {
-  county:selectedLabel("county"),
-  constituency:selectedLabel("constituency"),
-  ward:selectedLabel("ward"),
-  poll_station:selectedLabel("poll_station"),
-  stream:selectedLabel("stream")
- };
-}
-
-els.county.addEventListener("change",()=>{
- clearAfter(["constituency","ward","poll_station","stream"]);
- fill(els.constituency,H.constituencies.filter(r=>norm(r.county_key)===norm(els.county.value)),"Constituency");
- updateLockButton();
-});
-els.constituency.addEventListener("change",()=>{
- clearAfter(["ward","poll_station","stream"]);
- fill(els.ward,H.wards.filter(r=>norm(r.constituency_key)===norm(els.constituency.value)),"Ward");
- updateLockButton();
-});
-els.ward.addEventListener("change",()=>{
- clearAfter(["poll_station","stream"]);
- fill(els.poll_station,H.poll_stations.filter(r=>norm(r.ward_key)===norm(els.ward.value)),"Polling Station");
- updateLockButton();
-});
-els.poll_station.addEventListener("change",()=>{
- clearAfter(["stream"]);
- fill(els.stream,H.streams.filter(r=>norm(r.poll_station_key)===norm(els.poll_station.value)),"Stream");
- updateLockButton();
-});
-els.stream.addEventListener("change",updateLockButton);
-
-document.getElementById("lock_terminal").addEventListener("click",()=>{
- if(!setupReady()) return;
- const g=currentGeo();
- localStorage.setItem(STORAGE_KEY,JSON.stringify(g));
- showLocked(g);
-});
-
-document.getElementById("change_terminal").addEventListener("click",()=>{
- if(confirm("Change the voting stream assigned to this computer?")){
-   localStorage.removeItem(STORAGE_KEY);
-   showSetup();
- }
-});
-
-document.getElementById("voter_form").addEventListener("submit",(ev)=>{
- const voter=document.getElementById("voter_id").value.trim();
- if(!voter){
-   ev.preventDefault();
-   alert("Enter the voter ID.");
-   return;
- }
- const saved=localStorage.getItem(STORAGE_KEY);
- if(saved){
-  try{ setHidden(JSON.parse(saved)); }catch(e){}
- }
-});
-
-let existing=null;
-try{ existing=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null"); }catch(e){}
-if(existing && existing.county && existing.poll_station && existing.stream){
- showLocked(existing);
-} else {
- showSetup();
- fetch("/api/hierarchy").then(r=>r.json()).then(h=>{
-   H=h;
-   fill(els.county,H.counties,"County");
-   document.getElementById("hierarchy_status").textContent=`Loaded ${H.counties.length} counties from county_main.csv.`;
-   updateLockButton();
- }).catch(()=>{
-   document.getElementById("hierarchy_status").textContent="Could not load county_main.csv.";
- });
-}
-</script>
