@@ -510,9 +510,25 @@ def terminal_reset():
 
 @app.get("/stream-control")
 def stream_control():
- ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
- row=stream_session(ps,st) if ps and st else None
  current_lock=terminal_lock()
+ ps=request.args.get("poll_station","").strip()
+ st=request.args.get("stream","").strip()
+
+ # When arriving from the voter-verification screen the URL may not contain
+ # station/stream query parameters. Use the authoritative device lock instead.
+ if current_lock:
+  if not ps:
+   ps=current_lock.get("poll_station","")
+  if not st:
+   st=current_lock.get("stream","")
+
+ row=stream_session(ps,st) if ps and st else None
+ owns_current=bool(
+  current_lock and row
+  and current_lock.get("poll_station")==row["poll_station"]
+  and current_lock.get("stream")==row["stream"]
+ )
+
  return render_template(
   "stream_control.html",
   row=row,poll_station=ps,stream=st,
@@ -521,7 +537,8 @@ def stream_control():
   post_reset_new_stream_locked=bool(session.get("post_reset_new_stream_locked")),
   reset_required=bool(current_lock and not terminal_active_after_reset(current_lock)),
   can_close_now=official_close_reached(),
-  official_close_time=close_time_message()
+  official_close_time=close_time_message(),
+  owns_current_stream=owns_current
  )
 
 @app.post("/stream/open")

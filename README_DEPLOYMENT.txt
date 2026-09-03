@@ -858,3 +858,23 @@ AFTER FORMAL CLOSING
 - The owning/closed stream can open, view and print the tally reports.
 
 This is enforced from the stream's closed_at record, not only from button visibility.
+
+
+V22.41 — CLOSING BUTTON ALWAYS VISIBLE
+======================================
+TRAINING / SIMULATION ONLY.
+
+The Voting Control screen now always shows the closing button while a stream is open.
+
+Before 18:00 (6:00 PM) Africa/Nairobi:
+- Close Voting Stream Permanently is visible but disabled.
+- The screen explains that it will activate at the official closing time.
+
+At/after 18:00:
+- The same button becomes active only on the device that owns the central stream lock.
+- Closing remains permanent and the stream cannot be reopened.
+
+The stream-control route now also derives Polling Station and Stream from the
+authoritative terminal lock when the screen is opened without query parameters.
+This prevents the UI from incorrectly saying the browser does not own the stream
+simply because the URL omitted the polling-station/stream values.

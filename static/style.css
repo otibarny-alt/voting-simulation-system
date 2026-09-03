@@ -910,3 +910,65 @@ input[type="button"]{
   .tallies-locked-ribbon{font-size:22px}
   .tallies-locked-title{font-size:20px}
 }
+
+
+/* V22.41 — closing control is always visible while stream is open */
+.close-control-panel{
+  margin:18px 0;
+}
+
+.close-stream-form{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  margin:16px 0 10px;
+}
+
+.close-stream-btn{
+  min-width:390px;
+  background:#b00020 !important;
+  color:#fff !important;
+  border:3px solid #700014 !important;
+  border-radius:10px !important;
+  padding:15px 24px !important;
+  font-size:19px !important;
+  font-weight:900 !important;
+  cursor:pointer !important;
+  box-shadow:0 3px 0 #620011;
+}
+
+.close-stream-btn:active{
+  background:#f58220 !important;
+  color:#111 !important;
+  transform:translateY(2px);
+  box-shadow:0 1px 0 #8b4300;
+}
+
+.close-stream-btn-disabled{
+  background:#8f8f8f !important;
+  border-color:#6f6f6f !important;
+  color:#eee !important;
+  cursor:not-allowed !important;
+  box-shadow:none !important;
+  opacity:.8;
+}
+
+.close-help,
+.closing-time-lock{
+  max-width:900px;
+  margin:0 auto;
+  text-align:center;
+}
+
+.active-close-help{
+  color:#7b0015;
+  font-weight:700;
+}
+
+@media(max-width:600px){
+  .close-stream-btn{
+    min-width:0;
+    width:100%;
+    font-size:17px !important;
+  }
+}
