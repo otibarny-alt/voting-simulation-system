@@ -782,3 +782,30 @@ Correct workflow:
 
 The central PostgreSQL ownership protection is retained so another device cannot take over
 an active stream.
+
+
+V22.37 — STREAM LOCK PERSISTS BETWEEN VOTERS
+============================================
+TRAINING / SIMULATION ONLY.
+
+Fixes the issue where selecting/finishing one voter caused the next voter screen
+to act as though the terminal needed to be reset again.
+
+The terminal activation state is now stored in a signed device cookie tied to:
+- session date;
+- polling station;
+- stream.
+
+This state survives Flask session.clear(), which is used to clear one voter's
+temporary verification/ballot data.
+
+Correct behavior:
+1. Reset terminal when changing to a new polling-station stream.
+2. Select/open the new stream.
+3. The stream becomes active and remains locked to that device.
+4. Voter 1 is verified and completes the simulation.
+5. Voter 2, Voter 3, etc. can be entered without resetting or reopening the stream.
+6. The lock remains active until the voting stream is formally closed or the
+   authorized owner device performs a controlled reset.
+
+The central PostgreSQL device-ownership lock remains authoritative.
