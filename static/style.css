@@ -467,3 +467,26 @@ input[type="button"]{
 @media print {
   .project-screen-brand { display:none !important; }
 }
+
+
+/* V22.24: verification title ribbon directly below ODM project header */
+.odm-verification-ribbon {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 18px 0;
+  padding: 10px 16px;
+  text-align: center;
+  background: #f58220;
+  color: #111;
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 800;
+  border-radius: 4px;
+}
+@media (max-width: 700px) {
+  .odm-verification-ribbon {
+    font-size: 22px;
+    padding: 9px 10px;
+    margin-bottom: 14px;
+  }
+}
