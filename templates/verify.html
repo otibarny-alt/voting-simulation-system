@@ -8,6 +8,9 @@
    <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
   </div>
   <div class="odm-verification-ribbon">ODM Voter ID &amp; Photo Verification</div>
+  <div class="open-stream-action-row">
+   <a class="open-stream-action-btn" href="/stream-control">Open Voting Stream &amp; Print Opening Report</a>
+  </div>
   <p class=muted id=terminal_help>Set this computer's voting stream once. Subsequent demo voters only enter their ID.</p>
   {% if error %}<div class='vote-error'>{{error}}</div>{% endif %}
 
@@ -42,7 +45,7 @@
     <input type=hidden name=stream id=stream_label>
     <div class=actions><span></span><button id=start_btn>Verify voter photos</button></div>
    </div>
-  </form><p><a href="/stream-control">Open / Close Voting Stream & Print Opening Report</a></p>
+  </form>
  </div>
 </div>
 

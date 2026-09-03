@@ -675,3 +675,16 @@ registered candidate was found instead of displaying placeholder Candidate numbe
 
 The Candidate Registration Portal connection continues to use:
 CANDIDATE_PORTAL_BASE_URL
+
+
+V22.25 — OPEN STREAM BUTTON MOVED UNDER VERIFICATION RIBBON
+===========================================================
+TRAINING / SIMULATION ONLY.
+
+On the voter verification screen:
+- the old bottom text link "Open / Close Voting Stream & Print Opening Report" has been removed;
+- the wording is now "Open Voting Stream & Print Opening Report";
+- it is displayed as a pronounced clickable button directly below the orange
+  "ODM Voter ID & Photo Verification" ribbon;
+- the button has a black background, orange border, hover/press feedback and pointer cursor;
+- the rest of the verification screen is unchanged.

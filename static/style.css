@@ -490,3 +490,53 @@ input[type="button"]{
     margin-bottom: 14px;
   }
 }
+
+
+/* V22.25 — stream-opening action directly below verification ribbon */
+.open-stream-action-row{
+  display:flex;
+  justify-content:center;
+  margin:12px 0 18px;
+}
+
+.open-stream-action-btn{
+  display:inline-block;
+  background:#111;
+  color:#fff !important;
+  text-decoration:none !important;
+  font-weight:800;
+  font-size:18px;
+  line-height:1.2;
+  padding:13px 22px;
+  border:3px solid #f58220;
+  border-radius:9px;
+  box-shadow:0 3px 0 #b95400;
+  cursor:pointer;
+  transition:background .12s ease, transform .08s ease, box-shadow .08s ease;
+}
+
+.open-stream-action-btn:hover{
+  background:#f58220;
+  color:#111 !important;
+}
+
+.open-stream-action-btn:focus{
+  outline:4px solid rgba(245,130,32,.35);
+  outline-offset:3px;
+}
+
+.open-stream-action-btn:active{
+  background:#d96f13;
+  color:#fff !important;
+  transform:translateY(2px);
+  box-shadow:0 1px 0 #8f4300;
+}
+
+@media(max-width:600px){
+  .open-stream-action-btn{
+    width:100%;
+    text-align:center;
+    font-size:16px;
+    padding:12px 14px;
+  }
+}
