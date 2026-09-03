@@ -1,4 +1,8 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training ballot complete</b><a href=/tallies>Simulated Tallies</a></header><div class=demo>TRAINING / SIMULATION ONLY — no official vote was cast.</div><div class=wrap>
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training ballot complete</b>{% if stream_row and stream_row["closed_at"] %}
+<a href=/tallies>Simulated Tallies</a>
+{% else %}
+<span class="header-tally-locked">Simulated Tallies Locked</span>
+{% endif %}</header><div class=demo>TRAINING / SIMULATION ONLY — no official vote was cast.</div><div class=wrap>
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>

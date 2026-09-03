@@ -837,3 +837,24 @@ AFTER FORMAL CLOSING
 
 This prevents reopening on another device or Render instance as long as DATABASE_URL
 points to the shared PostgreSQL database.
+
+
+V22.40 — TALLY DASHBOARD ONLY AFTER FORMAL CLOSING
+==================================================
+TRAINING / SIMULATION ONLY.
+
+The tally dashboard is now unavailable while the voting stream is open.
+
+BEFORE FORMAL CLOSING
+- "Open tally dashboard" is disabled on the completion screen.
+- Header links to Simulated Tallies display as locked text.
+- Direct access to /tallies returns a locked screen with HTTP 403.
+- Known tally-print routes are protected with the same server-side check.
+- The locked screen explains that tallies cannot be opened, viewed or printed
+  before voting is formally closed.
+
+AFTER FORMAL CLOSING
+- Tally dashboard links become available.
+- The owning/closed stream can open, view and print the tally reports.
+
+This is enforced from the stream's closed_at record, not only from button visibility.

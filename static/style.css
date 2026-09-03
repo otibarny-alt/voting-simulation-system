@@ -851,3 +851,62 @@ input[type="button"]{
 .ballot-vote-title-mna{background:#0057b8 !important;color:#fff !important;border-color:#003b7c !important;box-shadow:0 5px 0 #002b5b,0 8px 16px rgba(0,0,0,.18) !important;}
 .ballot-vote-title-mca{background:#008b45 !important;color:#fff !important;border-color:#005b2e !important;box-shadow:0 5px 0 #004323,0 8px 16px rgba(0,0,0,.18) !important;}
 @media(max-width:700px){.ballot-vote-title{font-size:27px !important;padding:15px 12px !important;}}
+
+
+/* V22.40 — tally access only after formal stream closure */
+.tallies-locked-ribbon{
+  margin:0 0 20px;
+  padding:15px 18px;
+  border-radius:9px;
+  background:#b00020;
+  color:#fff;
+  text-align:center;
+  font-size:30px;
+  font-weight:900;
+}
+
+.tallies-locked-panel{
+  border:3px solid #b00020;
+  background:#fff2f4;
+  color:#7d0016;
+  border-radius:12px;
+  padding:24px;
+  text-align:center;
+  font-size:18px;
+  line-height:1.45;
+}
+
+.tallies-locked-title{
+  font-size:24px;
+  font-weight:900;
+  margin-bottom:10px;
+}
+
+.tallies-return{
+  display:flex;
+  justify-content:center;
+  margin-top:20px;
+}
+
+.tally-disabled-btn{
+  background:#999 !important;
+  color:#fff !important;
+  border:2px solid #777 !important;
+  border-radius:8px !important;
+  padding:14px 20px !important;
+  font-size:17px !important;
+  font-weight:800 !important;
+  cursor:not-allowed !important;
+  opacity:.75;
+}
+
+.header-tally-locked{
+  color:#ddd;
+  text-decoration:none;
+  cursor:not-allowed;
+}
+
+@media(max-width:600px){
+  .tallies-locked-ribbon{font-size:22px}
+  .tallies-locked-title{font-size:20px}
+}

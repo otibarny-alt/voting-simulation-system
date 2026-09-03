@@ -1119,8 +1119,25 @@ def complete():
  if not session.get("completed"):return redirect(url_for("home"))
  return render_template("complete.html",geo=session["geo"])
 
+def tallies_available():
+ lock=terminal_lock()
+ if not lock:
+  return False,None,None
+ row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ if not row or not row["closed_at"]:
+  return False,lock,row
+ return True,lock,row
+
 @app.get("/tallies")
 def tallies():
+ available,lock,row=tallies_available()
+ if not available:
+  return render_template(
+   "tallies_locked.html",
+   terminal_lock=lock,
+   stream_row=row,
+   official_close_time="18:00 (6:00 PM)"
+  ),403
  c=con()
  vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes
  FROM demo_votes
