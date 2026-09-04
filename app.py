@@ -1365,7 +1365,25 @@ def email_tally():
  .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:7px;margin:6px 0}
  .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:3px 0}.signature-space{height:42px}
  """
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body><div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+ # The browser tally page has a global ODM report header outside each individual tally section.
+ # report_html contains only the selected section, so explicitly add the bundled ODM header to the PDF.
+ pdf_header_html=""
+ try:
+  header_path=os.path.join(app.root_path,"static","odm_report_header.png")
+  if os.path.isfile(header_path):
+   import base64
+   with open(header_path,"rb") as header_file:
+    header_b64=base64.b64encode(header_file.read()).decode("ascii")
+   pdf_header_html='<div class="pdf-odm-header"><img src="data:image/png;base64,'+header_b64+'" alt="ODM Report Header"></div>'
+  elif REPORT_HEADER_IMAGE_URL:
+   header_url=REPORT_HEADER_IMAGE_URL
+   if header_url.startswith("/"):
+    header_url=urljoin(request.host_url,header_url)
+   pdf_header_html='<div class="pdf-odm-header"><img src="'+header_url+'" alt="ODM Report Header"></div>'
+ except Exception as exc:
+  app.logger.warning("Could not prepare ODM PDF header: %s",exc)
+
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 10px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}</style></head><body>'+pdf_header_html+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
 
  # Create an A4 PDF attachment from this specific tally report.
  pdf_buffer=BytesIO()
