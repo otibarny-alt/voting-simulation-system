@@ -955,3 +955,43 @@ On ODM Membership Photo Verification:
 - Other visible locked-station wording on this screen is changed to Current.
 - ID Photo and Passport Photo can be clicked/tapped to enlarge in a full-screen lightbox.
 - Press Escape, click outside the image, or click X to close the enlarged photo.
+
+
+V22.49 — SMTP EMAIL DIAGNOSTICS / GMAIL SUPPORT
+================================================
+TRAINING / SIMULATION ONLY.
+
+The application reads these exact Render environment variables:
+SMTP_HOST
+SMTP_PORT
+SMTP_USERNAME
+SMTP_PASSWORD
+SMTP_FROM_EMAIL
+SMTP_FROM_NAME
+SMTP_USE_TLS
+SMTP_USE_SSL
+
+GMAIL (recommended port 587):
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=youraccount@gmail.com
+SMTP_PASSWORD=<16-character Google App Password>
+SMTP_FROM_EMAIL=youraccount@gmail.com
+SMTP_FROM_NAME=ODM Training Tally Reports
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+
+Alternative Gmail SSL configuration (port 465):
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USERNAME=youraccount@gmail.com
+SMTP_PASSWORD=<16-character Google App Password>
+SMTP_FROM_EMAIL=youraccount@gmail.com
+SMTP_FROM_NAME=ODM Training Tally Reports
+SMTP_USE_TLS=false
+SMTP_USE_SSL=true
+
+Do not use SMTP_FROM; this application expects SMTP_FROM_EMAIL.
+The recipient can still be any valid email address.
+
+The email API now returns specific safe messages for authentication, connection, timeout, and SMTP errors. Passwords are never returned to the browser.

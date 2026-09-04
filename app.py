@@ -20,6 +20,7 @@ SMTP_PASSWORD=os.getenv("SMTP_PASSWORD","").strip()
 SMTP_FROM_EMAIL=os.getenv("SMTP_FROM_EMAIL",SMTP_USERNAME).strip()
 SMTP_FROM_NAME=os.getenv("SMTP_FROM_NAME","ODM Training Tally Reports").strip()
 SMTP_USE_TLS=os.getenv("SMTP_USE_TLS","true").strip().lower() not in ("0","false","no")
+SMTP_USE_SSL=os.getenv("SMTP_USE_SSL","false").strip().lower() in ("1","true","yes")
 
 ELECTIONS=[
  ("president","President",10),("governor","Governor",6),("senator","Senator",6),
@@ -1354,13 +1355,30 @@ def email_tally():
  msg.set_content(f"{safe_title} training/simulation tally report for {station} / {stream}. Please view this message in HTML format.")
  msg.add_alternative(html,subtype="html")
  try:
-  with smtplib.SMTP(SMTP_HOST,SMTP_PORT,timeout=25) as server:
-   if SMTP_USE_TLS: server.starttls()
-   if SMTP_USERNAME: server.login(SMTP_USERNAME,SMTP_PASSWORD)
+  smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+  with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
+   if not SMTP_USE_SSL and SMTP_USE_TLS:
+    server.ehlo()
+    server.starttls()
+    server.ehlo()
+   if SMTP_USERNAME:
+    server.login(SMTP_USERNAME,SMTP_PASSWORD)
    server.send_message(msg)
- except Exception:
+ except smtplib.SMTPAuthenticationError as exc:
+  app.logger.exception("Tally email authentication failed")
+  return jsonify({"ok":False,"error":"SMTP authentication failed. For Gmail, use the full Gmail address as SMTP_USERNAME and a 16-character Google App Password as SMTP_PASSWORD."}),502
+ except smtplib.SMTPConnectError as exc:
+  app.logger.exception("Tally email connection failed")
+  return jsonify({"ok":False,"error":f"Could not connect to SMTP server {SMTP_HOST}:{SMTP_PORT}. Check SMTP_HOST, SMTP_PORT and SSL/TLS settings."}),502
+ except (TimeoutError, OSError) as exc:
+  app.logger.exception("Tally email network/timeout failure")
+  return jsonify({"ok":False,"error":f"SMTP connection timed out or was blocked while connecting to {SMTP_HOST}:{SMTP_PORT}."}),502
+ except smtplib.SMTPException as exc:
+  app.logger.exception("Tally email SMTP failure")
+  return jsonify({"ok":False,"error":f"SMTP server rejected the message: {exc.__class__.__name__}. Check the Render logs for details."}),502
+ except Exception as exc:
   app.logger.exception("Tally email failed")
-  return jsonify({"ok":False,"error":"Email could not be sent. Check the SMTP settings on Render."}),502
+  return jsonify({"ok":False,"error":f"Email could not be sent ({exc.__class__.__name__}). Check the SMTP settings and Render logs."}),502
  return jsonify({"ok":True,"message":f"{safe_title} tally report emailed to {recipient}."})
 
 @app.post("/reset-demo")
