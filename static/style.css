@@ -1107,3 +1107,64 @@ input[type="button"]{
 .email-tally:hover{filter:brightness(.96)}
 .email-tally:disabled{opacity:.55;cursor:wait}
 @media(max-width:700px){.tally-actions{width:100%;justify-content:center}.email-tally,.print-tally{width:100%}}
+
+
+/* V22.48 — click-to-zoom ODM membership ID/passport photographs */
+.zoomable-member-photo{
+  cursor:zoom-in !important;
+  transition:transform .16s ease, box-shadow .16s ease;
+}
+.zoomable-member-photo:hover,
+.zoomable-member-photo:focus{
+  transform:scale(1.015);
+  box-shadow:0 0 0 4px #f58220, 0 8px 22px rgba(0,0,0,.18);
+  outline:none;
+}
+.member-photo-lightbox{
+  position:fixed;
+  inset:0;
+  z-index:99999;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  padding:30px;
+  box-sizing:border-box;
+  background:rgba(0,0,0,.88);
+  cursor:zoom-out;
+}
+.member-photo-lightbox.is-open{display:flex;}
+.member-photo-lightbox img{
+  max-width:min(94vw,1200px);
+  max-height:82vh;
+  width:auto;
+  height:auto;
+  object-fit:contain;
+  border:5px solid #fff;
+  border-radius:10px;
+  background:#fff;
+  box-shadow:0 12px 45px rgba(0,0,0,.55);
+  cursor:default;
+}
+.member-photo-lightbox-close{
+  position:fixed;
+  top:18px;
+  right:24px;
+  width:52px;
+  height:52px;
+  border-radius:50%;
+  border:2px solid #fff;
+  background:#f58220;
+  color:#111;
+  font-size:36px;
+  line-height:44px;
+  font-weight:900;
+  cursor:pointer;
+}
+.member-photo-lightbox-caption{
+  margin-top:14px;
+  color:#fff;
+  font-size:20px;
+  font-weight:800;
+}
+body.photo-zoom-open{overflow:hidden;}

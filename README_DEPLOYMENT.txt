@@ -943,3 +943,15 @@ SMTP_USE_TLS=true
 
 For Gmail, SMTP_PASSWORD should be a Google App Password, not the normal account
 password. Other SMTP providers can be used by changing the host, port and login.
+
+
+V22.48 — CURRENT LABELS + PHOTO ZOOM
+====================================
+TRAINING / SIMULATION ONLY.
+
+On ODM Membership Photo Verification:
+- Locked Voting Station -> Current Voting Station
+- Locked Stream -> Current Stream
+- Other visible locked-station wording on this screen is changed to Current.
+- ID Photo and Passport Photo can be clicked/tapped to enlarge in a full-screen lightbox.
+- Press Escape, click outside the image, or click X to close the enlarged photo.
