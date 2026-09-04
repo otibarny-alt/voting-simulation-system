@@ -4,6 +4,9 @@ import psycopg
 from psycopg.rows import dict_row
 from datetime import datetime, date, time as dt_time
 from email.message import EmailMessage
+from io import BytesIO
+from urllib.parse import urljoin
+from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
@@ -1341,19 +1344,48 @@ def email_tally():
  if not SMTP_HOST or not SMTP_FROM_EMAIL:
   return jsonify({"ok":False,"error":"Email is not configured on the server. Set the SMTP environment variables in Render."}),503
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
+ # Make relative image URLs absolute so the PDF renderer can fetch report branding/photos.
+ report_html=re.sub(
+  r'(src=["\'])(/[^"\']+)(["\'])',
+  lambda m: m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),
+  report_html, flags=re.I
+ )
  safe_title=allowed[election]
  ref=lock or closed_stream_cookie() or {}
  station=ref.get("poll_station","")
  stream=ref.get("stream","")
  subject=f"{safe_title} Tally Report - {station} - {stream}"
- css="body{font-family:Arial,sans-serif;color:#111}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{border:1px solid #bbb;padding:8px;text-align:left}img{max-width:120px;height:auto}.report-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.summary-box{border:1px solid #bbb;padding:8px}.signature-space{height:48px}"
+ css="""
+ @page { size: A4; margin: 12mm; }
+ body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:10pt}
+ h2{font-size:18pt;margin:0 0 10px 0} h3{font-size:13pt} h4{font-size:11pt}
+ table{width:100%;border-collapse:collapse;margin:8px 0} th,td{border:1px solid #aaa;padding:6px;text-align:left;vertical-align:middle}
+ img{max-width:95px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
+ .tally-candidate-photo,.cert-candidate-photo{max-width:72px;max-height:86px}
+ .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:7px;margin:6px 0}
+ .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:3px 0}.signature-space{height:42px}
+ """
  html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body><div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+
+ # Create an A4 PDF attachment from this specific tally report.
+ pdf_buffer=BytesIO()
+ pdf_result=pisa.CreatePDF(html, dest=pdf_buffer, encoding="utf-8", path=request.host_url)
+ if pdf_result.err:
+  app.logger.error("Tally PDF generation failed with %s rendering errors", pdf_result.err)
+  return jsonify({"ok":False,"error":"The tally report could not be converted to PDF. Check the Render logs for PDF rendering details."}),500
+ pdf_bytes=pdf_buffer.getvalue()
+ safe_station=re.sub(r'[^A-Za-z0-9_-]+','_',station or 'polling_station').strip('_')
+ safe_stream=re.sub(r'[^A-Za-z0-9_-]+','_',stream or 'stream').strip('_')
+ safe_report=re.sub(r'[^A-Za-z0-9_-]+','_',safe_title).strip('_')
+ pdf_filename=f"{safe_report}_Tally_{safe_station}_{safe_stream}.pdf"
+
  msg=EmailMessage()
  msg["Subject"]=subject
  msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
  msg["To"]=recipient
- msg.set_content(f"{safe_title} training/simulation tally report for {station} / {stream}. Please view this message in HTML format.")
- msg.add_alternative(html,subtype="html")
+ msg.set_content(f"{safe_title} training/simulation tally report for {station} / {stream}. The printable PDF report is attached to this email.")
+ msg.add_alternative('<p><b>'+safe_title+'</b> training/simulation tally report for '+station+' / '+stream+'.</p><p>The printable PDF report is attached to this email for easy download and printing.</p><p><b>TRAINING / SIMULATION ONLY — no official vote was cast.</b></p>',subtype="html")
+ msg.add_attachment(pdf_bytes, maintype="application", subtype="pdf", filename=pdf_filename)
  try:
   smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
   with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
@@ -1379,7 +1411,7 @@ def email_tally():
  except Exception as exc:
   app.logger.exception("Tally email failed")
   return jsonify({"ok":False,"error":f"Email could not be sent ({exc.__class__.__name__}). Check the SMTP settings and Render logs."}),502
- return jsonify({"ok":True,"message":f"{safe_title} tally report emailed to {recipient}."})
+ return jsonify({"ok":True,"message":f"{safe_title} tally report PDF emailed to {recipient}."})
 
 @app.post("/reset-demo")
 def reset():

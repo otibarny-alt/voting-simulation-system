@@ -995,3 +995,10 @@ Do not use SMTP_FROM; this application expects SMTP_FROM_EMAIL.
 The recipient can still be any valid email address.
 
 The email API now returns specific safe messages for authentication, connection, timeout, and SMTP errors. Passwords are never returned to the browser.
+
+
+V22.50 PDF EMAIL ATTACHMENTS
+- Each election tally Email button now converts that specific closed-stream tally report to an A4 PDF.
+- The PDF is attached to the email for easy download and printing.
+- Existing SMTP environment variables are unchanged.
+- Tally access remains blocked until the stream is officially closed.
