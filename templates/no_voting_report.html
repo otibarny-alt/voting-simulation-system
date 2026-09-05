@@ -27,7 +27,7 @@
    <div><b>Stream:</b> {{ stream or 'Not available' }}</div>
   </div>
   <div class="no-vote-actions">
-   <a href="/stream">Return to Stream Control</a>
+   <a href="{{ url_for('stream_control', poll_station=poll_station, stream=stream) }}">Return to Stream Control</a>
    <a href="/report-repository">Central PDF Repository</a>
   </div>
  </div>
