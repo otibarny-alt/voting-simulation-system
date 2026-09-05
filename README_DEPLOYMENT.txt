@@ -1040,3 +1040,10 @@ Optional tuning: PG_POOL_MAX_SIZE=8 and REPO_COUNTS_TTL_SECONDS=20 (defaults alr
 
 V22.59 — PDF LOCATION IDENTIFICATION, HIGH-SPEED REPOSITORY PRESERVED
 County, Constituency, Ward and Polling Station Stream are displayed immediately below the ODM PDF logo header. Repository pooling, caching, indexes and lazy PDF retrieval remain unchanged from V22.58.
+
+
+V22.61 PERFORMANCE NOTE
+- Existing repository PDFs are detected before PDF rendering, so revisiting a closed tally does not regenerate six PDFs.
+- New PDFs are deposited one category at a time to avoid saturating the web service.
+- Render runs Gunicorn with 2 workers x 2 threads so repository browsing can remain responsive during PDF generation.
+- V22.60 visible County / Constituency / Ward / Polling Station Stream PDF header is preserved.

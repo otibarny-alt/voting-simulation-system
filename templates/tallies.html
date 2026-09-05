@@ -293,9 +293,15 @@ async function depositOneClosedReport(section, attempt=1){
 
 async function depositAllClosedReports(){
   const sections=[...document.querySelectorAll('.tally-section')];
-  // Generate/deposit all six independently so slower MNA/MCA PDFs are not left waiting
-  // behind the first four reports. Failed categories are retried automatically.
-  const results=await Promise.all(sections.map(section=>depositOneClosedReport(section)));
+  // Keep the repository responsive: do not launch six CPU-heavy PDF renders at once.
+  // Send one category at a time. The server instantly skips PDFs already deposited,
+  // so revisiting this page creates almost no PDF-generation load.
+  const results=[];
+  for(const section of sections){
+    results.push(await depositOneClosedReport(section));
+    // Give navigation/repository requests a chance to be served between PDF jobs.
+    await new Promise(resolve=>setTimeout(resolve,120));
+  }
   const failed=results.filter(r=>!r.ok);
   if(failed.length) console.warn('Repository categories still pending:',failed);
 }

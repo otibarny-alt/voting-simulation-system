@@ -1,4 +1,4 @@
-# V22.60: xhtml2pdf-safe visible location identification header; preserves V22.58 high-speed repository engine.
+# V22.61: repository responsiveness fix; skip existing PDFs before rendering and preserve visible location header.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -1500,10 +1500,23 @@ def deposit_report():
  data=request.get_json(silent=True) or {}; election=str(data.get("election","")).strip().lower(); report_html=str(data.get("report_html","")).strip()
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed or not report_html:return jsonify({"ok":False,"error":"Invalid report."}),400
- pdf=render_tally_pdf(report_html,ref); title=allowed[election]
+ title=allowed[election]
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
  filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
  now=kenya_now().isoformat(timespec='seconds'); init_global_lock_db()
+ # Critical speed path: if this stream/category PDF already exists, do NOT run
+ # xhtml2pdf again. Tally pages may be revisited many times after closing.
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT id, filename FROM simulation_pdf_reports
+                  WHERE session_date=%s AND election=%s AND poll_station=%s AND stream=%s
+                  LIMIT 1""",
+               (ref.get('session_date',today_iso()),election,ref.get('poll_station',''),ref.get('stream','')))
+   existing=cur.fetchone()
+ if existing:
+  return jsonify({"ok":True,"filename":existing.get('filename') or filename,"already_exists":True})
+ # Generate the PDF only for a genuinely missing repository item.
+ pdf=render_tally_pdf(report_html,ref)
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data)
