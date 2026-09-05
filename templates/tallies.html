@@ -268,14 +268,36 @@ async function printTally(sectionId,title){
   },150);
 }
 
+async function depositOneClosedReport(section, attempt=1){
+  const election=section.id.replace('tally-','');
+  const clone=section.cloneNode(true);
+  clone.querySelectorAll('.no-print,button').forEach(el=>el.remove());
+  try{
+    const response=await fetch('/report-repository/deposit',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({election:election,report_html:clone.outerHTML})
+    });
+    let result={};
+    try{ result=await response.json(); }catch(_e){}
+    if(!response.ok || !result.ok) throw new Error(result.error || ('HTTP '+response.status));
+    return {election:election,ok:true};
+  }catch(err){
+    if(attempt < 3){
+      await new Promise(resolve=>setTimeout(resolve,1500*attempt));
+      return depositOneClosedReport(section,attempt+1);
+    }
+    console.error('Repository deposit failed for '+election,err);
+    return {election:election,ok:false,error:String(err)};
+  }
+}
+
 async function depositAllClosedReports(){
   const sections=[...document.querySelectorAll('.tally-section')];
-  for(const section of sections){
-    const election=section.id.replace('tally-','');
-    const clone=section.cloneNode(true);
-    clone.querySelectorAll('.no-print,button').forEach(el=>el.remove());
-    try{await fetch('/report-repository/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({election:election,report_html:clone.outerHTML})});}catch(e){console.warn('Repository deposit failed',e);}
-  }
+  // Generate/deposit all six independently so slower MNA/MCA PDFs are not left waiting
+  // behind the first four reports. Failed categories are retried automatically.
+  const results=await Promise.all(sections.map(section=>depositOneClosedReport(section)));
+  const failed=results.filter(r=>!r.ok);
+  if(failed.length) console.warn('Repository categories still pending:',failed);
 }
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.tally-section').forEach(updateDateTime);
