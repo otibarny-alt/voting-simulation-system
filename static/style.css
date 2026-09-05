@@ -1168,3 +1168,6 @@ input[type="button"]{
   font-weight:800;
 }
 body.photo-zoom-open{overflow:hidden;}
+
+/* V22.52 central PDF repository */
+.repository-ribbon{background:#f58220;color:#111;text-align:center;font-weight:900;font-size:26px;padding:13px;border-radius:8px;margin:0 0 18px}.repository-group{background:#fff;border:1px solid #ccc;border-radius:10px;padding:16px;margin:18px 0}.repository-group h2{margin:0;color:#111}.repo-count{font-weight:700;color:#555;margin:5px 0 12px}.table-scroll{overflow-x:auto}.repository-table{min-width:1050px}.repo-btn{display:inline-block;background:#111;color:#fff!important;text-decoration:none;padding:7px 10px;border-radius:6px;font-weight:800;margin:2px}.repo-btn.download{background:#f58220;color:#111!important}.repo-empty{padding:14px;background:#f5f5f5;border-radius:7px;color:#666}

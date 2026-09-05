@@ -158,6 +158,19 @@ def init_global_lock_db():
     )
    """)
    cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
+   cur.execute("""
+    CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
+      id BIGSERIAL PRIMARY KEY,
+      session_date TEXT NOT NULL,
+      election TEXT NOT NULL,
+      election_title TEXT NOT NULL,
+      county TEXT, constituency TEXT, ward TEXT,
+      poll_station TEXT NOT NULL, stream TEXT NOT NULL,
+      closed_at TEXT, deposited_at TEXT NOT NULL,
+      filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
+      UNIQUE(session_date,election,poll_station,stream)
+    )
+   """)
   conn.commit()
 
 def token_hash(token):
@@ -734,7 +747,7 @@ def close_stream():
  # Once closed, the terminal cannot vote again on this stream.
  # Preserve a signed read-only reference so the closed stream's tally dashboard
  # remains available for opening, viewing and printing.
- resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
+ resp=redirect(url_for("tallies"))
  resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
  resp.set_cookie(
   TERMINAL_CLOSED_COOKIE,
@@ -1324,6 +1337,94 @@ def tallies():
 
  return render_template("tallies.html",sections=tally_sections)
 
+
+def render_tally_pdf(report_html):
+ report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
+ report_html=re.sub(r'(src=["\'])(/[^"\']+)(["\'])',lambda m:m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),report_html,flags=re.I)
+ css="""
+ @page { size: A4; margin: 12mm; }
+ body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:10pt}
+ h2{font-size:18pt;margin:0 0 10px 0} h3{font-size:13pt} h4{font-size:11pt}
+ table{width:100%;border-collapse:collapse;margin:8px 0} th,td{border:1px solid #aaa;padding:6px;text-align:left;vertical-align:middle}
+ img{max-width:95px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
+ .tally-candidate-photo,.cert-candidate-photo{max-width:72px;max-height:86px}
+ .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:7px;margin:6px 0}
+ .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:3px 0}.signature-space{height:42px}
+ """
+ pdf_header_html=""
+ try:
+  header_path=os.path.join(app.root_path,"static","odm_report_header.png")
+  if os.path.isfile(header_path):
+   import base64
+   with open(header_path,"rb") as f: header_b64=base64.b64encode(f.read()).decode("ascii")
+   pdf_header_html='<div class="pdf-odm-header"><img src="data:image/png;base64,'+header_b64+'" alt="ODM Report Header"></div>'
+  elif REPORT_HEADER_IMAGE_URL:
+   u=REPORT_HEADER_IMAGE_URL
+   if u.startswith("/"):u=urljoin(request.host_url,u)
+   pdf_header_html='<div class="pdf-odm-header"><img src="'+u+'" alt="ODM Report Header"></div>'
+ except Exception as exc: app.logger.warning("Could not prepare repository PDF header: %s",exc)
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 10px}.pdf-odm-header img{width:100%;height:auto}</style></head><body>'+pdf_header_html+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+ buf=BytesIO(); result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
+ if result.err: raise RuntimeError("PDF rendering failed")
+ return buf.getvalue()
+
+def repository_rows():
+ if not DATABASE_URL:return []
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT id,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename FROM simulation_pdf_reports ORDER BY election_title,county,constituency,ward,poll_station,stream""")
+   return cur.fetchall()
+
+@app.post("/report-repository/deposit")
+def deposit_report():
+ available,ref,row=tallies_available()
+ if not available:return jsonify({"ok":False,"error":"Reports can be deposited only after formal stream closing."}),403
+ if not DATABASE_URL:return jsonify({"ok":False,"error":"Central repository requires DATABASE_URL (shared PostgreSQL)."}),503
+ data=request.get_json(silent=True) or {}; election=str(data.get("election","")).strip().lower(); report_html=str(data.get("report_html","")).strip()
+ allowed={k:t for k,t,_ in ELECTIONS}
+ if election not in allowed or not report_html:return jsonify({"ok":False,"error":"Invalid report."}),400
+ pdf=render_tally_pdf(report_html); title=allowed[election]
+ safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
+ filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
+ now=kenya_now().isoformat(timespec='seconds'); init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data)
+    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    ON CONFLICT(session_date,election,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,county=EXCLUDED.county,constituency=EXCLUDED.constituency,ward=EXCLUDED.ward,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data""",
+    (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf)))
+  conn.commit()
+ return jsonify({"ok":True,"filename":filename})
+
+@app.get("/report-repository")
+def report_repository():
+ if not DATABASE_URL:return render_template('report_repository.html',groups={},error='Central repository requires DATABASE_URL (shared PostgreSQL).')
+ rows=repository_rows(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
+ groups={k:{'title':title,'rows':[]} for k,title in order}
+ for r in rows:
+  if r['election'] in groups:groups[r['election']]['rows'].append(r)
+ return render_template('report_repository.html',groups=groups,error='')
+
+@app.get("/report-repository/pdf/<int:report_id>")
+def repository_pdf(report_id):
+ if not DATABASE_URL:return Response('Repository unavailable',status=503)
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
+ if not r:return Response('Report not found',status=404)
+ return Response(bytes(r['pdf_data']),mimetype='application/pdf',headers={'Content-Disposition':f'inline; filename="{r["filename"]}"'})
+
+@app.get("/report-repository/download/<int:report_id>")
+def repository_download(report_id):
+ if not DATABASE_URL:return Response('Repository unavailable',status=503)
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
+ if not r:return Response('Report not found',status=404)
+ return Response(bytes(r['pdf_data']),mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{r["filename"]}"'})
 
 @app.post("/email-tally")
 def email_tally():

@@ -1,5 +1,5 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
-<header><b>Simulated Tally Dashboard</b><a href=/>Training ballot</a></header>
+<header><b>Simulated Tally Dashboard</b><a href=/report-repository>Central PDF Repository</a><a href=/>Training ballot</a></header>
 <div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
 <div class=wrap>
 <div class="odm-screen-header project-screen-brand">
@@ -268,8 +268,19 @@ async function printTally(sectionId,title){
   },150);
 }
 
+async function depositAllClosedReports(){
+  const sections=[...document.querySelectorAll('.tally-section')];
+  for(const section of sections){
+    const election=section.id.replace('tally-','');
+    const clone=section.cloneNode(true);
+    clone.querySelectorAll('.no-print,button').forEach(el=>el.remove());
+    try{await fetch('/report-repository/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({election:election,report_html:clone.outerHTML})});}catch(e){console.warn('Repository deposit failed',e);}
+  }
+}
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.tally-section').forEach(updateDateTime);
   captureAllReportDetails();
+  // Closing redirects here. Deposit all six category PDFs centrally after the report page renders.
+  setTimeout(depositAllClosedReports,2500);
 });
 </script>

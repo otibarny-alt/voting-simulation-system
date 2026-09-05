@@ -1,0 +1,10 @@
+<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
+<header><b>Central PDF Report Repository</b><a href=/tallies>Tally Dashboard</a><a href=/>Training Ballot</a></header>
+<div class=demo>TRAINING / SIMULATION ONLY — central archive of formally closed stream reports.</div>
+<div class=wrap><div class="odm-screen-header project-screen-brand"><img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
+<div class="repository-ribbon">Central Polling-Station Stream PDF Repository</div>
+{% if error %}<div class=error>{{error}}</div>{% endif %}
+{% for key,g in groups.items() %}<section class="repository-group"><h2>{{g.title}}</h2><div class="repo-count">{{g.rows|length}} PDF report(s)</div>
+{% if g.rows %}<div class=table-scroll><table class=repository-table><tr><th>County</th><th>Constituency</th><th>Ward</th><th>Polling Station</th><th>Stream</th><th>Closed</th><th>Deposited</th><th>PDF</th></tr>
+{% for r in g.rows %}<tr><td>{{r.county}}</td><td>{{r.constituency}}</td><td>{{r.ward}}</td><td>{{r.poll_station|replace('_',' ')|title}}</td><td>{{r.stream|replace('_',' ')|title}}</td><td>{{r.closed_at}}</td><td>{{r.deposited_at}}</td><td><a class=repo-btn target=_blank href="/report-repository/pdf/{{r.id}}">View</a> <a class="repo-btn download" href="/report-repository/download/{{r.id}}">Download</a></td></tr>{% endfor %}</table></div>
+{% else %}<div class=repo-empty>No reports deposited yet.</div>{% endif %}</section>{% endfor %}</div>

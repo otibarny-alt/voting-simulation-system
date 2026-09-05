@@ -1002,3 +1002,23 @@ V22.50 PDF EMAIL ATTACHMENTS
 - The PDF is attached to the email for easy download and printing.
 - Existing SMTP environment variables are unchanged.
 - Tally access remains blocked until the stream is officially closed.
+
+
+V22.52 — CENTRAL PDF REPORT REPOSITORY
+======================================
+TRAINING / SIMULATION ONLY.
+
+After a polling-station stream is formally closed, the application redirects to the final tally dashboard. The six rendered tally sections are automatically converted to PDFs and deposited in the shared PostgreSQL repository under these groups:
+- Presidential Reports
+- Gubernatorial Reports
+- Senatorial Reports
+- Women Rep Reports
+- MNA Reports
+- MCA Reports
+
+Repository URL: /report-repository
+Each record stores election category, county, constituency, ward, polling station, stream, formal closing timestamp, deposit timestamp, filename and the PDF bytes. Each report has View and Download controls.
+
+DATABASE: Uses the existing DATABASE_URL / Render PostgreSQL. No new environment variable is required. The simulation_pdf_reports table is created automatically.
+
+IMPORTANT: PostgreSQL is used rather than the Render service filesystem so the central PDFs survive web-service restarts/redeploys and are shared across devices connected to the same database.
