@@ -15,7 +15,7 @@ app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 DB=os.getenv("DEMO_DB_PATH","training_votes.db")
 KENYA_TZ=ZoneInfo("Africa/Nairobi")
-OFFICIAL_CLOSE_TIME="18:00"
+OFFICIAL_CLOSE_TIME="08:00"
 SMTP_HOST=os.getenv("SMTP_HOST","").strip()
 SMTP_PORT=int(os.getenv("SMTP_PORT","587") or 587)
 SMTP_USERNAME=os.getenv("SMTP_USERNAME","").strip()
@@ -70,11 +70,11 @@ def kenya_now():
 
 def official_close_reached():
  now=kenya_now()
- close_t=dt_time(18,0)
+ close_t=dt_time(8,0)
  return now.time() >= close_t
 
 def close_time_message():
- return "18:00 (6:00 PM) Africa/Nairobi"
+ return "08:00 (8:00 AM) Africa/Nairobi"
 
 def candidate_portal_catalog(geo):
  if not CANDIDATE_PORTAL_BASE_URL:
@@ -719,7 +719,7 @@ def close_stream():
    can_close_now=False,official_close_time=close_time_message()
   )
 
- # Official closing is fixed at 18:00 East Africa Time.
+ # TESTING: official closing is temporarily fixed at 08:00 East Africa Time.
  if not official_close_reached():
   return render_template(
    "stream_control.html",row=row,poll_station=ps,stream=st,
@@ -1211,7 +1211,7 @@ def tallies():
    "tallies_locked.html",
    terminal_lock=lock,
    stream_row=row,
-   official_close_time="18:00 (6:00 PM)"
+   official_close_time="08:00 (8:00 AM)"
   ),403
  c=con()
  vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes

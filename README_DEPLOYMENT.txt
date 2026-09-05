@@ -1022,3 +1022,8 @@ Each record stores election category, county, constituency, ward, polling statio
 DATABASE: Uses the existing DATABASE_URL / Render PostgreSQL. No new environment variable is required. The simulation_pdf_reports table is created automatically.
 
 IMPORTANT: PostgreSQL is used rather than the Render service filesystem so the central PDFs survive web-service restarts/redeploys and are shared across devices connected to the same database.
+
+
+V22.53 — TEMPORARY 8:00 AM TEST CLOSING
+For TRAINING / SIMULATION testing only, the official close gate is temporarily set to 08:00 (8:00 AM) Africa/Nairobi.
+Restore the intended closing time after testing.
