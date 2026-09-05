@@ -1055,3 +1055,9 @@ Set these Render environment variables before using Delete:
 ADMIN_USERNAME=<your administrator username>
 ADMIN_PASSWORD=<a strong administrator password>
 Only an authenticated repository administrator sees the Delete buttons. The server also rejects direct delete requests from non-admin sessions.
+
+V22.74 LIVE PRESIDENTIAL DASHBOARD FEED
+----------------------------------------
+The training simulation now mirrors completed ballot-category selections into PostgreSQL as anonymous simulation dashboard events. The mirror contains no National ID, phone number or membership number. This lets the separate Presidential Simulation Results Dashboard show current simulated presidential selections and retain those aggregate events across Render deploys/restarts.
+
+The existing DATABASE_URL is used; no additional database service is required. Keep DASHBOARD_API_KEY configured on this service and set the same value as SIMULATION_DASHBOARD_API_KEY on the separate dashboard service.

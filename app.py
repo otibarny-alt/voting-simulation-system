@@ -1,4 +1,4 @@
-# V22.61: repository responsiveness fix; skip existing PDFs before rendering and preserve visible location header.
+# V22.74: persistent anonymous live presidential dashboard feed + prior repository/performance fixes.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -39,7 +39,10 @@ def con():
  vote_cols={r[1] for r in c.execute("PRAGMA table_info(demo_votes)").fetchall()}
  if "candidate_id" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_id TEXT")
  if "candidate_name" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_name TEXT")
+ if "dashboard_event_id" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN dashboard_event_id TEXT")
+ if "dashboard_mirrored" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN dashboard_mirrored INTEGER DEFAULT 0")
  c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_voter ON demo_votes(voter_session)')
+ c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_dashboard_mirrored ON demo_votes(dashboard_mirrored)')
  c.execute('''CREATE TABLE IF NOT EXISTS stream_sessions(
  id INTEGER PRIMARY KEY AUTOINCREMENT,session_date TEXT NOT NULL,county TEXT,constituency TEXT,ward TEXT,
  poll_station TEXT,stream TEXT,opened_at TEXT,closed_at TEXT,opening_zero_votes INTEGER DEFAULT 0,
@@ -229,6 +232,22 @@ def init_global_lock_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_stream ON simulation_pdf_reports(election,stream)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
+    # Anonymous, simulation-only ballot events used by the separate live results dashboard.
+    # No National ID, phone number or member identifier is stored here.
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_dashboard_vote_events(
+       event_id TEXT PRIMARY KEY,
+       session_date TEXT NOT NULL,
+       election TEXT NOT NULL,
+       candidate_id TEXT NOT NULL,
+       candidate_name TEXT,
+       county TEXT, constituency TEXT, ward TEXT,
+       poll_station TEXT NOT NULL, stream TEXT NOT NULL,
+       recorded_at TEXT NOT NULL
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_dash_events_date_election ON simulation_dashboard_vote_events(session_date,election)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_dash_events_geo ON simulation_dashboard_vote_events(session_date,election,county,constituency,ward,poll_station,stream)")
    conn.commit()
   _GLOBAL_DB_READY = True
 
@@ -584,7 +603,7 @@ def previous_vote(voter_id):
  return row
 
 
-def today_iso(): return date.today().isoformat()
+def today_iso(): return kenya_now().date().isoformat()
 
 def stream_session(poll_station,stream):
  c=con(); row=c.execute("SELECT * FROM stream_sessions WHERE session_date=? AND poll_station=? AND stream=?",
@@ -1195,9 +1214,90 @@ def cast():
   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
    (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
     geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
- c.commit(); c.close(); session["completed"]=True
+ c.commit(); c.close()
+ try:
+  sync_unmirrored_votes_to_dashboard()
+ except Exception as exc:
+  app.logger.warning("Dashboard mirror sync deferred: %s",exc)
+ session["completed"]=True
  return redirect(url_for("complete"))
 
+
+
+def sync_unmirrored_votes_to_dashboard():
+ """
+ Mirror completed simulation ballot rows into PostgreSQL for the read-only live dashboard.
+ The mirror is anonymous: it stores only election/candidate/geography plus a random event id.
+ Event IDs make retries idempotent, so a temporary database error cannot double-count a row.
+ """
+ if not DATABASE_URL:
+  return 0
+ init_global_lock_db()
+ c=con()
+ rows=c.execute("""
+  SELECT id,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,dashboard_event_id
+  FROM demo_votes
+  WHERE COALESCE(dashboard_mirrored,0)=0
+  ORDER BY id
+ """).fetchall()
+ if not rows:
+  c.close()
+  return 0
+ prepared=[]
+ now=kenya_now().isoformat(timespec="seconds")
+ session_date=today_iso()
+ try:
+  for r in rows:
+   event_id=(r["dashboard_event_id"] or "").strip() or secrets.token_hex(24)
+   if not r["dashboard_event_id"]:
+    c.execute("UPDATE demo_votes SET dashboard_event_id=? WHERE id=?",(event_id,r["id"]))
+   prepared.append((
+    event_id,session_date,r["election"] or "",r["candidate_id"] or "",r["candidate_name"] or "",
+    r["county"] or "",r["constituency"] or "",r["ward"] or "",r["poll_station"] or "",r["stream"] or "",now,r["id"]
+   ))
+  c.commit()
+  with lock_db() as conn:
+   with conn.cursor() as cur:
+    for row in prepared:
+     cur.execute("""
+      INSERT INTO simulation_dashboard_vote_events(
+       event_id,session_date,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,recorded_at
+      ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+      ON CONFLICT(event_id) DO NOTHING
+     """,row[:-1])
+   conn.commit()
+  c.executemany("UPDATE demo_votes SET dashboard_mirrored=1 WHERE id=?",[(row[-1],) for row in prepared])
+  c.commit()
+  return len(prepared)
+ finally:
+  c.close()
+
+
+def persistent_presidential_dashboard_snapshot():
+ """Return today's anonymous presidential aggregates and central stream status from PostgreSQL."""
+ if not DATABASE_URL:
+  return None
+ init_global_lock_db()
+ sync_unmirrored_votes_to_dashboard()
+ session_date=today_iso()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+    FROM simulation_dashboard_vote_events
+    WHERE session_date=%s AND election='president'
+    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+   """,(session_date,))
+   rows=cur.fetchall()
+   cur.execute("""
+    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
+    FROM simulation_terminal_locks
+    WHERE session_date=%s
+    ORDER BY COALESCE(closed_at,locked_at) DESC
+   """,(session_date,))
+   locks=cur.fetchall()
+ return rows,locks
 
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
@@ -1212,21 +1312,45 @@ def api_dashboard_president():
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
 
- c=con()
- rows=c.execute("""
-  SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,
-         COUNT(*) AS n
-  FROM demo_votes
-  WHERE election='president'
-  GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-  ORDER BY county,constituency,ward,poll_station,stream,candidate_name
- """).fetchall()
- sessions=c.execute("""
-  SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
-  FROM stream_sessions
-  ORDER BY COALESCE(closed_at,opened_at) DESC
- """).fetchall()
- c.close()
+ # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
+ # Render deploys/restarts and reflect the current simulation across workers/devices.
+ try:
+  persistent=persistent_presidential_dashboard_snapshot()
+ except Exception as exc:
+  app.logger.warning("Persistent dashboard snapshot unavailable; using local fallback: %s",exc)
+  persistent=None
+
+ if persistent is not None:
+  rows,lock_rows=persistent
+  sessions=[]
+  for r in lock_rows:
+   # A released, unclosed lock is not an active opened stream.
+   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   sessions.append({
+    "session_date":r.get("session_date") or "",
+    "county":r.get("county") or "",
+    "constituency":r.get("constituency") or "",
+    "ward":r.get("ward") or "",
+    "poll_station":r.get("poll_station") or "",
+    "stream":r.get("stream") or "",
+    "opened_at":opened_at,
+    "closed_at":r.get("closed_at") or ""
+   })
+ else:
+  c=con()
+  rows=c.execute("""
+   SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+   FROM demo_votes
+   WHERE election='president'
+   GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+   ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+  """).fetchall()
+  sessions=c.execute("""
+   SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
+   FROM stream_sessions
+   ORDER BY COALESCE(closed_at,opened_at) DESC
+  """).fetchall()
+  c.close()
 
  streams={}
  candidate_totals={}
