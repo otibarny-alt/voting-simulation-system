@@ -53,38 +53,50 @@ The polling-station stream is centrally reserved to this device. Another device 
 <p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Official closing: <b>08:00 (8:00 AM) — TESTING</b></p>
 <div class="open-stream-submit-row"><button type="button" id="open_stream_btn" class="open-stream-submit-btn">Capture GPS, Verify 0 Pre-Cast Votes & Open Stream</button></div></form>
 <script>
-let H=null;
 const $=id=>document.getElementById(id);
 function fill(sel,rows,placeholder){
  sel.innerHTML='<option value="">'+placeholder+'</option>';
  rows.forEach(r=>{const o=document.createElement('option');o.value=r.name;o.textContent=r.label||r.name;sel.appendChild(o)});
  sel.disabled=false;
 }
-function norm(v){return (v||'').trim().toLowerCase().replaceAll('-','_').replace(/\s+/g,'_')}
-fetch('/api/hierarchy').then(r=>r.json()).then(d=>{
- H=d; fill($('sc_county'),H.counties,'Select County');
+function resetSelect(sel,placeholder){ sel.innerHTML='<option value="">'+placeholder+'</option>'; sel.disabled=true; }
+async function loadLevel(level,parent=''){
+ const url='/api/hierarchy?level='+encodeURIComponent(level)+(parent?'&parent='+encodeURIComponent(parent):'');
+ const r=await fetch(url,{cache:'force-cache'});
+ if(!r.ok) throw new Error('Hierarchy request failed');
+ const d=await r.json();
+ return d.rows||[];
+}
+
+// Load only 47 counties first instead of downloading the entire national
+// hierarchy. Each lower level is fetched only after its parent is selected.
+loadLevel('counties').then(rows=>fill($('sc_county'),rows,'Select County')).catch(()=>{
+ $('sc_county').innerHTML='<option value="">Unable to load counties — refresh page</option>';
 });
-$('sc_county').onchange=function(){
- const k=norm(this.value);
- fill($('sc_constituency'),H.constituencies.filter(x=>norm(x.county_key)==k),'Select Constituency');
- $('sc_ward').innerHTML='<option value="">Select Ward</option>';$('sc_ward').disabled=true;
- $('sc_station').innerHTML='<option value="">Select Polling Station</option>';$('sc_station').disabled=true;
- $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+$('sc_county').onchange=async function(){
+ resetSelect($('sc_constituency'),'Loading Constituencies…');
+ resetSelect($('sc_ward'),'Select Ward'); resetSelect($('sc_station'),'Select Polling Station'); resetSelect($('sc_stream'),'Select Stream');
+ if(!this.value){ resetSelect($('sc_constituency'),'Select Constituency'); return; }
+ try{ fill($('sc_constituency'),await loadLevel('constituencies',this.value),'Select Constituency'); }
+ catch(e){ resetSelect($('sc_constituency'),'Unable to load constituencies'); }
 };
-$('sc_constituency').onchange=function(){
- const k=norm(this.value);
- fill($('sc_ward'),H.wards.filter(x=>norm(x.constituency_key)==k),'Select Ward');
- $('sc_station').innerHTML='<option value="">Select Polling Station</option>';$('sc_station').disabled=true;
- $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+$('sc_constituency').onchange=async function(){
+ resetSelect($('sc_ward'),'Loading Wards…'); resetSelect($('sc_station'),'Select Polling Station'); resetSelect($('sc_stream'),'Select Stream');
+ if(!this.value){ resetSelect($('sc_ward'),'Select Ward'); return; }
+ try{ fill($('sc_ward'),await loadLevel('wards',this.value),'Select Ward'); }
+ catch(e){ resetSelect($('sc_ward'),'Unable to load wards'); }
 };
-$('sc_ward').onchange=function(){
- const k=norm(this.value);
- fill($('sc_station'),H.poll_stations.filter(x=>norm(x.ward_key)==k),'Select Polling Station');
- $('sc_stream').innerHTML='<option value="">Select Stream</option>';$('sc_stream').disabled=true;
+$('sc_ward').onchange=async function(){
+ resetSelect($('sc_station'),'Loading Polling Stations…'); resetSelect($('sc_stream'),'Select Stream');
+ if(!this.value){ resetSelect($('sc_station'),'Select Polling Station'); return; }
+ try{ fill($('sc_station'),await loadLevel('stations',this.value),'Select Polling Station'); }
+ catch(e){ resetSelect($('sc_station'),'Unable to load polling stations'); }
 };
-$('sc_station').onchange=function(){
- const k=norm(this.value);
- fill($('sc_stream'),H.streams.filter(x=>norm(x.poll_station_key)==k),'Select Stream');
+$('sc_station').onchange=async function(){
+ resetSelect($('sc_stream'),'Loading Streams…');
+ if(!this.value){ resetSelect($('sc_stream'),'Select Stream'); return; }
+ try{ fill($('sc_stream'),await loadLevel('streams',this.value),'Select Stream'); }
+ catch(e){ resetSelect($('sc_stream'),'Unable to load streams'); }
 };
 
 const openBtn=document.getElementById('open_stream_btn');

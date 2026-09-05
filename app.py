@@ -411,20 +411,93 @@ def hierarchy_rows():
   pass
  return rows
 
+# V22.73: build the county hierarchy once per Gunicorn worker and serve only
+# the selected branch. This avoids sending all 46,000+ stream rows to the
+# browser just to populate the first County dropdown.
+_HIERARCHY_CACHE = None
+_HIERARCHY_LOCK = threading.Lock()
+
+def _hierarchy_cache():
+ global _HIERARCHY_CACHE
+ if _HIERARCHY_CACHE is not None:
+  return _HIERARCHY_CACHE
+ with _HIERARCHY_LOCK:
+  if _HIERARCHY_CACHE is not None:
+   return _HIERARCHY_CACHE
+  rows=hierarchy_rows()
+  counties=[]
+  constituencies={}
+  wards={}
+  stations={}
+  streams={}
+  for r in rows:
+   kind=(r.get("list_name") or "").strip()
+   name=(r.get("name") or "").strip()
+   if not name:
+    continue
+   item={"name":name,"label":(r.get("label") or name).strip()}
+   if kind=="county":
+    counties.append(item)
+   elif kind=="constituency":
+    key=norm_key(r.get("county_key",""))
+    item["county_key"]=r.get("county_key","")
+    constituencies.setdefault(key,[]).append(item)
+   elif kind=="ward":
+    key=norm_key(r.get("constituency_key",""))
+    item["constituency_key"]=r.get("constituency_key","")
+    wards.setdefault(key,[]).append(item)
+   elif kind=="poll_station":
+    key=norm_key(r.get("ward_key",""))
+    item["ward_key"]=r.get("ward_key","")
+    item["poll_station_code"]=r.get("poll_station_code","")
+    stations.setdefault(key,[]).append(item)
+   elif kind=="poll_station_stream":
+    key=norm_key(r.get("poll_station_key",""))
+    item["poll_station_key"]=r.get("poll_station_key","")
+    streams.setdefault(key,[]).append(item)
+  _HIERARCHY_CACHE={
+   "counties":counties,
+   "constituencies":constituencies,
+   "wards":wards,
+   "poll_stations":stations,
+   "streams":streams,
+  }
+ return _HIERARCHY_CACHE
+
 def hierarchy_payload():
- rows=hierarchy_rows()
+ # Kept for backward compatibility with any older client that still requests
+ # the complete hierarchy. The new stream-control page does not use it.
+ h=_hierarchy_cache()
  return {
-  "counties":[{"name":r["name"],"label":r.get("label") or r["name"]} for r in rows if r.get("list_name")=="county"],
-  "constituencies":[{"name":r["name"],"label":r.get("label") or r["name"],"county_key":r.get("county_key","")} for r in rows if r.get("list_name")=="constituency"],
-  "wards":[{"name":r["name"],"label":r.get("label") or r["name"],"constituency_key":r.get("constituency_key","")} for r in rows if r.get("list_name")=="ward"],
-  "poll_stations":[{"name":r["name"],"label":r.get("label") or r["name"],"ward_key":r.get("ward_key",""),"poll_station_code":r.get("poll_station_code","")} for r in rows if r.get("list_name")=="poll_station"],
-  "streams":[{"name":r["name"],"label":r.get("label") or r["name"],"poll_station_key":r.get("poll_station_key","")} for r in rows if r.get("list_name")=="poll_station_stream"]
+  "counties":h["counties"],
+  "constituencies":[x for rows in h["constituencies"].values() for x in rows],
+  "wards":[x for rows in h["wards"].values() for x in rows],
+  "poll_stations":[x for rows in h["poll_stations"].values() for x in rows],
+  "streams":[x for rows in h["streams"].values() for x in rows],
  }
 
 @app.get("/api/hierarchy")
 def api_hierarchy():
- from flask import jsonify
- return jsonify(hierarchy_payload())
+ h=_hierarchy_cache()
+ level=(request.args.get("level") or "").strip().lower()
+ parent=norm_key(request.args.get("parent") or "")
+ if level=="counties":
+  payload={"rows":h["counties"]}
+ elif level=="constituencies":
+  payload={"rows":h["constituencies"].get(parent,[])}
+ elif level=="wards":
+  payload={"rows":h["wards"].get(parent,[])}
+ elif level in ("stations","poll_stations"):
+  payload={"rows":h["poll_stations"].get(parent,[])}
+ elif level=="streams":
+  payload={"rows":h["streams"].get(parent,[])}
+ else:
+  payload=hierarchy_payload()
+ resp=jsonify(payload)
+ # county_main.csv changes only when a new build is deployed, so browser/proxy
+ # caching is safe and makes repeated navigation virtually instant.
+ resp.headers["Cache-Control"]="public, max-age=3600"
+ return resp
 
 
 def kobo_headers():
