@@ -171,6 +171,14 @@ def init_global_lock_db():
       UNIQUE(session_date,election,poll_station,stream)
     )
    """)
+   # V22.55: indexes keep repository navigation fast as report volume grows.
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_county ON simulation_pdf_reports(election,county)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_constituency ON simulation_pdf_reports(election,constituency)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_ward ON simulation_pdf_reports(election,ward)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_poll_station ON simulation_pdf_reports(election,poll_station)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_stream ON simulation_pdf_reports(election,stream)")
+   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_deposited_at ON simulation_pdf_reports(deposited_at DESC)")
   conn.commit()
 
 def token_hash(token):
@@ -1368,13 +1376,42 @@ def render_tally_pdf(report_html):
  if result.err: raise RuntimeError("PDF rendering failed")
  return buf.getvalue()
 
-def repository_rows():
- if not DATABASE_URL:return []
+def repository_counts():
+ if not DATABASE_URL:return {}
  init_global_lock_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT id,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename FROM simulation_pdf_reports ORDER BY election_title,county,constituency,ward,poll_station,stream""")
-   return cur.fetchall()
+   cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports GROUP BY election")
+   return {r['election']:int(r['report_count']) for r in cur.fetchall()}
+
+def repository_filter_values(election,column,filters_before=None):
+ if column not in {'county','constituency','ward','poll_station','stream'}:return []
+ where=['election=%s']; params=[election]
+ for key,val in (filters_before or {}).items():
+  if key in {'county','constituency','ward','poll_station'} and val:
+   where.append(f"{key}=%s"); params.append(val)
+ sql=f"SELECT DISTINCT {column} AS value FROM simulation_pdf_reports WHERE {' AND '.join(where)} AND COALESCE({column},'')<>'' ORDER BY {column}"
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute(sql,params); return [r['value'] for r in cur.fetchall()]
+
+def repository_category_rows(election,filters,page=1,per_page=50):
+ where=['election=%s']; params=[election]
+ for key in ('county','constituency','ward','poll_station','stream'):
+  val=(filters.get(key) or '').strip()
+  if val:
+   where.append(f"{key}=%s"); params.append(val)
+ offset=(page-1)*per_page
+ base=' AND '.join(where)
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute(f"SELECT COUNT(*) AS n FROM simulation_pdf_reports WHERE {base}",params)
+   total=int(cur.fetchone()['n'])
+   cur.execute(f"""SELECT id,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename
+    FROM simulation_pdf_reports WHERE {base}
+    ORDER BY deposited_at DESC,id DESC LIMIT %s OFFSET %s""",params+[per_page,offset])
+   rows=cur.fetchall()
+ return rows,total
 
 @app.post("/report-repository/deposit")
 def deposit_report():
@@ -1399,12 +1436,31 @@ def deposit_report():
 
 @app.get("/report-repository")
 def report_repository():
- if not DATABASE_URL:return render_template('report_repository.html',groups={},error='Central repository requires DATABASE_URL (shared PostgreSQL).')
- rows=repository_rows(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
- groups={k:{'title':title,'rows':[]} for k,title in order}
- for r in rows:
-  if r['election'] in groups:groups[r['election']]['rows'].append(r)
- return render_template('report_repository.html',groups=groups,error='')
+ if not DATABASE_URL:return render_template('report_repository.html',groups=[],total_reports=0,error='Central repository requires DATABASE_URL (shared PostgreSQL).')
+ counts=repository_counts(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
+ groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
+ return render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error='')
+
+@app.get("/report-repository/<election>")
+def report_repository_category(election):
+ allowed={k:t for k,t,_ in ELECTIONS}
+ if election not in allowed:return Response('Report category not found',status=404)
+ if not DATABASE_URL:return Response('Repository unavailable',status=503)
+ init_global_lock_db()
+ filters={k:(request.args.get(k,'') or '').strip() for k in ('county','constituency','ward','poll_station','stream')}
+ try: page=max(1,int(request.args.get('page','1')))
+ except Exception: page=1
+ per_page=50
+ rows,total=repository_category_rows(election,filters,page,per_page)
+ pages=max(1,(total+per_page-1)//per_page)
+ if page>pages:
+  page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
+ counties=repository_filter_values(election,'county')
+ constituencies=repository_filter_values(election,'constituency',{'county':filters['county']}) if filters['county'] else []
+ wards=repository_filter_values(election,'ward',{'county':filters['county'],'constituency':filters['constituency']}) if filters['constituency'] else []
+ stations=repository_filter_values(election,'poll_station',{'county':filters['county'],'constituency':filters['constituency'],'ward':filters['ward']}) if filters['ward'] else []
+ streams=repository_filter_values(election,'stream',{'county':filters['county'],'constituency':filters['constituency'],'ward':filters['ward'],'poll_station':filters['poll_station']}) if filters['poll_station'] else []
+ return render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=counties,constituencies=constituencies,wards=wards,stations=stations,streams=streams)
 
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):

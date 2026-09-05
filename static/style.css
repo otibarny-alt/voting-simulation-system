@@ -1171,3 +1171,12 @@ body.photo-zoom-open{overflow:hidden;}
 
 /* V22.52 central PDF repository */
 .repository-ribbon{background:#f58220;color:#111;text-align:center;font-weight:900;font-size:26px;padding:13px;border-radius:8px;margin:0 0 18px}.repository-group{background:#fff;border:1px solid #ccc;border-radius:10px;padding:16px;margin:18px 0}.repository-group h2{margin:0;color:#111}.repo-count{font-weight:700;color:#555;margin:5px 0 12px}.table-scroll{overflow-x:auto}.repository-table{min-width:1050px}.repo-btn{display:inline-block;background:#111;color:#fff!important;text-decoration:none;padding:7px 10px;border-radius:6px;font-weight:800;margin:2px}.repo-btn.download{background:#f58220;color:#111!important}.repo-empty{padding:14px;background:#f5f5f5;border-radius:7px;color:#666}
+
+/* V22.55 — fast repository index, category pages, filters and pagination */
+.repo-total{background:#fff;border:1px solid #ccc;border-radius:10px;padding:14px 18px;margin:12px 0 18px;font-size:20px}
+.repo-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.repo-category-card{display:block;background:#fff;border:1px solid #c9c9c9;border-radius:12px;padding:20px;text-decoration:none;color:#111;box-shadow:0 2px 7px rgba(0,0,0,.06)}
+.repo-category-card:hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(0,0,0,.11)}
+.repo-category-title{font-size:25px;font-weight:900}.repo-category-count{font-size:17px;font-weight:700;color:#555;margin:7px 0 16px}.repo-open-btn{display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:8px;font-weight:900}.repo-category-card:hover .repo-open-btn{background:#f58220;color:#111}
+.repo-filters{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;background:#fff;border:1px solid #ccc;border-radius:10px;padding:14px;margin-bottom:14px}.repo-filters label{font-weight:800}.repo-filters select{width:100%;margin-top:5px;padding:9px;border:1px solid #999;border-radius:6px;background:#fff}.repo-clear{align-self:end;text-align:center;background:#111;color:#fff!important;text-decoration:none;padding:10px;border-radius:7px;font-weight:800}.repo-category-summary{font-size:18px;margin:10px 0 14px}.repo-pagination{display:flex;justify-content:center;align-items:center;gap:18px;margin:18px 0}.repo-pagination a{background:#111;color:#fff!important;text-decoration:none;padding:9px 16px;border-radius:7px;font-weight:800}.repo-pagination span{font-weight:800}
+@media(max-width:800px){.repo-card-grid{grid-template-columns:1fr}.repo-filters{grid-template-columns:1fr}}
