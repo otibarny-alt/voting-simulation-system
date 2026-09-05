@@ -11,6 +11,7 @@ from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
+from markupsafe import escape
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -1381,7 +1382,8 @@ def tallies():
  return render_template("tallies.html",sections=tally_sections)
 
 
-def render_tally_pdf(report_html):
+def render_tally_pdf(report_html, ref=None):
+ ref=ref or {}
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
  report_html=re.sub(r'(src=["\'])(/[^"\']+)(["\'])',lambda m:m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),report_html,flags=re.I)
  css="""
@@ -1406,7 +1408,8 @@ def render_tally_pdf(report_html):
    if u.startswith("/"):u=urljoin(request.host_url,u)
    pdf_header_html='<div class="pdf-odm-header"><img src="'+u+'" alt="ODM Report Header"></div>'
  except Exception as exc: app.logger.warning("Could not prepare repository PDF header: %s",exc)
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 10px}.pdf-odm-header img{width:100%;height:auto}</style></head><body>'+pdf_header_html+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+ geo_ident='<div class="pdf-stream-ident"><div><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</div><div><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</div><div><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</div><div><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</div></div>'
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 8px}.pdf-odm-header img{width:100%;height:auto}.pdf-stream-ident{border:1px solid #b8b8b8;background:#f5f5f5;padding:8px 10px;margin:0 0 10px;font-size:10.5pt;line-height:1.45}.pdf-stream-ident div{margin:2px 0}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
  buf=BytesIO(); result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
  if result.err: raise RuntimeError("PDF rendering failed")
  return buf.getvalue()
@@ -1482,7 +1485,7 @@ def deposit_report():
  data=request.get_json(silent=True) or {}; election=str(data.get("election","")).strip().lower(); report_html=str(data.get("report_html","")).strip()
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed or not report_html:return jsonify({"ok":False,"error":"Invalid report."}),400
- pdf=render_tally_pdf(report_html); title=allowed[election]
+ pdf=render_tally_pdf(report_html,ref); title=allowed[election]
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
  filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
  now=kenya_now().isoformat(timespec='seconds'); init_global_lock_db()
@@ -1598,7 +1601,8 @@ def email_tally():
  except Exception as exc:
   app.logger.warning("Could not prepare ODM PDF header: %s",exc)
 
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 10px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}</style></head><body>'+pdf_header_html+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
+ geo_ident='<div class="pdf-stream-ident"><div><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</div><div><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</div><div><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</div><div><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</div></div>'
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 8px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}.pdf-stream-ident{border:1px solid #b8b8b8;background:#f5f5f5;padding:8px 10px;margin:0 0 10px;font-size:10.5pt;line-height:1.45}.pdf-stream-ident div{margin:2px 0}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
 
  # Create an A4 PDF attachment from this specific tally report.
  pdf_buffer=BytesIO()
