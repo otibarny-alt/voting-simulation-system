@@ -1,3 +1,4 @@
+# V22.58: repository speed hardening after V22.57; preserves PDF stream identification header.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -77,12 +78,18 @@ if DATABASE_URL:
    _pool_url = "postgresql://" + _pool_url[len("postgres://"):]
   PG_POOL = ConnectionPool(
    conninfo=_pool_url,
-   min_size=1,
+   min_size=int(os.getenv("PG_POOL_MIN_SIZE", "2") or 2),
    max_size=int(os.getenv("PG_POOL_MAX_SIZE", "8") or 8),
    timeout=10,
    kwargs={"row_factory": dict_row},
    open=True
   )
+  # Build the minimum pool connections during worker startup so the first
+  # repository request does not pay the Render PostgreSQL/TLS connection cost.
+  try:
+   PG_POOL.wait(timeout=10)
+  except Exception as exc:
+   app.logger.warning("PostgreSQL pool warm-up did not complete: %s", exc)
  except Exception as exc:
   app.logger.warning("Could not start PostgreSQL connection pool: %s", exc)
   PG_POOL = None
@@ -90,7 +97,9 @@ if DATABASE_URL:
 _GLOBAL_DB_READY = False
 _GLOBAL_DB_INIT_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
-_REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "20") or 20)
+_REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "120") or 120)
+_REPO_FILTER_CACHE = {}
+_REPO_FILTER_TTL = int(os.getenv("REPO_FILTER_TTL_SECONDS", "120") or 120)
 
 
 def kenya_now():
@@ -1431,9 +1440,15 @@ def repository_counts(force=False):
 def invalidate_repository_cache():
  _REPO_COUNTS_CACHE["value"]={}
  _REPO_COUNTS_CACHE["at"]=0.0
+ _REPO_FILTER_CACHE.clear()
 
 def repository_filter_sets(election,filters):
- """Return all cascading dropdown values using one pooled DB connection."""
+ """Return cascading dropdown values with a short in-process cache."""
+ key=(election,filters.get("county","") or "",filters.get("constituency","") or "",filters.get("ward","") or "",filters.get("poll_station","") or "")
+ now=time.monotonic()
+ cached=_REPO_FILTER_CACHE.get(key)
+ if cached and (now-cached[0]) < _REPO_FILTER_TTL:
+  return {k:list(v) for k,v in cached[1].items()}
  result={"counties":[],"constituencies":[],"wards":[],"stations":[],"streams":[]}
  specs=[
   ("counties","county",{}),
@@ -1445,18 +1460,18 @@ def repository_filter_sets(election,filters):
  with lock_db() as conn:
   with conn.cursor() as cur:
    for out_key,column,parents in specs:
-    # Only query a child dropdown when its immediate parent has been selected.
     if column!='county':
      parent={'constituency':'county','ward':'constituency','poll_station':'ward','stream':'poll_station'}[column]
      if not filters.get(parent):
       continue
     where=['election=%s']; params=[election]
-    for key,val in parents.items():
+    for pkey,val in parents.items():
      if val:
-      where.append(f"{key}=%s"); params.append(val)
+      where.append(f"{pkey}=%s"); params.append(val)
     sql=f"SELECT DISTINCT {column} AS value FROM simulation_pdf_reports WHERE {' AND '.join(where)} AND COALESCE({column},'')<>'' ORDER BY {column}"
     cur.execute(sql,params)
     result[out_key]=[r['value'] for r in cur.fetchall()]
+ _REPO_FILTER_CACHE[key]=(now,{k:list(v) for k,v in result.items()})
  return result
 
 def repository_category_rows(election,filters,page=1,per_page=50):
@@ -1504,7 +1519,9 @@ def report_repository():
  if not DATABASE_URL:return render_template('report_repository.html',groups=[],total_reports=0,error='Central repository requires DATABASE_URL (shared PostgreSQL).')
  counts=repository_counts(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
  groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
- return render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error='')
+ resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error=''))
+ resp.headers['Cache-Control']='private, max-age=15'
+ return resp
 
 @app.get("/report-repository/<election>")
 def report_repository_category(election):
@@ -1521,7 +1538,9 @@ def report_repository_category(election):
  if page>pages:
   page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
  filter_sets=repository_filter_sets(election,filters)
- return render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'])
+ resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams']))
+ resp.headers['Cache-Control']='private, max-age=10'
+ return resp
 
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):
@@ -1531,7 +1550,9 @@ def repository_pdf(report_id):
   with conn.cursor() as cur:
    cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
  if not r:return Response('Report not found',status=404)
- return Response(bytes(r['pdf_data']),mimetype='application/pdf',headers={'Content-Disposition':f'inline; filename="{r["filename"]}"'})
+ data=bytes(r['pdf_data'])
+ resp=Response(data,mimetype='application/pdf',headers={'Content-Disposition':f'inline; filename="{r["filename"]}"','Content-Length':str(len(data)),'Cache-Control':'private, max-age=3600'})
+ return resp
 
 @app.get("/report-repository/download/<int:report_id>")
 def repository_download(report_id):
@@ -1541,7 +1562,9 @@ def repository_download(report_id):
   with conn.cursor() as cur:
    cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
  if not r:return Response('Report not found',status=404)
- return Response(bytes(r['pdf_data']),mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{r["filename"]}"'})
+ data=bytes(r['pdf_data'])
+ resp=Response(data,mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{r["filename"]}"','Content-Length':str(len(data)),'Cache-Control':'private, max-age=3600'})
+ return resp
 
 @app.post("/email-tally")
 def email_tally():
