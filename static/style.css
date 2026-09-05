@@ -76,7 +76,7 @@
 
 .tally-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .print-tally{width:auto;padding:10px 16px;border-radius:8px;cursor:pointer}
-@page{size:A4 portrait;margin:10mm}
+@page{size:A4 portrait;margin:6mm}
 @media print{
   html,body{background:#fff!important}
   body.printing-one header,
@@ -92,16 +92,16 @@
     padding:0!important;
     width:100%!important;
   }
-  body.printing-one .print-target h2{margin-top:0;font-size:18pt}
-  body.printing-one table{width:100%;font-size:9pt;border-collapse:collapse}
-  body.printing-one th,body.printing-one td{padding:4px!important}
-  body.printing-one .summary-grid{grid-template-columns:repeat(4,1fr)!important;gap:5px}
-  body.printing-one .summary-box{padding:6px!important}
-  body.printing-one .summary-box strong{font-size:13pt!important}
+  body.printing-one .print-target h2{margin:0 0 4px!important;font-size:15pt}
+  body.printing-one table{width:100%;font-size:8pt;border-collapse:collapse;line-height:1.05}
+  body.printing-one th,body.printing-one td{padding:2px 3px!important}
+  body.printing-one .summary-grid{grid-template-columns:repeat(4,1fr)!important;gap:3px}
+  body.printing-one .summary-box{padding:3px!important;margin:2px 0!important}
+  body.printing-one .summary-box strong{font-size:11pt!important}
   body.printing-one .summary-box span{font-size:8pt!important}
-  body.printing-one .participation{margin-top:10px;padding-top:8px}
-  body.printing-one .participation h3{font-size:13pt;margin:5px 0}
-  body.printing-one .participation h4{font-size:10pt;margin:8px 0 3px}
+  body.printing-one .participation{margin-top:5px;padding-top:4px}
+  body.printing-one .participation h3{font-size:11pt;margin:3px 0}
+  body.printing-one .participation h4{font-size:9pt;margin:4px 0 2px}
 }
 
 .agent-certification{margin-top:24px;padding-top:14px;border-top:2px solid #222}
@@ -115,8 +115,8 @@
 @media print{
   body.printing-one .agent-certification{
     display:block!important;
-    margin-top:12px!important;
-    padding-top:8px!important;
+    margin-top:5px!important;
+    padding-top:4px!important;
     page-break-inside:avoid;
   }
   body.printing-one .agent-certification h3{font-size:12pt!important;margin:3px 0!important}
@@ -124,7 +124,7 @@
   body.printing-one .signature-table{font-size:8pt!important}
   body.printing-one .signature-table th,
   body.printing-one .signature-table td{padding:3px!important}
-  body.printing-one .signature-space{height:22px!important}
+  body.printing-one .signature-space{height:14px!important}
   body.printing-one .stream-cert-details{font-size:8.5pt!important;margin-top:6px!important;gap:8px!important}
 }
 
@@ -137,11 +137,11 @@
  body.printing-one .officer-certification{margin-top:8px!important;padding-top:5px!important;page-break-inside:avoid}
  body.printing-one .officer-certification h4{font-size:10pt!important;margin:2px 0 5px!important}
  body.printing-one .officer-signatures{grid-template-columns:1fr 1fr!important;gap:10px!important}
- body.printing-one .officer-line{font-size:8pt!important;line-height:1.2!important;min-height:60px!important}
+ body.printing-one .officer-line{font-size:7.5pt!important;line-height:1.05!important;min-height:38px!important}
 }
 
 .clean-check{font-weight:700;border:2px solid;padding:10px;border-radius:8px}.report-page{max-width:900px;margin:20px auto;padding:20px;background:#fff}.report-page table{width:100%;border-collapse:collapse}.report-page th,.report-page td{border:1px solid #777;padding:6px}.report-page .sig{height:28px}
-@media print{@page{size:A4 portrait;margin:10mm}.no-print,header,.demo{display:none!important}.report-page{margin:0;padding:0;max-width:none}.report-page h1{font-size:18pt}.report-page table{font-size:8pt}.report-page th,.report-page td{padding:3px}.report-page .sig{height:18px}}
+@media print{@page{size:A4 portrait;margin:6mm}.no-print,header,.demo{display:none!important}.report-page{margin:0;padding:0;max-width:none}.report-page h1{font-size:15pt;margin:0 0 4px}.report-page table{font-size:7.5pt;line-height:1.05}.report-page th,.report-page td{padding:2px}.report-page .sig{height:12px}}
 
 .control-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:14px 20px;margin:18px 0}
 .control-grid label{display:block;font-weight:700;margin-bottom:5px}
@@ -157,8 +157,8 @@
  .signature-section{break-inside:avoid;page-break-inside:avoid}
  .signature-section h3{font-size:10pt!important;margin:4px 0!important}
  .agent-sign-table{font-size:7.5pt!important}
- .agent-sign-table th,.agent-sign-table td{padding:2px!important}
- .agent-sign-table .sig{height:15px!important}
+ .agent-sign-table th,.agent-sign-table td{padding:1px 2px!important}
+ .agent-sign-table .sig{height:10px!important}
  .closing-signatures{page-break-before:always;margin-top:0;padding-top:0;border-top:0}
 }
 
@@ -168,8 +168,8 @@
  .tally-section .print-report-header{display:none}
 }
 @media print{
- .print-report-header{display:block!important;margin:0 0 7mm!important}
- .print-report-header img{width:100%!important;max-height:38mm!important;object-fit:contain!important}
+ .print-report-header{display:block!important;margin:0 0 3mm!important}
+ .print-report-header img{width:100%!important;max-height:30mm!important;object-fit:contain!important}
 }
 
 .terminal-lock-banner{border:2px solid #222;padding:12px;margin:12px 0;border-radius:8px;font-weight:600}

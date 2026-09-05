@@ -1429,14 +1429,16 @@ def render_tally_pdf(report_html, ref=None):
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
  report_html=re.sub(r'(src=["\'])(/[^"\']+)(["\'])',lambda m:m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),report_html,flags=re.I)
  css="""
- @page { size: A4; margin: 12mm; }
- body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:10pt}
- h2{font-size:18pt;margin:0 0 10px 0} h3{font-size:13pt} h4{font-size:11pt}
- table{width:100%;border-collapse:collapse;margin:8px 0} th,td{border:1px solid #aaa;padding:6px;text-align:left;vertical-align:middle}
- img{max-width:95px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
- .tally-candidate-photo,.cert-candidate-photo{max-width:72px;max-height:86px}
- .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:7px;margin:6px 0}
- .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:3px 0}.signature-space{height:42px}
+ @page { size: A4; margin: 7mm; }
+ body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:9pt;line-height:1.12}
+ h1,h2,h3,h4,p{margin-top:0} h2{font-size:15pt;margin:0 0 5px 0} h3{font-size:11pt;margin:4px 0} h4{font-size:9.5pt;margin:3px 0}
+ table{width:100%;border-collapse:collapse;margin:4px 0} th,td{border:1px solid #aaa;padding:3px 4px;text-align:left;vertical-align:middle;line-height:1.08}
+ img{max-width:76px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
+ .tally-candidate-photo,.cert-candidate-photo{max-width:56px;max-height:64px}
+ .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:4px;margin:3px 0}
+ .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:1px 0}.signature-space{height:26px}
+ .participation,.agent-certification,.officer-certification,.signature-section{margin-top:6px!important;padding-top:4px!important}
+ .signature-table th,.signature-table td,.agent-sign-table th,.agent-sign-table td{padding:2px 3px!important}
  """
  pdf_header_html=""
  try:
@@ -1450,8 +1452,8 @@ def render_tally_pdf(report_html, ref=None):
    if u.startswith("/"):u=urljoin(request.host_url,u)
    pdf_header_html='<div class="pdf-odm-header"><img src="'+u+'" alt="ODM Report Header"></div>'
  except Exception as exc: app.logger.warning("Could not prepare repository PDF header: %s",exc)
- geo_ident='<table border="1" cellspacing="0" cellpadding="6" width="100%" style="border:1px solid #777;margin:0 0 12px 0;font-size:11pt"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:12pt"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 8px}.pdf-odm-header img{width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
+ geo_ident='<table border="1" cellspacing="0" cellpadding="3" width="100%" style="border:1px solid #777;margin:0 0 5px 0;font-size:9pt;line-height:1.05"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:9.5pt;padding:3px"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 4px}.pdf-odm-header img{width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:5px;font-size:9pt">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
  buf=BytesIO(); result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
  if result.err: raise RuntimeError("PDF rendering failed")
  return buf.getvalue()
@@ -1658,14 +1660,16 @@ def email_tally():
  stream=ref.get("stream","")
  subject=f"{safe_title} Tally Report - {station} - {stream}"
  css="""
- @page { size: A4; margin: 12mm; }
- body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:10pt}
- h2{font-size:18pt;margin:0 0 10px 0} h3{font-size:13pt} h4{font-size:11pt}
- table{width:100%;border-collapse:collapse;margin:8px 0} th,td{border:1px solid #aaa;padding:6px;text-align:left;vertical-align:middle}
- img{max-width:95px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
- .tally-candidate-photo,.cert-candidate-photo{max-width:72px;max-height:86px}
- .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:7px;margin:6px 0}
- .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:3px 0}.signature-space{height:42px}
+ @page { size: A4; margin: 7mm; }
+ body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:9pt;line-height:1.12}
+ h1,h2,h3,h4,p{margin-top:0} h2{font-size:15pt;margin:0 0 5px 0} h3{font-size:11pt;margin:4px 0} h4{font-size:9.5pt;margin:3px 0}
+ table{width:100%;border-collapse:collapse;margin:4px 0} th,td{border:1px solid #aaa;padding:3px 4px;text-align:left;vertical-align:middle;line-height:1.08}
+ img{max-width:76px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
+ .tally-candidate-photo,.cert-candidate-photo{max-width:56px;max-height:64px}
+ .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:4px;margin:3px 0}
+ .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:1px 0}.signature-space{height:26px}
+ .participation,.agent-certification,.officer-certification,.signature-section{margin-top:6px!important;padding-top:4px!important}
+ .signature-table th,.signature-table td,.agent-sign-table th,.agent-sign-table td{padding:2px 3px!important}
  """
  # The browser tally page has a global ODM report header outside each individual tally section.
  # report_html contains only the selected section, so explicitly add the bundled ODM header to the PDF.
@@ -1685,8 +1689,8 @@ def email_tally():
  except Exception as exc:
   app.logger.warning("Could not prepare ODM PDF header: %s",exc)
 
- geo_ident='<table border="1" cellspacing="0" cellpadding="6" width="100%" style="border:1px solid #777;margin:0 0 12px 0;font-size:11pt"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:12pt"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 8px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:12px">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
+ geo_ident='<table border="1" cellspacing="0" cellpadding="3" width="100%" style="border:1px solid #777;margin:0 0 5px 0;font-size:9pt;line-height:1.05"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:9.5pt;padding:3px"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
+ html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 4px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:5px;font-size:9pt">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
 
  # Create an A4 PDF attachment from this specific tally report.
  pdf_buffer=BytesIO()
