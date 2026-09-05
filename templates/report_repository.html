@@ -1,5 +1,5 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
-<header><b>Central PDF Report Repository</b><a href=/tallies>Tally Dashboard</a><a href=/>Training Ballot</a>{% if is_admin %}<form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form>{% else %}<a href="{{ url_for('repository_admin_login', next=request.full_path) }}">Admin Login</a>{% endif %}</header>
+<header><b>Central PDF Report Repository</b>{% if is_admin %}<form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form>{% else %}<a href="{{ url_for('repository_admin_login', next=request.full_path) }}">Admin Login</a>{% endif %}</header>
 <div class=demo>TRAINING / SIMULATION ONLY — central archive of formally closed stream reports.</div>
 <div class=wrap><div class="odm-screen-header project-screen-brand"><img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
 <div class="repository-ribbon">Central Polling-Station Stream PDF Repository</div>
