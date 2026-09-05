@@ -561,6 +561,26 @@ def locked_stream_vote_count(lock):
  c.close()
  return n
 
+def stream_distinct_voter_count(ref):
+ # A completed simulated ballot writes one row per election. Count distinct
+ # voter sessions so a stream with zero actual participants cannot produce
+ # or deposit an empty tally PDF. SKIP choices still count as participation.
+ if not ref:
+  return 0
+ station=str(ref.get("poll_station","") or "")
+ stream=str(ref.get("stream","") or "")
+ if not station or not stream:
+  return 0
+ c=con()
+ try:
+  row=c.execute(
+   "SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",
+   (station,stream)
+  ).fetchone()
+  return int(row["n"] or 0) if row else 0
+ finally:
+  c.close()
+
 @app.post("/terminal/reset")
 def terminal_reset():
  lock=terminal_lock()
@@ -1500,6 +1520,15 @@ def deposit_report():
  data=request.get_json(silent=True) or {}; election=str(data.get("election","")).strip().lower(); report_html=str(data.get("report_html","")).strip()
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed or not report_html:return jsonify({"ok":False,"error":"Invalid report."}),400
+ # Never create an empty repository report. A formally closed stream must
+ # also have at least one completed simulated voter session.
+ participants=stream_distinct_voter_count(ref)
+ if participants < 1:
+  return jsonify({
+   "ok":False,
+   "no_votes":True,
+   "error":"No report generated: this polling-station stream recorded no simulated voters."
+  }),409
  title=allowed[election]
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
  filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
@@ -1591,6 +1620,13 @@ def email_tally():
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed:
   return jsonify({"ok":False,"error":"Invalid tally report."}),400
+ ref=lock or closed_stream_cookie() or {}
+ if stream_distinct_voter_count(ref) < 1:
+  return jsonify({
+   "ok":False,
+   "no_votes":True,
+   "error":"No report generated: this polling-station stream recorded no simulated voters."
+  }),409
  if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",recipient):
   return jsonify({"ok":False,"error":"Enter a valid email address."}),400
  if not report_html:
@@ -1605,7 +1641,6 @@ def email_tally():
   report_html, flags=re.I
  )
  safe_title=allowed[election]
- ref=lock or closed_stream_cookie() or {}
  station=ref.get("poll_station","")
  stream=ref.get("stream","")
  subject=f"{safe_title} Tally Report - {station} - {stream}"

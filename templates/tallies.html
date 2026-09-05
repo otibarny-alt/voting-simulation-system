@@ -279,6 +279,12 @@ async function depositOneClosedReport(section, attempt=1){
     });
     let result={};
     try{ result=await response.json(); }catch(_e){}
+    // A closed stream with no completed simulated voter must not create an
+    // empty PDF. Treat this as an intentional skip, not a retryable failure.
+    if(result && result.no_votes){
+      console.info('Repository report intentionally skipped for '+election+': no simulated voters recorded.');
+      return {election:election,ok:true,skipped:true,no_votes:true};
+    }
     if(!response.ok || !result.ok) throw new Error(result.error || ('HTTP '+response.status));
     return {election:election,ok:true};
   }catch(err){

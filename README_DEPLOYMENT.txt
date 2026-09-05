@@ -1,3 +1,4 @@
+V22.62: Prevent empty report generation/deposit for closed streams with zero simulated voters.
 2027 TRAINING E-BALLOT PROTOTYPE V1
 
 NON-BINDING TRAINING / SIMULATION ONLY.
