@@ -18,7 +18,7 @@
  </style>
 </head>
 <body>
-<header><b>Simulated Tally Dashboard</b><a href="/report-repository">Central PDF Repository</a><a href="/">Training Ballot</a></header>
+<header><b>Simulated Tally Dashboard</b><a href="/">Training Ballot</a></header>
 <div class="simulation-banner">TRAINING / SIMULATION ONLY</div>
 <div class="no-vote-wrap">
  {% if report_header_image_url %}<div class="screen-report-header"><img src="{{ report_header_image_url }}" alt="ODM Report Header"></div>{% endif %}
@@ -31,7 +31,6 @@
   </div>
   <div class="no-vote-actions">
    <a href="{{ url_for('stream_control', poll_station=poll_station, stream=stream) }}">Return to Stream Control</a>
-   <a href="/report-repository">Central PDF Repository</a>
   </div>
  </div>
 </div>
