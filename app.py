@@ -1286,6 +1286,19 @@ def tallies():
    stream_row=row,
    official_close_time="08:00 (8:00 AM)"
   ),403
+
+ # Do not generate or display any tally/general report for a closed stream
+ # that recorded no completed simulated voter session. This check happens
+ # before candidate lookups, tally aggregation, GPS work or PDF deposition.
+ report_ref=lock or closed_stream_cookie() or {}
+ if stream_distinct_voter_count(report_ref) <= 0:
+  return render_template(
+   "no_voting_report.html",
+   poll_station=report_ref.get("poll_station", ""),
+   stream=report_ref.get("stream", ""),
+   report_header_image_url=REPORT_HEADER_IMAGE_URL
+  ),409
+
  c=con()
  vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes
  FROM demo_votes
