@@ -66,6 +66,12 @@ KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
+
+def repository_admin_logged_in():
+ return bool(session.get("repository_admin"))
+
 
 # V22.56: shared PostgreSQL connection pool + one-time schema initialization.
 # Opening a fresh TLS connection to Render PostgreSQL for every repository query
@@ -1571,12 +1577,32 @@ def deposit_report():
  invalidate_repository_cache()
  return jsonify({"ok":True,"filename":filename})
 
+@app.route("/report-repository/admin-login", methods=["GET","POST"])
+def repository_admin_login():
+ error=""
+ if request.method=="POST":
+  username=(request.form.get("username") or "").strip()
+  password=request.form.get("password") or ""
+  if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+   error="Administrator login is not configured on the server."
+  elif hmac.compare_digest(username,ADMIN_USERNAME) and hmac.compare_digest(password,ADMIN_PASSWORD):
+   session["repository_admin"]=True
+   return redirect(request.args.get("next") or url_for("report_repository"))
+  else:
+   error="Invalid administrator username or password."
+ return render_template("repository_admin_login.html",error=error)
+
+@app.post("/report-repository/admin-logout")
+def repository_admin_logout():
+ session.pop("repository_admin",None)
+ return redirect(url_for("report_repository"))
+
 @app.get("/report-repository")
 def report_repository():
  if not DATABASE_URL:return render_template('report_repository.html',groups=[],total_reports=0,error='Central repository requires DATABASE_URL (shared PostgreSQL).')
  counts=repository_counts(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
  groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
- resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error=''))
+ resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error='',is_admin=repository_admin_logged_in()))
  resp.headers['Cache-Control']='private, max-age=15'
  return resp
 
@@ -1595,12 +1621,14 @@ def report_repository_category(election):
  if page>pages:
   page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
  filter_sets=repository_filter_sets(election,filters)
- resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams']))
+ resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in()))
  resp.headers['Cache-Control']='private, max-age=10'
  return resp
 
 @app.post("/report-repository/delete/<int:report_id>")
 def repository_delete(report_id):
+ if not repository_admin_logged_in():
+  return Response('Administrator login required to delete repository reports.',status=403)
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
  init_global_lock_db()
  with lock_db() as conn:

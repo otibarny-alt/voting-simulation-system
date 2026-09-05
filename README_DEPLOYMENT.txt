@@ -1048,3 +1048,10 @@ V22.61 PERFORMANCE NOTE
 - New PDFs are deposited one category at a time to avoid saturating the web service.
 - Render runs Gunicorn with 2 workers x 2 threads so repository browsing can remain responsive during PDF generation.
 - V22.60 visible County / Constituency / Ward / Polling Station Stream PDF header is preserved.
+
+
+V22.68 REPOSITORY DELETE ADMIN PROTECTION
+Set these Render environment variables before using Delete:
+ADMIN_USERNAME=<your administrator username>
+ADMIN_PASSWORD=<a strong administrator password>
+Only an authenticated repository administrator sees the Delete buttons. The server also rejects direct delete requests from non-admin sessions.
