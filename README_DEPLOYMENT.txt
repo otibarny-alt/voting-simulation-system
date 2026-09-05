@@ -1036,3 +1036,7 @@ V22.56 FAST REPOSITORY ENGINE
 - PDF byte data remains lazy-loaded only on View/Download.
 - Added composite metadata indexes for category/date and geographic filtering.
 Optional tuning: PG_POOL_MAX_SIZE=8 and REPO_COUNTS_TTL_SECONDS=20 (defaults already applied; no Render variables required).
+
+
+V22.59 — PDF LOCATION IDENTIFICATION, HIGH-SPEED REPOSITORY PRESERVED
+County, Constituency, Ward and Polling Station Stream are displayed immediately below the ODM PDF logo header. Repository pooling, caching, indexes and lazy PDF retrieval remain unchanged from V22.58.
