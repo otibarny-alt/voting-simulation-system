@@ -1183,3 +1183,7 @@ body.photo-zoom-open{overflow:hidden;}
 
 /* V22.67 repository delete control */
 .repo-delete-form{display:inline;margin:0;padding:0}.repo-btn.delete{background:#a40000;color:#fff!important;border:0;cursor:pointer;font:inherit}.repo-btn.delete:hover{background:#7d0000}
+
+/* V22.69 repository admin controls */
+.repo-admin-link{background:transparent;border:0;color:inherit;font:inherit;cursor:pointer;text-decoration:underline;padding:0;margin-left:12px}
+.repo-admin-status{font-weight:700;margin-left:12px}
