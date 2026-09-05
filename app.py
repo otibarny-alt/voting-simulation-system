@@ -1599,6 +1599,22 @@ def report_repository_category(election):
  resp.headers['Cache-Control']='private, max-age=10'
  return resp
 
+@app.post("/report-repository/delete/<int:report_id>")
+def repository_delete(report_id):
+ if not DATABASE_URL:return Response('Repository unavailable',status=503)
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute('SELECT id,election,filename FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
+   if not r:return Response('Report not found',status=404)
+   cur.execute('DELETE FROM simulation_pdf_reports WHERE id=%s',(report_id,))
+  conn.commit()
+ invalidate_repository_cache()
+ election=(r.get('election') or '').strip()
+ if election in {k for k,_,_ in ELECTIONS}:
+  return redirect(url_for('report_repository_category',election=election))
+ return redirect(url_for('report_repository'))
+
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
