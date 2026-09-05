@@ -1,7 +1,8 @@
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
 from email.message import EmailMessage
 from io import BytesIO
@@ -63,6 +64,32 @@ KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+# V22.56: shared PostgreSQL connection pool + one-time schema initialization.
+# Opening a fresh TLS connection to Render PostgreSQL for every repository query
+# is expensive. Reusing a small pool makes repository navigation much faster.
+PG_POOL = None
+if DATABASE_URL:
+ try:
+  _pool_url = DATABASE_URL
+  if _pool_url.startswith("postgres://"):
+   _pool_url = "postgresql://" + _pool_url[len("postgres://"):]
+  PG_POOL = ConnectionPool(
+   conninfo=_pool_url,
+   min_size=1,
+   max_size=int(os.getenv("PG_POOL_MAX_SIZE", "8") or 8),
+   timeout=10,
+   kwargs={"row_factory": dict_row},
+   open=True
+  )
+ except Exception as exc:
+  app.logger.warning("Could not start PostgreSQL connection pool: %s", exc)
+  PG_POOL = None
+
+_GLOBAL_DB_READY = False
+_GLOBAL_DB_INIT_LOCK = threading.Lock()
+_REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
+_REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "20") or 20)
 
 
 def kenya_now():
@@ -135,51 +162,59 @@ def pg_url():
 def lock_db():
  if not DATABASE_URL:
   raise RuntimeError("DATABASE_URL is required for global device locking.")
+ if PG_POOL is not None:
+  return PG_POOL.connection()
  return psycopg.connect(pg_url(), row_factory=dict_row)
 
 def init_global_lock_db():
- if not DATABASE_URL:
+ global _GLOBAL_DB_READY
+ if not DATABASE_URL or _GLOBAL_DB_READY:
   return
- with lock_db() as conn:
-  with conn.cursor() as cur:
-   cur.execute("""
-    CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
-      session_date TEXT NOT NULL,
-      poll_station TEXT NOT NULL,
-      stream TEXT NOT NULL,
-      county TEXT,
-      constituency TEXT,
-      ward TEXT,
-      owner_token_hash TEXT NOT NULL,
-      locked_at TEXT NOT NULL,
-      released_at TEXT,
-      closed_at TEXT,
-      PRIMARY KEY(session_date,poll_station,stream)
-    )
-   """)
-   cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
-   cur.execute("""
-    CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
-      id BIGSERIAL PRIMARY KEY,
-      session_date TEXT NOT NULL,
-      election TEXT NOT NULL,
-      election_title TEXT NOT NULL,
-      county TEXT, constituency TEXT, ward TEXT,
-      poll_station TEXT NOT NULL, stream TEXT NOT NULL,
-      closed_at TEXT, deposited_at TEXT NOT NULL,
-      filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
-      UNIQUE(session_date,election,poll_station,stream)
-    )
-   """)
-   # V22.55: indexes keep repository navigation fast as report volume grows.
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_county ON simulation_pdf_reports(election,county)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_constituency ON simulation_pdf_reports(election,constituency)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_ward ON simulation_pdf_reports(election,ward)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_poll_station ON simulation_pdf_reports(election,poll_station)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_stream ON simulation_pdf_reports(election,stream)")
-   cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_deposited_at ON simulation_pdf_reports(deposited_at DESC)")
-  conn.commit()
+ with _GLOBAL_DB_INIT_LOCK:
+  if _GLOBAL_DB_READY:
+   return
+  with lock_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
+       session_date TEXT NOT NULL,
+       poll_station TEXT NOT NULL,
+       stream TEXT NOT NULL,
+       county TEXT,
+       constituency TEXT,
+       ward TEXT,
+       owner_token_hash TEXT NOT NULL,
+       locked_at TEXT NOT NULL,
+       released_at TEXT,
+       closed_at TEXT,
+       PRIMARY KEY(session_date,poll_station,stream)
+     )
+    """)
+    cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
+       id BIGSERIAL PRIMARY KEY,
+       session_date TEXT NOT NULL,
+       election TEXT NOT NULL,
+       election_title TEXT NOT NULL,
+       county TEXT, constituency TEXT, ward TEXT,
+       poll_station TEXT NOT NULL, stream TEXT NOT NULL,
+       closed_at TEXT, deposited_at TEXT NOT NULL,
+       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
+       UNIQUE(session_date,election,poll_station,stream)
+     )
+    """)
+    # Composite indexes are deliberately metadata-only: pdf_data is never part of an index.
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_county ON simulation_pdf_reports(election,county)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_constituency ON simulation_pdf_reports(election,constituency)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_ward ON simulation_pdf_reports(election,ward)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_poll_station ON simulation_pdf_reports(election,poll_station)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_stream ON simulation_pdf_reports(election,stream)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
+   conn.commit()
+  _GLOBAL_DB_READY = True
 
 def token_hash(token):
  return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
@@ -1376,24 +1411,50 @@ def render_tally_pdf(report_html):
  if result.err: raise RuntimeError("PDF rendering failed")
  return buf.getvalue()
 
-def repository_counts():
+def repository_counts(force=False):
  if not DATABASE_URL:return {}
  init_global_lock_db()
+ now=time.monotonic()
+ if not force and _REPO_COUNTS_CACHE.get("value") and (now-_REPO_COUNTS_CACHE.get("at",0.0)) < _REPO_COUNTS_TTL:
+  return dict(_REPO_COUNTS_CACHE["value"])
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports GROUP BY election")
-   return {r['election']:int(r['report_count']) for r in cur.fetchall()}
+   value={r['election']:int(r['report_count']) for r in cur.fetchall()}
+ _REPO_COUNTS_CACHE["value"]=value
+ _REPO_COUNTS_CACHE["at"]=now
+ return dict(value)
 
-def repository_filter_values(election,column,filters_before=None):
- if column not in {'county','constituency','ward','poll_station','stream'}:return []
- where=['election=%s']; params=[election]
- for key,val in (filters_before or {}).items():
-  if key in {'county','constituency','ward','poll_station'} and val:
-   where.append(f"{key}=%s"); params.append(val)
- sql=f"SELECT DISTINCT {column} AS value FROM simulation_pdf_reports WHERE {' AND '.join(where)} AND COALESCE({column},'')<>'' ORDER BY {column}"
+def invalidate_repository_cache():
+ _REPO_COUNTS_CACHE["value"]={}
+ _REPO_COUNTS_CACHE["at"]=0.0
+
+def repository_filter_sets(election,filters):
+ """Return all cascading dropdown values using one pooled DB connection."""
+ result={"counties":[],"constituencies":[],"wards":[],"stations":[],"streams":[]}
+ specs=[
+  ("counties","county",{}),
+  ("constituencies","constituency",{"county":filters.get("county","")}),
+  ("wards","ward",{"county":filters.get("county",""),"constituency":filters.get("constituency","")}),
+  ("stations","poll_station",{"county":filters.get("county",""),"constituency":filters.get("constituency",""),"ward":filters.get("ward","")}),
+  ("streams","stream",{"county":filters.get("county",""),"constituency":filters.get("constituency",""),"ward":filters.get("ward",""),"poll_station":filters.get("poll_station","")}),
+ ]
  with lock_db() as conn:
   with conn.cursor() as cur:
-   cur.execute(sql,params); return [r['value'] for r in cur.fetchall()]
+   for out_key,column,parents in specs:
+    # Only query a child dropdown when its immediate parent has been selected.
+    if column!='county':
+     parent={'constituency':'county','ward':'constituency','poll_station':'ward','stream':'poll_station'}[column]
+     if not filters.get(parent):
+      continue
+    where=['election=%s']; params=[election]
+    for key,val in parents.items():
+     if val:
+      where.append(f"{key}=%s"); params.append(val)
+    sql=f"SELECT DISTINCT {column} AS value FROM simulation_pdf_reports WHERE {' AND '.join(where)} AND COALESCE({column},'')<>'' ORDER BY {column}"
+    cur.execute(sql,params)
+    result[out_key]=[r['value'] for r in cur.fetchall()]
+ return result
 
 def repository_category_rows(election,filters,page=1,per_page=50):
  where=['election=%s']; params=[election]
@@ -1432,6 +1493,7 @@ def deposit_report():
     ON CONFLICT(session_date,election,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,county=EXCLUDED.county,constituency=EXCLUDED.constituency,ward=EXCLUDED.ward,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data""",
     (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf)))
   conn.commit()
+ invalidate_repository_cache()
  return jsonify({"ok":True,"filename":filename})
 
 @app.get("/report-repository")
@@ -1455,12 +1517,8 @@ def report_repository_category(election):
  pages=max(1,(total+per_page-1)//per_page)
  if page>pages:
   page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
- counties=repository_filter_values(election,'county')
- constituencies=repository_filter_values(election,'constituency',{'county':filters['county']}) if filters['county'] else []
- wards=repository_filter_values(election,'ward',{'county':filters['county'],'constituency':filters['constituency']}) if filters['constituency'] else []
- stations=repository_filter_values(election,'poll_station',{'county':filters['county'],'constituency':filters['constituency'],'ward':filters['ward']}) if filters['ward'] else []
- streams=repository_filter_values(election,'stream',{'county':filters['county'],'constituency':filters['constituency'],'ward':filters['ward'],'poll_station':filters['poll_station']}) if filters['poll_station'] else []
- return render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=counties,constituencies=constituencies,wards=wards,stations=stations,streams=streams)
+ filter_sets=repository_filter_sets(election,filters)
+ return render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'])
 
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):

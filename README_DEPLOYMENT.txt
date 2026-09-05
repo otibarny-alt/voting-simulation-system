@@ -1027,3 +1027,12 @@ IMPORTANT: PostgreSQL is used rather than the Render service filesystem so the c
 V22.53 — TEMPORARY 8:00 AM TEST CLOSING
 For TRAINING / SIMULATION testing only, the official close gate is temporarily set to 08:00 (8:00 AM) Africa/Nairobi.
 Restore the intended closing time after testing.
+
+V22.56 FAST REPOSITORY ENGINE
+- Reuses PostgreSQL connections through psycopg_pool instead of opening a new TLS DB connection for every repository query.
+- Database/table/index initialization runs once per web worker, not on every repository request.
+- Repository landing counts are cached briefly (default 20 seconds) and invalidated immediately when a new PDF is deposited.
+- Cascading filter dropdowns are fetched through one pooled connection.
+- PDF byte data remains lazy-loaded only on View/Download.
+- Added composite metadata indexes for category/date and geographic filtering.
+Optional tuning: PG_POOL_MAX_SIZE=8 and REPO_COUNTS_TTL_SECONDS=20 (defaults already applied; no Render variables required).
