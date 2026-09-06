@@ -1428,6 +1428,16 @@ def persistent_gubernatorial_dashboard_snapshot():
  if not DATABASE_URL:
   return None
  init_global_lock_db()
+ # Recover any completed local ballots that pre-date/escaped the anonymous mirror.
+ # The cheap SQLite existence check avoids a PostgreSQL write path on normal dashboard reads.
+ try:
+  c=con()
+  pending=c.execute("SELECT 1 FROM demo_votes WHERE COALESCE(dashboard_mirrored,0)=0 LIMIT 1").fetchone()
+  c.close()
+  if pending:
+   sync_unmirrored_votes_to_dashboard()
+ except Exception as exc:
+  app.logger.warning("Governor dashboard catch-up sync deferred: %s",exc)
  session_date=today_iso()
  with lock_db() as conn:
   with conn.cursor() as cur:
