@@ -1420,11 +1420,14 @@ def persistent_presidential_dashboard_snapshot():
    locks=cur.fetchall()
  return rows,locks
 def persistent_gubernatorial_dashboard_snapshot():
- """Return today's anonymous gubernatorial aggregates and central stream status from PostgreSQL."""
+ """Return today's anonymous gubernatorial aggregates and central stream status from PostgreSQL.
+
+ This is deliberately read-only and fast. Completed ballot rows are mirrored at /cast,
+ so the live dashboard request never waits while SQLite rows are copied into PostgreSQL.
+ """
  if not DATABASE_URL:
   return None
  init_global_lock_db()
- sync_unmirrored_votes_to_dashboard()
  session_date=today_iso()
  with lock_db() as conn:
   with conn.cursor() as cur:
@@ -1448,6 +1451,12 @@ def persistent_gubernatorial_dashboard_snapshot():
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
+
+# Very short cache for the gubernatorial feed. This prevents several dashboard browser
+# requests from repeating the same PostgreSQL aggregation at the same moment.
+_GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
+_GOV_DASHBOARD_CACHE_LOCK=threading.Lock()
+GOV_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","3")))
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
@@ -1612,6 +1621,11 @@ def api_dashboard_governor():
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
 
+ now_ts=time.time()
+ cached=_GOV_DASHBOARD_CACHE.get("payload")
+ if cached is not None and now_ts-float(_GOV_DASHBOARD_CACHE.get("at") or 0)<GOV_DASHBOARD_CACHE_SECONDS:
+  return jsonify(cached)
+
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
  try:
@@ -1734,7 +1748,7 @@ def api_dashboard_governor():
 
  candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
 
- return jsonify({
+ payload={
   "source":"training_simulation",
   "simulation_only":True,
   "election":"governor",
@@ -1745,7 +1759,11 @@ def api_dashboard_governor():
    "skipped":skipped_total,
    "participants":participants_total
   }
- })
+ }
+ with _GOV_DASHBOARD_CACHE_LOCK:
+  _GOV_DASHBOARD_CACHE["payload"]=payload
+  _GOV_DASHBOARD_CACHE["at"]=time.time()
+ return jsonify(payload)
 
 
 @app.get("/complete")
