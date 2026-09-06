@@ -1338,6 +1338,11 @@ def cast():
  c.commit(); c.close()
  try:
   sync_unmirrored_votes_to_dashboard()
+  try:
+   _GOV_DASHBOARD_CACHE["payload"]=None
+   _SEN_DASHBOARD_CACHE["payload"]=None
+  except Exception:
+   pass
  except Exception as exc:
   app.logger.warning("Dashboard mirror sync deferred: %s",exc)
  session["completed"]=True
@@ -1394,105 +1399,85 @@ def sync_unmirrored_votes_to_dashboard():
   c.close()
 
 
-def persistent_presidential_dashboard_snapshot():
- """Return today's anonymous presidential aggregates and central stream status from PostgreSQL."""
- if not DATABASE_URL:
-  return None
- init_global_lock_db()
- sync_unmirrored_votes_to_dashboard()
- session_date=today_iso()
- with lock_db() as conn:
-  with conn.cursor() as cur:
-   cur.execute("""
-    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-    FROM simulation_dashboard_vote_events
-    WHERE session_date=%s AND election='president'
-    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-   """,(session_date,))
-   rows=cur.fetchall()
-   cur.execute("""
-    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
-    FROM simulation_terminal_locks
-    WHERE session_date=%s
-    ORDER BY COALESCE(closed_at,locked_at) DESC
-   """,(session_date,))
-   locks=cur.fetchall()
- return rows,locks
-def persistent_gubernatorial_dashboard_snapshot():
- """Return today's anonymous gubernatorial aggregates and central stream status from PostgreSQL.
+def _persistent_dashboard_snapshot(election):
+ """Return anonymous dashboard aggregates for an election, with safe fallback behavior.
 
- This is deliberately read-only and fast. Completed ballot rows are mirrored at /cast,
- so the live dashboard request never waits while SQLite rows are copied into PostgreSQL.
+ If the PostgreSQL mirror is temporarily unavailable or contains no rows while the local
+ SQLite ballot store still has votes, return None so the API uses the local fallback.
+ If today's mirror is empty after a deploy/date rollover, use the most recent mirrored
+ simulation date for that election so previously mirrored training results remain visible.
  """
  if not DATABASE_URL:
   return None
  init_global_lock_db()
- # Recover any completed local ballots that pre-date/escaped the anonymous mirror.
- # The cheap SQLite existence check avoids a PostgreSQL write path on normal dashboard reads.
  try:
   c=con()
-  pending=c.execute("SELECT 1 FROM demo_votes WHERE COALESCE(dashboard_mirrored,0)=0 LIMIT 1").fetchone()
+  pending=c.execute("SELECT 1 FROM demo_votes WHERE election=? AND COALESCE(dashboard_mirrored,0)=0 LIMIT 1",(election,)).fetchone()
+  local_count=int(c.execute("SELECT COUNT(*) FROM demo_votes WHERE election=?",(election,)).fetchone()[0] or 0)
   c.close()
   if pending:
    sync_unmirrored_votes_to_dashboard()
  except Exception as exc:
-  app.logger.warning("Governor dashboard catch-up sync deferred: %s",exc)
+  app.logger.warning("%s dashboard mirror sync failed; using local fallback: %s", election, exc)
+  return None
+
  session_date=today_iso()
- with lock_db() as conn:
-  with conn.cursor() as cur:
-   cur.execute("""
-    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-    FROM simulation_dashboard_vote_events
-    WHERE session_date=%s AND election='governor'
-    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-   """,(session_date,))
-   rows=cur.fetchall()
-   cur.execute("""
-    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
-    FROM simulation_terminal_locks
-    WHERE session_date=%s
-    ORDER BY COALESCE(closed_at,locked_at) DESC
-   """,(session_date,))
-   locks=cur.fetchall()
- return rows,locks
+ try:
+  with lock_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+     FROM simulation_dashboard_vote_events
+     WHERE session_date=%s AND election=%s
+     GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+     ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+    """,(session_date,election))
+    rows=cur.fetchall()
+
+    # If PostgreSQL is empty but this worker still has local votes, never mask them.
+    if not rows and local_count>0:
+     return None
+
+    # Across Render deploys the local SQLite file can be fresh/empty while the durable
+    # anonymous mirror still has the user's most recent training session. Use that session.
+    if not rows:
+     cur.execute("SELECT MAX(session_date) AS d FROM simulation_dashboard_vote_events WHERE election=%s",(election,))
+     latest=cur.fetchone()
+     latest_date=(latest.get("d") if latest else None) if hasattr(latest,'get') else (latest[0] if latest else None)
+     if latest_date:
+      session_date=str(latest_date)
+      cur.execute("""
+       SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+       FROM simulation_dashboard_vote_events
+       WHERE session_date=%s AND election=%s
+       GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+       ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+      """,(session_date,election))
+      rows=cur.fetchall()
+
+    cur.execute("""
+     SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
+     FROM simulation_terminal_locks
+     WHERE session_date=%s
+     ORDER BY COALESCE(closed_at,locked_at) DESC
+    """,(session_date,))
+    locks=cur.fetchall()
+  return rows,locks
+ except Exception as exc:
+  app.logger.warning("%s persistent dashboard read failed; using local fallback: %s", election, exc)
+  return None
+
+
+def persistent_presidential_dashboard_snapshot():
+ return _persistent_dashboard_snapshot("president")
+
+
+def persistent_gubernatorial_dashboard_snapshot():
+ return _persistent_dashboard_snapshot("governor")
+
 
 def persistent_senatorial_dashboard_snapshot():
- """Return today's anonymous senatorial aggregates and central stream status from PostgreSQL.
-
- This uses the same lightweight anonymous dashboard event mirror as the governor feed.
- """
- if not DATABASE_URL:
-  return None
- init_global_lock_db()
- try:
-  c=con()
-  pending=c.execute("SELECT 1 FROM demo_votes WHERE COALESCE(dashboard_mirrored,0)=0 LIMIT 1").fetchone()
-  c.close()
-  if pending:
-   sync_unmirrored_votes_to_dashboard()
- except Exception as exc:
-  app.logger.warning("Senator dashboard catch-up sync deferred: %s",exc)
- session_date=today_iso()
- with lock_db() as conn:
-  with conn.cursor() as cur:
-   cur.execute("""
-    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-    FROM simulation_dashboard_vote_events
-    WHERE session_date=%s AND election='senator'
-    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-   """,(session_date,))
-   rows=cur.fetchall()
-   cur.execute("""
-    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
-    FROM simulation_terminal_locks
-    WHERE session_date=%s
-    ORDER BY COALESCE(closed_at,locked_at) DESC
-   """,(session_date,))
-   locks=cur.fetchall()
- return rows,locks
+ return _persistent_dashboard_snapshot("senator")
 
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
@@ -1616,7 +1601,7 @@ def api_dashboard_president():
     "constituency":r["constituency"] or "",
     "ward":r["ward"] or "",
     "poll_station":r["poll_station"] or "",
-    "stream":key,
+    "stream":stream_name,
     "candidate_votes":{},
     "candidate_names":{},
     "candidate_selections":0,
@@ -1778,7 +1763,7 @@ def api_dashboard_governor():
     "constituency":r["constituency"] or "",
     "ward":r["ward"] or "",
     "poll_station":r["poll_station"] or "",
-    "stream":key,
+    "stream":stream_name,
     "candidate_votes":{},
     "candidate_names":{},
     "candidate_selections":0,
@@ -1935,7 +1920,7 @@ def api_dashboard_senator():
     "constituency":r["constituency"] or "",
     "ward":r["ward"] or "",
     "poll_station":r["poll_station"] or "",
-    "stream":key,
+    "stream":stream_name,
     "candidate_votes":{},
     "candidate_names":{},
     "candidate_selections":0,
