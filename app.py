@@ -1230,17 +1230,13 @@ def ballot(step):
    error="Candidate data could not be loaded from the Candidate Registration Portal. Check the portal connection and try again.",
    selected=None
   )
- if not e["candidates"]:
-  return render_template(
-   "ballot.html",e=e,step=step,total=len(structure),
-   error=f"No active {e['title']} candidates are registered for this electoral area.",
-   selected=None
-  )
-
  if request.method=="POST":
   action=str(request.form.get("action","choose")).strip().lower()
   choices=dict(session.get("choices",{}))
 
+  # SKIP must be processed even when this electoral area has no registered
+  # candidates. Previously the no-candidates GET render happened before the
+  # POST handler, so the final MCA skip could never advance to Review/Submit.
   if action=="skip":
    choices[e["key"]]={
     "candidate_id":"__SKIP__",
@@ -1265,6 +1261,13 @@ def ballot(step):
   }
   session["choices"]=choices
   return redirect(url_for("ballot",step=step+1)) if step+1<len(structure) else redirect(url_for("review"))
+
+ if not e["candidates"]:
+  return render_template(
+   "ballot.html",e=e,step=step,total=len(structure),
+   error=f"No active {e['title']} candidates are registered for this electoral area.",
+   selected=None
+  )
 
  saved=session.get("choices",{}).get(e["key"],{})
  selected_id=saved.get("candidate_id") if isinstance(saved,dict) and not saved.get("skipped") else None
