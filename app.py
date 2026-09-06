@@ -1419,6 +1419,31 @@ def persistent_presidential_dashboard_snapshot():
    """,(session_date,))
    locks=cur.fetchall()
  return rows,locks
+def persistent_gubernatorial_dashboard_snapshot():
+ """Return today's anonymous gubernatorial aggregates and central stream status from PostgreSQL."""
+ if not DATABASE_URL:
+  return None
+ init_global_lock_db()
+ sync_unmirrored_votes_to_dashboard()
+ session_date=today_iso()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+    FROM simulation_dashboard_vote_events
+    WHERE session_date=%s AND election='governor'
+    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+   """,(session_date,))
+   rows=cur.fetchall()
+   cur.execute("""
+    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
+    FROM simulation_terminal_locks
+    WHERE session_date=%s
+    ORDER BY COALESCE(closed_at,locked_at) DESC
+   """,(session_date,))
+   locks=cur.fetchall()
+ return rows,locks
 
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
@@ -1570,6 +1595,149 @@ def api_dashboard_president():
   "source":"training_simulation",
   "simulation_only":True,
   "election":"president",
+  "candidates":candidates,
+  "streams":list(streams.values()),
+  "totals":{
+   "candidate_selections":sum(candidate_totals.values()),
+   "skipped":skipped_total,
+   "participants":participants_total
+  }
+ })
+@app.get("/api/dashboard/governor")
+def api_dashboard_governor():
+ """
+ Read-only aggregate feed for the separate Gubernatorial Simulation Results Dashboard.
+ No voter National IDs are returned.
+ """
+ if not dashboard_api_authorized():
+  return jsonify({"error":"Unauthorized"}),401
+
+ # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
+ # Render deploys/restarts and reflect the current simulation across workers/devices.
+ try:
+  persistent=persistent_gubernatorial_dashboard_snapshot()
+ except Exception as exc:
+  app.logger.warning("Persistent dashboard snapshot unavailable; using local fallback: %s",exc)
+  persistent=None
+
+ if persistent is not None:
+  rows,lock_rows=persistent
+  sessions=[]
+  for r in lock_rows:
+   # A released, unclosed lock is not an active opened stream.
+   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   sessions.append({
+    "session_date":r.get("session_date") or "",
+    "county":r.get("county") or "",
+    "constituency":r.get("constituency") or "",
+    "ward":r.get("ward") or "",
+    "poll_station":r.get("poll_station") or "",
+    "stream":r.get("stream") or "",
+    "opened_at":opened_at,
+    "closed_at":r.get("closed_at") or ""
+   })
+ else:
+  c=con()
+  rows=c.execute("""
+   SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+   FROM demo_votes
+   WHERE election='governor'
+   GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+   ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+  """).fetchall()
+  sessions=c.execute("""
+   SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
+   FROM stream_sessions
+   ORDER BY COALESCE(closed_at,opened_at) DESC
+  """).fetchall()
+  c.close()
+
+ streams={}
+ candidate_totals={}
+ skipped_total=0
+ participants_total=0
+
+ for r in rows:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  item=streams.setdefault(key,{
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "candidate_votes":{},
+   "candidate_names":{},
+   "candidate_selections":0,
+   "skipped":0,
+   "participants":0
+  })
+  cid=(r["candidate_id"] or "").strip()
+  n=int(r["n"] or 0)
+  if cid=="__SKIP__":
+   item["skipped"]+=n
+   skipped_total+=n
+  else:
+   item["candidate_votes"][cid]=item["candidate_votes"].get(cid,0)+n
+   item["candidate_names"][cid]=(r["candidate_name"] or cid)
+   item["candidate_selections"]+=n
+   candidate_totals[cid]=candidate_totals.get(cid,0)+n
+  item["participants"]+=n
+  participants_total+=n
+
+ # Add stream status/times without exposing individual voter records.
+ session_map={}
+ for r in sessions:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  session_map[key]={
+   "session_date":r["session_date"] or "",
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "opened_at":r["opened_at"] or "",
+   "closed_at":r["closed_at"] or ""
+  }
+  if key not in streams:
+   streams[key]={
+    "county":r["county"] or "",
+    "constituency":r["constituency"] or "",
+    "ward":r["ward"] or "",
+    "poll_station":r["poll_station"] or "",
+    "stream":key,
+    "candidate_votes":{},
+    "candidate_names":{},
+    "candidate_selections":0,
+    "skipped":0,
+    "participants":0
+   }
+
+ for key,item in streams.items():
+  sess=session_map.get(key,{})
+  item["opened_at"]=sess.get("opened_at","")
+  item["closed_at"]=sess.get("closed_at","")
+  item["session_date"]=sess.get("session_date","")
+  item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
+
+ # Gubernatorial candidates are county-specific. Build the live candidate list
+ # from names present in the anonymous simulation stream aggregates.
+ candidates=[]
+ names={}
+ for item in streams.values():
+  names.update(item.get("candidate_names",{}))
+ for cid,name in names.items():
+  candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
+
+ candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+
+ return jsonify({
+  "source":"training_simulation",
+  "simulation_only":True,
+  "election":"governor",
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
