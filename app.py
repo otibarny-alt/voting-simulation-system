@@ -1563,15 +1563,17 @@ def api_dashboard_president():
  participants_total=0
 
  for r in rows:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  # Use the full geographic identity. Stream names are not globally unique in county_main.csv.
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   item=streams.setdefault(key,{
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "candidate_votes":{},
    "candidate_names":{},
    "candidate_selections":0,
@@ -1594,16 +1596,17 @@ def api_dashboard_president():
  # Add stream status/times without exposing individual voter records.
  session_map={}
  for r in sessions:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   session_map[key]={
    "session_date":r["session_date"] or "",
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "opened_at":r["opened_at"] or "",
    "closed_at":r["closed_at"] or ""
   }
@@ -1722,15 +1725,17 @@ def api_dashboard_governor():
  participants_total=0
 
  for r in rows:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  # Use the full geographic identity. Stream names are not globally unique in county_main.csv.
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   item=streams.setdefault(key,{
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "candidate_votes":{},
    "candidate_names":{},
    "candidate_selections":0,
@@ -1753,16 +1758,17 @@ def api_dashboard_governor():
  # Add stream status/times without exposing individual voter records.
  session_map={}
  for r in sessions:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   session_map[key]={
    "session_date":r["session_date"] or "",
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "opened_at":r["opened_at"] or "",
    "closed_at":r["closed_at"] or ""
   }
@@ -1876,15 +1882,17 @@ def api_dashboard_senator():
  participants_total=0
 
  for r in rows:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  # Use the full geographic identity. Stream names are not globally unique in county_main.csv.
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   item=streams.setdefault(key,{
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "candidate_votes":{},
    "candidate_names":{},
    "candidate_selections":0,
@@ -1907,16 +1915,17 @@ def api_dashboard_senator():
  # Add stream status/times without exposing individual voter records.
  session_map={}
  for r in sessions:
-  key=(r["stream"] or "").strip()
-  if not key:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
    continue
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
   session_map[key]={
    "session_date":r["session_date"] or "",
    "county":r["county"] or "",
    "constituency":r["constituency"] or "",
    "ward":r["ward"] or "",
    "poll_station":r["poll_station"] or "",
-   "stream":key,
+   "stream":stream_name,
    "opened_at":r["opened_at"] or "",
    "closed_at":r["closed_at"] or ""
   }
