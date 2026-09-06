@@ -1061,3 +1061,10 @@ V22.74 LIVE PRESIDENTIAL DASHBOARD FEED
 The training simulation now mirrors completed ballot-category selections into PostgreSQL as anonymous simulation dashboard events. The mirror contains no National ID, phone number or membership number. This lets the separate Presidential Simulation Results Dashboard show current simulated presidential selections and retain those aggregate events across Render deploys/restarts.
 
 The existing DATABASE_URL is used; no additional database service is required. Keep DASHBOARD_API_KEY configured on this service and set the same value as SIMULATION_DASHBOARD_API_KEY on the separate dashboard service.
+
+V22.75 UPDATE
+- Admin-only reopening of a formally closed TRAINING/SIMULATION stream.
+- Existing simulated votes are preserved.
+- The admin device becomes the active stream owner after reopening.
+- Stale repository PDFs for that stream are removed so fresh PDFs can be generated after the stream is closed again.
+- Existing voter-session duplicate protections remain in force.

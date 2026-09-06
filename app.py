@@ -1,4 +1,4 @@
-# V22.74: persistent anonymous live presidential dashboard feed + prior repository/performance fixes.
+# V22.75: admin-only reopening of formally closed training streams + V22.74 live dashboard feed.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -347,6 +347,47 @@ def mark_global_stream_closed(lock_data, owner_token):
    ok=cur.rowcount==1
   conn.commit()
  return ok
+
+def admin_reopen_global_stream(lock_data, owner_token):
+ """
+ Administrator-only override used to reopen a formally closed TRAINING stream.
+ The new/current admin device becomes the lock owner, while all existing
+ simulated votes remain intact.
+ """
+ if not DATABASE_URL or not lock_data or not owner_token:
+  return False
+ now=kenya_now().isoformat(timespec="seconds")
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    UPDATE simulation_terminal_locks
+    SET owner_token_hash=%s, locked_at=%s, released_at=NULL, closed_at=NULL
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+      AND closed_at IS NOT NULL
+   """,(
+    token_hash(owner_token),now,lock_data["session_date"],
+    lock_data["poll_station"],lock_data["stream"]
+   ))
+   ok=cur.rowcount==1
+  conn.commit()
+ return ok
+
+def delete_repository_reports_for_stream(session_date,poll_station,stream):
+ """Remove stale PDFs when a closed training stream is reopened.
+ Fresh PDFs will be generated after the stream is closed again."""
+ if not DATABASE_URL:
+  return 0
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    DELETE FROM simulation_pdf_reports
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+   """,(session_date,poll_station,stream))
+   n=cur.rowcount
+  conn.commit()
+ invalidate_repository_cache()
+ return n
 
 def release_global_lock(lock_data, owner_token):
  """
@@ -750,21 +791,98 @@ def stream_control():
   reset_required=bool(current_lock and not terminal_active_after_reset(current_lock)),
   can_close_now=official_close_reached(),
   official_close_time=close_time_message(),
-  owns_current_stream=owns_current
+  owns_current_stream=owns_current,
+  stream_admin_logged_in=repository_admin_logged_in(),
+  reopened_notice=session.pop("stream_reopened_notice","")
  )
+
+@app.post("/stream/admin-reopen")
+def admin_reopen_stream():
+ if not repository_admin_logged_in():
+  ps=(request.form.get("poll_station") or "").strip()
+  st=(request.form.get("stream") or "").strip()
+  nxt=url_for("stream_control",poll_station=ps,stream=st)
+  return redirect(url_for("repository_admin_login",next=nxt))
+
+ ps=(request.form.get("poll_station") or "").strip()
+ st=(request.form.get("stream") or "").strip()
+ if not ps or not st:
+  return redirect(url_for("stream_control"))
+
+ row=stream_session(ps,st)
+ central=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
+ if not row or not row["closed_at"] or not central or not central.get("closed_at"):
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="ADMIN REOPEN BLOCKED: this stream is not recorded as formally closed in both the local and central training records.",
+   can_close_now=official_close_reached(),official_close_time=close_time_message(),
+   owns_current_stream=False,stream_admin_logged_in=True
+  )
+
+ owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
+ lock_data={
+  "session_date":today_iso(),
+  "county":central.get("county") or row["county"] or "",
+  "constituency":central.get("constituency") or row["constituency"] or "",
+  "ward":central.get("ward") or row["ward"] or "",
+  "poll_station":ps,"stream":st
+ }
+ try:
+  if not admin_reopen_global_stream(lock_data,owner_token):
+   raise RuntimeError("central closed-stream record could not be reopened")
+ except Exception as exc:
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"ADMIN REOPEN FAILED: {exc}",
+   can_close_now=False,official_close_time=close_time_message(),
+   owns_current_stream=False,stream_admin_logged_in=True
+  )
+
+ # Preserve every existing simulated vote; only reopen the stream status.
+ c=con()
+ c.execute("UPDATE stream_sessions SET closed_at=NULL WHERE id=?",(row["id"],))
+ c.commit(); c.close()
+
+ # PDFs generated at the earlier close are now stale because additional voters
+ # may participate. Remove only this stream's repository copies; the final close
+ # will generate fresh reports containing the complete totals.
+ try:
+  delete_repository_reports_for_stream(today_iso(),ps,st)
+ except Exception as exc:
+  app.logger.warning("Could not remove stale repository PDFs during reopen: %s",exc)
+
+ session["stream_reopened_notice"]="ADMIN REOPEN COMPLETE: this training stream is open again. Existing votes were preserved and new eligible voters may continue."
+ session.pop("post_reset_new_stream_locked",None)
+ session.pop("awaiting_new_stream_after_reset",None)
+ session.pop("terminal_reset_completed",None)
+
+ resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
+ resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
+                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ resp.set_cookie(TERMINAL_OWNER_COOKIE,owner_token,
+                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ resp.set_cookie(TERMINAL_ACTIVE_COOKIE,terminal_serializer().dumps({
+   "session_date":today_iso(),"poll_station":ps,"stream":st
+  }),httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ resp.delete_cookie(TERMINAL_CLOSED_COOKIE)
+ return resp
 
 @app.post("/stream/open")
 def open_stream():
  f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
 
- # A stream formally closed today is permanently closed and cannot be reopened.
+ # A formally closed stream can only be reopened through the authenticated administrator override.
  previous_session=stream_session(ps,st)
  if previous_session and previous_session["closed_at"]:
   return render_template(
    "stream_control.html",row=previous_session,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="REOPENING BLOCKED: this voting stream has already been formally closed and cannot be reopened.",
+   error="REOPENING BLOCKED: this voting stream is formally closed. An administrator must use the Admin Reopen control.",
    can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
 
@@ -774,7 +892,7 @@ def open_stream():
    "stream_control.html",row=previous_session,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="REOPENING BLOCKED: this voting stream has already been formally closed and cannot be reopened.",
+   error="REOPENING BLOCKED: this voting stream is formally closed. An administrator must use the Admin Reopen control.",
    can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
 
@@ -886,7 +1004,7 @@ def close_stream():
    "stream_control.html",row=row,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="This voting stream has already been formally closed and cannot be reopened.",
+   error="This voting stream is formally closed. An administrator must use the Admin Reopen control.",
    can_close_now=False,official_close_time=close_time_message()
   )
 
@@ -915,7 +1033,7 @@ def close_stream():
  c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=? AND closed_at IS NULL",(now,row["id"]))
  c.commit(); c.close()
 
- # Once closed, the terminal cannot vote again on this stream.
+ # Once closed, voting stops unless an authenticated administrator explicitly reopens this training stream.
  # Preserve a signed read-only reference so the closed stream's tally dashboard
  # remains available for opening, viewing and printing.
  resp=redirect(url_for("tallies"))
@@ -1784,10 +1902,16 @@ def repository_admin_login():
    error="Administrator login is not configured on the server."
   elif hmac.compare_digest(username,ADMIN_USERNAME) and hmac.compare_digest(password,ADMIN_PASSWORD):
    session["repository_admin"]=True
-   return redirect(request.args.get("next") or url_for("report_repository"))
+   next_url=(request.args.get("next") or "").strip()
+   if not next_url.startswith("/") or next_url.startswith("//"):
+    next_url=url_for("report_repository")
+   return redirect(next_url)
   else:
    error="Invalid administrator username or password."
- return render_template("repository_admin_login.html",error=error)
+ next_url=(request.args.get("next") or "").strip()
+ if not next_url.startswith("/") or next_url.startswith("//"):
+  next_url=url_for("report_repository")
+ return render_template("repository_admin_login.html",error=error,next_url=next_url)
 
 @app.post("/report-repository/admin-logout")
 def repository_admin_logout():
@@ -2009,7 +2133,8 @@ def inject_report_branding():
   "stream_ready": ready,
   "stream_row": row or closed_row,
   "closed_stream_row": closed_row,
-  "reset_required": bool(lock and not terminal_active_after_reset(lock))
+  "reset_required": bool(lock and not terminal_active_after_reset(lock)),
+  "stream_admin_logged_in": repository_admin_logged_in()
  }
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))
