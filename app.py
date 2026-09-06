@@ -1458,6 +1458,42 @@ def persistent_gubernatorial_dashboard_snapshot():
    locks=cur.fetchall()
  return rows,locks
 
+def persistent_senatorial_dashboard_snapshot():
+ """Return today's anonymous senatorial aggregates and central stream status from PostgreSQL.
+
+ This uses the same lightweight anonymous dashboard event mirror as the governor feed.
+ """
+ if not DATABASE_URL:
+  return None
+ init_global_lock_db()
+ try:
+  c=con()
+  pending=c.execute("SELECT 1 FROM demo_votes WHERE COALESCE(dashboard_mirrored,0)=0 LIMIT 1").fetchone()
+  c.close()
+  if pending:
+   sync_unmirrored_votes_to_dashboard()
+ except Exception as exc:
+  app.logger.warning("Senator dashboard catch-up sync deferred: %s",exc)
+ session_date=today_iso()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+    FROM simulation_dashboard_vote_events
+    WHERE session_date=%s AND election='senator'
+    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+   """,(session_date,))
+   rows=cur.fetchall()
+   cur.execute("""
+    SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
+    FROM simulation_terminal_locks
+    WHERE session_date=%s
+    ORDER BY COALESCE(closed_at,locked_at) DESC
+   """,(session_date,))
+   locks=cur.fetchall()
+ return rows,locks
+
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
@@ -1467,6 +1503,10 @@ def dashboard_api_authorized():
 _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _GOV_DASHBOARD_CACHE_LOCK=threading.Lock()
 GOV_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","3")))
+
+_SEN_DASHBOARD_CACHE={"at":0.0,"payload":None}
+_SEN_DASHBOARD_CACHE_LOCK=threading.Lock()
+SEN_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","3")))
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
@@ -1773,6 +1813,160 @@ def api_dashboard_governor():
  with _GOV_DASHBOARD_CACHE_LOCK:
   _GOV_DASHBOARD_CACHE["payload"]=payload
   _GOV_DASHBOARD_CACHE["at"]=time.time()
+ return jsonify(payload)
+
+
+@app.get("/api/dashboard/senator")
+def api_dashboard_senator():
+ """
+ Read-only aggregate feed for the separate Senatorial Simulation Results Dashboard.
+ No voter National IDs are returned.
+ """
+ if not dashboard_api_authorized():
+  return jsonify({"error":"Unauthorized"}),401
+
+ now_ts=time.time()
+ cached=_SEN_DASHBOARD_CACHE.get("payload")
+ if cached is not None and now_ts-float(_SEN_DASHBOARD_CACHE.get("at") or 0)<SEN_DASHBOARD_CACHE_SECONDS:
+  return jsonify(cached)
+
+ # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
+ # Render deploys/restarts and reflect the current simulation across workers/devices.
+ try:
+  persistent=persistent_senatorial_dashboard_snapshot()
+ except Exception as exc:
+  app.logger.warning("Persistent dashboard snapshot unavailable; using local fallback: %s",exc)
+  persistent=None
+
+ if persistent is not None:
+  rows,lock_rows=persistent
+  sessions=[]
+  for r in lock_rows:
+   # A released, unclosed lock is not an active opened stream.
+   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   sessions.append({
+    "session_date":r.get("session_date") or "",
+    "county":r.get("county") or "",
+    "constituency":r.get("constituency") or "",
+    "ward":r.get("ward") or "",
+    "poll_station":r.get("poll_station") or "",
+    "stream":r.get("stream") or "",
+    "opened_at":opened_at,
+    "closed_at":r.get("closed_at") or ""
+   })
+ else:
+  c=con()
+  rows=c.execute("""
+   SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+   FROM demo_votes
+   WHERE election='senator'
+   GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+   ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+  """).fetchall()
+  sessions=c.execute("""
+   SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
+   FROM stream_sessions
+   ORDER BY COALESCE(closed_at,opened_at) DESC
+  """).fetchall()
+  c.close()
+
+ streams={}
+ candidate_totals={}
+ skipped_total=0
+ participants_total=0
+
+ for r in rows:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  item=streams.setdefault(key,{
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "candidate_votes":{},
+   "candidate_names":{},
+   "candidate_selections":0,
+   "skipped":0,
+   "participants":0
+  })
+  cid=(r["candidate_id"] or "").strip()
+  n=int(r["n"] or 0)
+  if cid=="__SKIP__":
+   item["skipped"]+=n
+   skipped_total+=n
+  else:
+   item["candidate_votes"][cid]=item["candidate_votes"].get(cid,0)+n
+   item["candidate_names"][cid]=(r["candidate_name"] or cid)
+   item["candidate_selections"]+=n
+   candidate_totals[cid]=candidate_totals.get(cid,0)+n
+  item["participants"]+=n
+  participants_total+=n
+
+ # Add stream status/times without exposing individual voter records.
+ session_map={}
+ for r in sessions:
+  key=(r["stream"] or "").strip()
+  if not key:
+   continue
+  session_map[key]={
+   "session_date":r["session_date"] or "",
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":key,
+   "opened_at":r["opened_at"] or "",
+   "closed_at":r["closed_at"] or ""
+  }
+  if key not in streams:
+   streams[key]={
+    "county":r["county"] or "",
+    "constituency":r["constituency"] or "",
+    "ward":r["ward"] or "",
+    "poll_station":r["poll_station"] or "",
+    "stream":key,
+    "candidate_votes":{},
+    "candidate_names":{},
+    "candidate_selections":0,
+    "skipped":0,
+    "participants":0
+   }
+
+ for key,item in streams.items():
+  sess=session_map.get(key,{})
+  item["opened_at"]=sess.get("opened_at","")
+  item["closed_at"]=sess.get("closed_at","")
+  item["session_date"]=sess.get("session_date","")
+  item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
+
+ # Senatorial candidates are county-specific. Build the live candidate list
+ # from names present in the anonymous simulation stream aggregates.
+ candidates=[]
+ names={}
+ for item in streams.values():
+  names.update(item.get("candidate_names",{}))
+ for cid,name in names.items():
+  candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
+
+ candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+
+ payload={
+  "source":"training_simulation",
+  "simulation_only":True,
+  "election":"senator",
+  "candidates":candidates,
+  "streams":list(streams.values()),
+  "totals":{
+   "candidate_selections":sum(candidate_totals.values()),
+   "skipped":skipped_total,
+   "participants":participants_total
+  }
+ }
+ with _SEN_DASHBOARD_CACHE_LOCK:
+  _SEN_DASHBOARD_CACHE["payload"]=payload
+  _SEN_DASHBOARD_CACHE["at"]=time.time()
  return jsonify(payload)
 
 
