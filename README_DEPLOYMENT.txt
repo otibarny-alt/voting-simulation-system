@@ -1068,3 +1068,16 @@ V22.75 UPDATE
 - The admin device becomes the active stream owner after reopening.
 - Stale repository PDFs for that stream are removed so fresh PDFs can be generated after the stream is closed again.
 - Existing voter-session duplicate protections remain in force.
+
+V22.83 WOMEN REPRESENTATIVE DASHBOARD FEED
+------------------------------------------------
+- Adds the authenticated read-only Women Representative simulation feed:
+  /api/dashboard/women-representative
+- Compatible aliases: /api/dashboard/woman-representative,
+  /api/dashboard/women-rep and /api/dashboard/woman-rep.
+- Uses the existing DATABASE_URL anonymous event mirror so aggregate results survive
+  Render deploys and restarts; no voter identity information is exposed.
+- Returns candidate selections, deliberate skips, participants, county-tagged candidates,
+  per-stream candidate totals and stream opening/closing status.
+- Keep DASHBOARD_API_KEY equal to SIMULATION_DASHBOARD_API_KEY on the separate
+  Women Representative Results Dashboard.

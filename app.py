@@ -1,4 +1,4 @@
-# V22.75: admin-only reopening of formally closed training streams + V22.74 live dashboard feed.
+# V22.83: Women Representative live dashboard feed + V22.82 recovery behavior.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -1479,6 +1479,10 @@ def persistent_gubernatorial_dashboard_snapshot():
 def persistent_senatorial_dashboard_snapshot():
  return _persistent_dashboard_snapshot("senator")
 
+
+def persistent_woman_rep_dashboard_snapshot():
+ return _persistent_dashboard_snapshot("woman_rep")
+
 def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
@@ -1492,6 +1496,164 @@ GOV_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","3
 _SEN_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _SEN_DASHBOARD_CACHE_LOCK=threading.Lock()
 SEN_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","3")))
+
+_WOMAN_REP_DASHBOARD_CACHE={"at":0.0,"payload":None}
+_WOMAN_REP_DASHBOARD_CACHE_LOCK=threading.Lock()
+WOMAN_REP_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("WOMAN_REP_DASHBOARD_CACHE_SECONDS","3")))
+
+
+def _build_woman_rep_dashboard_payload():
+ """Aggregate the anonymous Woman Representative simulation vote feed."""
+ try:
+  persistent=persistent_woman_rep_dashboard_snapshot()
+ except Exception as exc:
+  app.logger.warning("Persistent woman_rep dashboard snapshot unavailable; using local fallback: %s",exc)
+  persistent=None
+
+ if persistent is not None:
+  rows,lock_rows=persistent
+  sessions=[]
+  for r in lock_rows:
+   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   sessions.append({
+    "session_date":r.get("session_date") or "",
+    "county":r.get("county") or "",
+    "constituency":r.get("constituency") or "",
+    "ward":r.get("ward") or "",
+    "poll_station":r.get("poll_station") or "",
+    "stream":r.get("stream") or "",
+    "opened_at":opened_at,
+    "closed_at":r.get("closed_at") or ""
+   })
+ else:
+  c=con()
+  rows=c.execute("""
+   SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+   FROM demo_votes
+   WHERE election='woman_rep'
+   GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+   ORDER BY county,constituency,ward,poll_station,stream,candidate_name
+  """).fetchall()
+  sessions=c.execute("""
+   SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
+   FROM stream_sessions
+   ORDER BY COALESCE(closed_at,opened_at) DESC
+  """).fetchall()
+  c.close()
+
+ streams={}
+ candidate_totals={}
+ candidate_counties={}
+ skipped_total=0
+ participants_total=0
+
+ for r in rows:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
+   continue
+  county=(r["county"] or "").strip()
+  key=(county,(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
+  item=streams.setdefault(key,{
+   "county":r["county"] or "",
+   "constituency":r["constituency"] or "",
+   "ward":r["ward"] or "",
+   "poll_station":r["poll_station"] or "",
+   "stream":stream_name,
+   "candidate_votes":{},
+   "candidate_names":{},
+   "candidate_counties":{},
+   "candidate_selections":0,
+   "skipped":0,
+   "participants":0
+  })
+  cid=(r["candidate_id"] or "").strip()
+  n=int(r["n"] or 0)
+  if cid=="__SKIP__":
+   item["skipped"]+=n
+   skipped_total+=n
+  else:
+   item["candidate_votes"][cid]=item["candidate_votes"].get(cid,0)+n
+   item["candidate_names"][cid]=(r["candidate_name"] or cid)
+   item["candidate_counties"][cid]=county
+   item["candidate_selections"]+=n
+   candidate_totals[cid]=candidate_totals.get(cid,0)+n
+   if county:
+    candidate_counties[cid]=county
+  item["participants"]+=n
+  participants_total+=n
+
+ session_map={}
+ for r in sessions:
+  stream_name=(r["stream"] or "").strip()
+  if not stream_name:
+   continue
+  key=((r["county"] or "").strip(),(r["constituency"] or "").strip(),(r["ward"] or "").strip(),(r["poll_station"] or "").strip(),stream_name)
+  session_map[key]={
+   "session_date":r["session_date"] or "",
+   "opened_at":r["opened_at"] or "",
+   "closed_at":r["closed_at"] or ""
+  }
+  if key not in streams:
+   streams[key]={
+    "county":r["county"] or "",
+    "constituency":r["constituency"] or "",
+    "ward":r["ward"] or "",
+    "poll_station":r["poll_station"] or "",
+    "stream":stream_name,
+    "candidate_votes":{},"candidate_names":{},"candidate_counties":{},
+    "candidate_selections":0,"skipped":0,"participants":0
+   }
+
+ for key,item in streams.items():
+  sess=session_map.get(key,{})
+  item["opened_at"]=sess.get("opened_at","")
+  item["closed_at"]=sess.get("closed_at","")
+  item["session_date"]=sess.get("session_date","")
+  item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
+
+ names={}
+ for item in streams.values():
+  names.update(item.get("candidate_names",{}))
+ candidates=[{
+  "candidate_id":cid,
+  "name":name,
+  "county":candidate_counties.get(cid,""),
+  "photo_url":None,
+  "votes":candidate_totals.get(cid,0)
+ } for cid,name in names.items()]
+ candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+
+ return {
+  "source":"training_simulation",
+  "simulation_only":True,
+  "election":"woman_rep",
+  "candidates":candidates,
+  "streams":list(streams.values()),
+  "totals":{
+   "candidate_selections":sum(candidate_totals.values()),
+   "skipped":skipped_total,
+   "participants":participants_total
+  }
+ }
+
+
+@app.get("/api/dashboard/women-representative")
+@app.get("/api/dashboard/woman-representative")
+@app.get("/api/dashboard/women-rep")
+@app.get("/api/dashboard/woman-rep")
+def api_dashboard_woman_rep():
+ """Read-only aggregate feed for the Women Representative Simulation Results Dashboard."""
+ if not dashboard_api_authorized():
+  return jsonify({"error":"Unauthorized"}),401
+ now_ts=time.time()
+ cached=_WOMAN_REP_DASHBOARD_CACHE.get("payload")
+ if cached is not None and now_ts-float(_WOMAN_REP_DASHBOARD_CACHE.get("at") or 0)<WOMAN_REP_DASHBOARD_CACHE_SECONDS:
+  return jsonify(cached)
+ payload=_build_woman_rep_dashboard_payload()
+ with _WOMAN_REP_DASHBOARD_CACHE_LOCK:
+  _WOMAN_REP_DASHBOARD_CACHE["payload"]=payload
+  _WOMAN_REP_DASHBOARD_CACHE["at"]=time.time()
+ return jsonify(payload)
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
