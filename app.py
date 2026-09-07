@@ -1,4 +1,4 @@
-# V22.83: Women Representative live dashboard feed + V22.82 recovery behavior.
+# V22.84: Presidential vote-reflection fix + Women Representative dashboard feed.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -1493,6 +1493,10 @@ _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _GOV_DASHBOARD_CACHE_LOCK=threading.Lock()
 GOV_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","3")))
 
+_PRES_DASHBOARD_CACHE={"at":0.0,"payload":None}
+_PRES_DASHBOARD_CACHE_LOCK=threading.Lock()
+PRES_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("PRES_DASHBOARD_CACHE_SECONDS","3")))
+
 _SEN_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _SEN_DASHBOARD_CACHE_LOCK=threading.Lock()
 SEN_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","3")))
@@ -1664,6 +1668,11 @@ def api_dashboard_president():
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
 
+ now_ts=time.time()
+ cached=_PRES_DASHBOARD_CACHE.get("payload")
+ if cached is not None and now_ts-float(_PRES_DASHBOARD_CACHE.get("at") or 0)<PRES_DASHBOARD_CACHE_SECONDS:
+  return jsonify(cached)
+
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
  try:
@@ -1778,29 +1787,41 @@ def api_dashboard_president():
   item["session_date"]=sess.get("session_date","")
   item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
 
- # Pull the current national presidential candidate list so zero-vote candidates are visible.
- candidates=[]
+ # Merge the current national catalogue with names actually present in stored vote
+ # events. This preserves zero-vote catalogue candidates without hiding votes when a
+ # candidate ID was renamed, replaced or temporarily absent from the live catalogue.
+ seen_names={}
+ for item in streams.values():
+  seen_names.update(item.get("candidate_names",{}))
+ candidates_by_id={}
  try:
   catalog=candidate_portal_catalog({})
   for cand in catalog.get("president",[]):
    cid=cand.get("candidate_id","")
-   candidates.append({
+   if not cid:
+    continue
+   candidates_by_id[cid]={
     "candidate_id":cid,
-    "name":cand.get("name",""),
+    "name":cand.get("name") or seen_names.get(cid) or cid,
     "photo_url":cand.get("photo_url"),
     "votes":candidate_totals.get(cid,0)
-   })
+   }
  except Exception:
-  # Fallback to candidates seen in recorded simulation data.
-  names={}
-  for item in streams.values():
-   names.update(item.get("candidate_names",{}))
-  for cid,name in names.items():
-   candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
+  pass
 
+ for cid in set(seen_names) | set(candidate_totals):
+  if cid not in candidates_by_id:
+   candidates_by_id[cid]={
+    "candidate_id":cid,
+    "name":seen_names.get(cid) or cid,
+    "photo_url":None,
+    "votes":candidate_totals.get(cid,0)
+   }
+
+ candidates=list(candidates_by_id.values())
  candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
 
- return jsonify({
+ payload={
   "source":"training_simulation",
   "simulation_only":True,
   "election":"president",
@@ -1811,7 +1832,11 @@ def api_dashboard_president():
    "skipped":skipped_total,
    "participants":participants_total
   }
- })
+ }
+ with _PRES_DASHBOARD_CACHE_LOCK:
+  _PRES_DASHBOARD_CACHE["payload"]=payload
+  _PRES_DASHBOARD_CACHE["at"]=time.time()
+ return jsonify(payload)
 @app.get("/api/dashboard/governor")
 def api_dashboard_governor():
  """

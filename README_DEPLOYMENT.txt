@@ -1081,3 +1081,11 @@ V22.83 WOMEN REPRESENTATIVE DASHBOARD FEED
   per-stream candidate totals and stream opening/closing status.
 - Keep DASHBOARD_API_KEY equal to SIMULATION_DASHBOARD_API_KEY on the separate
   Women Representative Results Dashboard.
+
+V22.84 PRESIDENTIAL DASHBOARD VOTE REFLECTION FIX
+--------------------------------------------------
+- Preserves all completed presidential votes in /api/dashboard/president even when
+  a recorded candidate ID is temporarily absent from the current candidate catalogue.
+- Merges current zero-vote catalogue candidates with candidates found in durable vote events.
+- Adds a short presidential feed cache controlled by PRES_DASHBOARD_CACHE_SECONDS (default 3).
+- Uses the existing anonymous PostgreSQL mirror and local recovery fallback.
