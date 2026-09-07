@@ -1,4 +1,4 @@
-# V22.87: MNA constituency dashboard feed + Women Representative vote-feed recovery.
+# V22.88: restore Training Ballot link after initial GPS stream opening.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -1007,16 +1007,19 @@ def open_stream():
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
  resp.set_cookie(TERMINAL_OWNER_COOKIE,owner_token,
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
- if activated_after_reset:
-  resp.set_cookie(
-   TERMINAL_ACTIVE_COOKIE,
-   terminal_serializer().dumps({
-    "session_date":lock_data["session_date"],
-    "poll_station":lock_data["poll_station"],
-    "stream":lock_data["stream"]
-   }),
-   httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
-  )
+ # Every successful opening activates this stream on the owning device. Earlier
+ # builds wrote this cookie only after a terminal reset, so a first-time GPS
+ # opening was immediately treated as inactive and the Training Ballot link was
+ # omitted on the redirected control page.
+ resp.set_cookie(
+  TERMINAL_ACTIVE_COOKIE,
+  terminal_serializer().dumps({
+   "session_date":lock_data["session_date"],
+   "poll_station":lock_data["poll_station"],
+   "stream":lock_data["stream"]
+  }),
+  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
+ )
  return resp
 
 @app.post("/stream/close")
