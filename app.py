@@ -1,4 +1,4 @@
-# V22.84: Presidential vote-reflection fix + Women Representative dashboard feed.
+# V22.85: Reset/reopen schema recovery + Presidential/Women Representative dashboard feeds.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -34,7 +34,10 @@ ELECTIONS=[
 ]
 
 def con():
- c=sqlite3.connect(DB); c.row_factory=sqlite3.Row
+ # Deployed training terminals can briefly overlap during reset/reopen. Give
+ # SQLite time to finish the other request instead of returning a bare HTTP 500.
+ c=sqlite3.connect(DB,timeout=30); c.row_factory=sqlite3.Row
+ c.execute("PRAGMA busy_timeout=30000")
  c.execute('CREATE TABLE IF NOT EXISTS demo_votes(id INTEGER PRIMARY KEY AUTOINCREMENT,voter_session TEXT,election TEXT,candidate INTEGER,candidate_id TEXT,candidate_name TEXT,county TEXT,constituency TEXT,ward TEXT,poll_station TEXT,stream TEXT)')
  vote_cols={r[1] for r in c.execute("PRAGMA table_info(demo_votes)").fetchall()}
  if "candidate_id" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_id TEXT")
@@ -49,9 +52,22 @@ def con():
  opening_lat REAL, opening_lon REAL, opening_accuracy REAL,
  UNIQUE(session_date,poll_station,stream))''')
  cols={r[1] for r in c.execute("PRAGMA table_info(stream_sessions)").fetchall()}
- if "opening_lat" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_lat REAL")
- if "opening_lon" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_lon REAL")
- if "opening_accuracy" not in cols: c.execute("ALTER TABLE stream_sessions ADD COLUMN opening_accuracy REAL")
+ # CREATE TABLE IF NOT EXISTS does not upgrade an existing Render disk. V22.63+
+ # writes opening_zero_votes during /stream/open, so old databases without that
+ # column failed immediately after a terminal reset.
+ stream_session_migrations={
+  "closed_at":"TEXT",
+  "opening_zero_votes":"INTEGER DEFAULT 0",
+  "opening_lat":"REAL",
+  "opening_lon":"REAL",
+  "opening_accuracy":"REAL"
+ }
+ for column,declaration in stream_session_migrations.items():
+  if column not in cols:
+   c.execute(f"ALTER TABLE stream_sessions ADD COLUMN {column} {declaration}")
+ # Persist schema upgrades even when the caller only performs a SELECT and
+ # closes the connection (as stream_session() does before /stream/open).
+ c.commit()
  return c
 
 def cfg():
@@ -949,11 +965,33 @@ def open_stream():
  try: opening_accuracy=float(f.get("opening_accuracy","")) if f.get("opening_accuracy","") else None
  except: opening_accuracy=None
 
- c=con()
- c.execute("""INSERT OR IGNORE INTO stream_sessions
- (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
- VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
- c.commit(); c.close()
+ c=None
+ try:
+  c=con()
+  c.execute("""INSERT OR IGNORE INTO stream_sessions
+  (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
+  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
+  c.commit()
+ except Exception:
+  if c is not None:
+   try: c.rollback()
+   except Exception: pass
+  # Do not strand a central lock when the local stream record could not be
+  # created. Releasing it lets the same terminal safely retry the operation.
+  try:
+   release_global_lock(lock_data,owner_token)
+  except Exception as release_exc:
+   app.logger.warning("Could not release central lock after local open failure: %s",release_exc)
+  app.logger.exception("Local stream creation failed for %s / %s",ps,st)
+  return render_template(
+   "stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="OPENING FAILED: the terminal database could not create this stream. The central lock was released; please select the stream and try again."
+  )
+ finally:
+  if c is not None:
+   c.close()
 
  activated_after_reset=bool(
   session.pop("awaiting_new_stream_after_reset",False)
