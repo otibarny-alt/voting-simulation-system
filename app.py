@@ -1,4 +1,4 @@
-# V22.85: Reset/reopen schema recovery + Presidential/Women Representative dashboard feeds.
+# V22.86: Women Representative durable vote-feed recovery + reset/reopen schema recovery.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -1379,6 +1379,8 @@ def cast():
   try:
    _GOV_DASHBOARD_CACHE["payload"]=None
    _SEN_DASHBOARD_CACHE["payload"]=None
+   _PRES_DASHBOARD_CACHE["payload"]=None
+   _WOMAN_REP_DASHBOARD_CACHE["payload"]=None
   except Exception:
    pass
  except Exception as exc:
@@ -1437,6 +1439,20 @@ def sync_unmirrored_votes_to_dashboard():
   c.close()
 
 
+def dashboard_election_aliases(election):
+ """Return canonical and legacy keys used by earlier training-ballot builds."""
+ if election=="woman_rep":
+  return (
+   "woman_rep","women_rep","woman-rep","women-rep",
+   "womanrep","womenrep",
+   "woman-representative","women-representative",
+   "woman_representative","women_representative",
+   "woman representative","women representative",
+   "woman rep","women rep"
+  )
+ return (election,)
+
+
 def _persistent_dashboard_snapshot(election):
  """Return anonymous dashboard aggregates for an election, with safe fallback behavior.
 
@@ -1450,8 +1466,10 @@ def _persistent_dashboard_snapshot(election):
  init_global_lock_db()
  try:
   c=con()
-  pending=c.execute("SELECT 1 FROM demo_votes WHERE election=? AND COALESCE(dashboard_mirrored,0)=0 LIMIT 1",(election,)).fetchone()
-  local_count=int(c.execute("SELECT COUNT(*) FROM demo_votes WHERE election=?",(election,)).fetchone()[0] or 0)
+  aliases=dashboard_election_aliases(election)
+  marks=','.join('?' for _ in aliases)
+  pending=c.execute(f"SELECT 1 FROM demo_votes WHERE LOWER(election) IN ({marks}) AND COALESCE(dashboard_mirrored,0)=0 LIMIT 1",aliases).fetchone()
+  local_count=int(c.execute(f"SELECT COUNT(*) FROM demo_votes WHERE LOWER(election) IN ({marks})",aliases).fetchone()[0] or 0)
   c.close()
   if pending:
    sync_unmirrored_votes_to_dashboard()
@@ -1466,10 +1484,10 @@ def _persistent_dashboard_snapshot(election):
     cur.execute("""
      SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
      FROM simulation_dashboard_vote_events
-     WHERE session_date=%s AND election=%s
+     WHERE session_date=%s AND LOWER(election) = ANY(%s)
      GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
      ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-    """,(session_date,election))
+    """,(session_date,list(aliases)))
     rows=cur.fetchall()
 
     # If PostgreSQL is empty but this worker still has local votes, never mask them.
@@ -1479,7 +1497,7 @@ def _persistent_dashboard_snapshot(election):
     # Across Render deploys the local SQLite file can be fresh/empty while the durable
     # anonymous mirror still has the user's most recent training session. Use that session.
     if not rows:
-     cur.execute("SELECT MAX(session_date) AS d FROM simulation_dashboard_vote_events WHERE election=%s",(election,))
+     cur.execute("SELECT MAX(session_date) AS d FROM simulation_dashboard_vote_events WHERE LOWER(election) = ANY(%s)",(list(aliases),))
      latest=cur.fetchone()
      latest_date=(latest.get("d") if latest else None) if hasattr(latest,'get') else (latest[0] if latest else None)
      if latest_date:
@@ -1487,10 +1505,10 @@ def _persistent_dashboard_snapshot(election):
       cur.execute("""
        SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
        FROM simulation_dashboard_vote_events
-       WHERE session_date=%s AND election=%s
+       WHERE session_date=%s AND LOWER(election) = ANY(%s)
        GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
        ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-      """,(session_date,election))
+      """,(session_date,list(aliases)))
       rows=cur.fetchall()
 
     cur.execute("""
@@ -1569,13 +1587,15 @@ def _build_woman_rep_dashboard_payload():
    })
  else:
   c=con()
-  rows=c.execute("""
+  aliases=dashboard_election_aliases("woman_rep")
+  marks=','.join('?' for _ in aliases)
+  rows=c.execute(f"""
    SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
    FROM demo_votes
-   WHERE election='woman_rep'
+   WHERE LOWER(election) IN ({marks})
    GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
    ORDER BY county,constituency,ward,poll_station,stream,candidate_name
-  """).fetchall()
+  """,aliases).fetchall()
   sessions=c.execute("""
    SELECT session_date,county,constituency,ward,poll_station,stream,opened_at,closed_at
    FROM stream_sessions
