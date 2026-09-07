@@ -1,4 +1,4 @@
-# V22.89: uniform registered-voter totals across all active-stream tally sections.
+# V22.90: one polling-register source for every registered-voter tally calculation.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -57,6 +57,7 @@ def con():
  # column failed immediately after a terminal reset.
  stream_session_migrations={
   "closed_at":"TEXT",
+  "poll_station_code":"TEXT",
   "opening_zero_votes":"INTEGER DEFAULT 0",
   "opening_lat":"REAL",
   "opening_lon":"REAL",
@@ -226,6 +227,7 @@ def init_global_lock_db():
      )
     """)
     cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
+    cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS poll_station_code TEXT")
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
        id BIGSERIAL PRIMARY KEY,
@@ -295,13 +297,13 @@ def claim_global_lock(lock_data, owner_token):
   with conn.cursor() as cur:
    cur.execute("""
     INSERT INTO simulation_terminal_locks(
-      session_date,poll_station,stream,county,constituency,ward,owner_token_hash,locked_at,released_at
-    ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,NULL)
+      session_date,poll_station,stream,county,constituency,ward,poll_station_code,owner_token_hash,locked_at,released_at
+    ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
     ON CONFLICT (session_date,poll_station,stream) DO NOTHING
    """,(
     lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],
     lock_data.get("county",""),lock_data.get("constituency",""),lock_data.get("ward",""),
-    th,now
+    lock_data.get("poll_station_code",""),th,now
    ))
    claimed=cur.rowcount==1
    cur.execute("""
@@ -323,11 +325,11 @@ def claim_global_lock(lock_data, owner_token):
    with conn.cursor() as cur:
     cur.execute("""
      UPDATE simulation_terminal_locks
-     SET county=%s,constituency=%s,ward=%s,owner_token_hash=%s,locked_at=%s,released_at=NULL
+     SET county=%s,constituency=%s,ward=%s,poll_station_code=%s,owner_token_hash=%s,locked_at=%s,released_at=NULL
      WHERE session_date=%s AND poll_station=%s AND stream=%s AND released_at IS NOT NULL
     """,(
      lock_data.get("county",""),lock_data.get("constituency",""),lock_data.get("ward",""),
-     th,now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]
+     lock_data.get("poll_station_code",""),th,now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]
     ))
     reclaimed=cur.rowcount==1
     cur.execute("""
@@ -477,6 +479,38 @@ def registered_voter_index():
   key=norm_key(r.get("poll_station_name",""))
   if key: by_stream[key]=to_int(r.get("total_registered_voters",0))
  return by_stream
+
+
+def polling_register_code_key(value):
+ """Normalize full or spreadsheet-scientific polling stream codes."""
+ try:
+  return f"{float(str(value or '').strip()):.5E}"
+ except Exception:
+  return ""
+
+
+def registered_voters_for_stream(poll_station_code, stream):
+ """Return the active stream's electorate from the agents polling register."""
+ stream_key=norm_key(stream)
+ station_code=re.sub(r"\D+","",str(poll_station_code or ""))
+ suffix_match=re.search(r"(?:stream[_\s-]*)(\d+)\s*$",str(stream or ""),re.I)
+ target_code=""
+ if station_code and suffix_match:
+  target_code=polling_register_code_key(station_code+f"{int(suffix_match.group(1)):02d}")
+
+ name_matches=[]
+ for r in agent_rows():
+  if norm_key(r.get("poll_station_name",""))!=stream_key:
+   continue
+  registered=to_int(r.get("total_registered_voters",0))
+  name_matches.append(registered)
+  if target_code and polling_register_code_key(r.get("poll_station_code",""))==target_code:
+   return registered
+
+ # Legacy sessions may predate station-code capture. Use a name only when it is unique.
+ if len(name_matches)==1:
+  return name_matches[0]
+ return 0
 
 def hierarchy_rows():
  rows=[]
@@ -843,7 +877,8 @@ def admin_reopen_stream():
   "county":central.get("county") or row["county"] or "",
   "constituency":central.get("constituency") or row["constituency"] or "",
   "ward":central.get("ward") or row["ward"] or "",
-  "poll_station":ps,"stream":st
+  "poll_station":ps,"stream":st,
+  "poll_station_code":central.get("poll_station_code") or row["poll_station_code"] or ""
  }
  try:
   if not admin_reopen_global_stream(lock_data,owner_token):
@@ -935,7 +970,8 @@ def open_stream():
  c.close()
 
  lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
-            "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,"session_date":today_iso()}
+            "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,
+            "poll_station_code":f.get("poll_station_code","").strip(),"session_date":today_iso()}
  owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
 
  try:
@@ -969,8 +1005,8 @@ def open_stream():
  try:
   c=con()
   c.execute("""INSERT OR IGNORE INTO stream_sessions
-  (session_date,county,constituency,ward,poll_station,stream,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
-  VALUES(?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,now,opening_lat,opening_lon,opening_accuracy))
+  (session_date,county,constituency,ward,poll_station,stream,poll_station_code,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
+  VALUES(?,?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,f.get("poll_station_code",""),now,opening_lat,opening_lon,opening_accuracy))
   c.commit()
  except Exception:
   if c is not None:
@@ -1084,7 +1120,8 @@ def close_stream():
   terminal_serializer().dumps({
    "session_date":lock.get("session_date",today_iso()),
    "poll_station":ps,
-   "stream":st
+   "stream":st,
+   "poll_station_code":lock.get("poll_station_code","")
   }),
   httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
  )
@@ -2390,6 +2427,10 @@ def tallies():
 
  report_poll_station=str(report_ref.get("poll_station","") or "").strip()
  report_stream=str(report_ref.get("stream","") or "").strip()
+ report_station_code=str(report_ref.get("poll_station_code","") or "").strip()
+ if not report_station_code and row is not None:
+  try: report_station_code=str(row["poll_station_code"] or "").strip()
+  except Exception: pass
  c=con()
  vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes
  FROM demo_votes
@@ -2419,10 +2460,9 @@ def tallies():
    try: legacy_slot=int(r["candidate"])
    except: legacy_slot=0
    legacy_vote_map[(r["election"],legacy_slot)]=legacy_vote_map.get((r["election"],legacy_slot),0)+int(r["votes"])
- reg_index=registered_voter_index()
- # Registered voters describe the active polling-station stream, not an
- # election category. Resolve the figure once and reuse it for every section.
- authoritative_registered=reg_index.get(norm_key(report_stream),0)
+ # Every registered-voter calculation below comes from this one polling-register
+ # lookup, resolved by station code plus stream identity.
+ authoritative_registered=registered_voters_for_stream(report_station_code,report_stream)
  hp=hierarchy_payload()
  stream_to_station={norm_key(x["name"]):norm_key(x.get("poll_station_key","")) for x in hp["streams"]}
  station_labels={norm_key(x["name"]):x.get("label") or x["name"] for x in hp["poll_stations"]}
@@ -2475,7 +2515,7 @@ def tallies():
    participation=int(r["participation"] or 0)
    skipped=int(r["skipped"] or 0)
    cast=max(0,participation-skipped)
-   registered=reg_index.get(sk,0)
+   registered=authoritative_registered
    election_cast+=cast
    election_skipped+=skipped
    election_participation+=participation

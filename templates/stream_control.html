@@ -44,6 +44,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 <input type="hidden" name="opening_lat" id="opening_lat">
 <input type="hidden" name="opening_lon" id="opening_lon">
 <input type="hidden" name="opening_accuracy" id="opening_accuracy">
+<input type="hidden" name="poll_station_code" id="poll_station_code">
 <div id="opening_gps_status" class="gps-open-status">GPS not yet captured.</div>
 <div class=control-grid>
  <div><label>County</label><select id=sc_county name=county required><option value="">Select County</option></select></div>
@@ -58,7 +59,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 const $=id=>document.getElementById(id);
 function fill(sel,rows,placeholder){
  sel.innerHTML='<option value="">'+placeholder+'</option>';
- rows.forEach(r=>{const o=document.createElement('option');o.value=r.name;o.textContent=r.label||r.name;sel.appendChild(o)});
+ rows.forEach(r=>{const o=document.createElement('option');o.value=r.name;o.textContent=r.label||r.name;if(r.poll_station_code)o.dataset.pollStationCode=r.poll_station_code;sel.appendChild(o)});
  sel.disabled=false;
 }
 function resetSelect(sel,placeholder){ sel.innerHTML='<option value="">'+placeholder+'</option>'; sel.disabled=true; }
@@ -96,6 +97,7 @@ $('sc_ward').onchange=async function(){
 };
 $('sc_station').onchange=async function(){
  resetSelect($('sc_stream'),'Loading Streams…');
+ $('poll_station_code').value=this.selectedOptions[0]?.dataset.pollStationCode||'';
  if(!this.value){ resetSelect($('sc_stream'),'Select Stream'); return; }
  try{ fill($('sc_stream'),await loadLevel('streams',this.value),'Select Stream'); }
  catch(e){ resetSelect($('sc_stream'),'Unable to load streams'); }
