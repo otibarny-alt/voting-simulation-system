@@ -1,4 +1,4 @@
-# V22.88: restore Training Ballot link after initial GPS stream opening.
+# V22.89: uniform registered-voter totals across all active-stream tally sections.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
 import requests
 import psycopg
@@ -2388,17 +2388,21 @@ def tallies():
    report_header_image_url=REPORT_HEADER_IMAGE_URL
   ),409
 
+ report_poll_station=str(report_ref.get("poll_station","") or "").strip()
+ report_stream=str(report_ref.get("stream","") or "").strip()
  c=con()
  vote_rows=c.execute("""SELECT election,candidate,candidate_id,candidate_name,COUNT(*) votes
  FROM demo_votes
+ WHERE poll_station=? AND stream=?
  GROUP BY election,candidate,candidate_id,candidate_name
- ORDER BY election,candidate_name,candidate""").fetchall()
+ ORDER BY election,candidate_name,candidate""",(report_poll_station,report_stream)).fetchall()
  geo_rows=c.execute("""SELECT election,poll_station,stream,
  COUNT(DISTINCT voter_session) participation,
  COUNT(DISTINCT CASE WHEN candidate_id='__SKIP__' THEN voter_session END) skipped
  FROM demo_votes
+ WHERE poll_station=? AND stream=?
  GROUP BY election,poll_station,stream
- ORDER BY election,poll_station,stream""").fetchall()
+ ORDER BY election,poll_station,stream""",(report_poll_station,report_stream)).fetchall()
  c.close()
 
  vote_map={}
@@ -2416,6 +2420,9 @@ def tallies():
    except: legacy_slot=0
    legacy_vote_map[(r["election"],legacy_slot)]=legacy_vote_map.get((r["election"],legacy_slot),0)+int(r["votes"])
  reg_index=registered_voter_index()
+ # Registered voters describe the active polling-station stream, not an
+ # election category. Resolve the figure once and reuse it for every section.
+ authoritative_registered=reg_index.get(norm_key(report_stream),0)
  hp=hierarchy_payload()
  stream_to_station={norm_key(x["name"]):norm_key(x.get("poll_station_key","")) for x in hp["streams"]}
  station_labels={norm_key(x["name"]):x.get("label") or x["name"] for x in hp["poll_stations"]}
@@ -2461,7 +2468,8 @@ def tallies():
    if previous_votes is None or cand["votes"]!=previous_votes: previous_rank=position
    cand["rank"]=previous_rank; previous_votes=cand["votes"]
 
-  stream_summary=[]; station_acc={}; election_cast=0; election_skipped=0; election_participation=0; stream_registered_total=0
+  stream_summary=[]; station_acc={}; election_cast=0; election_skipped=0; election_participation=0
+  stream_registered_total=authoritative_registered
   for r in geo_by_election.get(e["key"],[]):
    sk=norm_key(r["stream"]); pk=norm_key(r["poll_station"]) or stream_to_station.get(sk,"")
    participation=int(r["participation"] or 0)
@@ -2471,7 +2479,6 @@ def tallies():
    election_cast+=cast
    election_skipped+=skipped
    election_participation+=participation
-   stream_registered_total+=registered
    stream_summary.append({
     "name":stream_labels.get(sk,(r["stream"] or "").replace("_"," ").title()),
     "votes_cast":cast,
@@ -2488,11 +2495,25 @@ def tallies():
    st["skipped"]+=skipped
    st["participation"]+=participation
 
-  # A station's registered total includes every stream assigned to that station.
+  # This certificate is for one active stream. Its electorate is identical for
+  # President, Governor, Senator, Woman Representative, MNA and MCA.
+  if not stream_summary:
+   sk=norm_key(report_stream)
+   stream_summary.append({
+    "name":stream_labels.get(sk,report_stream.replace("_"," ").title()),
+    "votes_cast":0,"skipped":0,"participation":0,
+    "registered":authoritative_registered,"not_cast":authoritative_registered
+   })
+  if not station_acc:
+   pk=norm_key(report_poll_station)
+   station_acc[pk]={
+    "name":report_poll_station.replace("_"," ").title(),
+    "votes_cast":0,"skipped":0,"participation":0,"registered":authoritative_registered
+   }
+
   for pk,st in station_acc.items():
-   station_streams=[sk for sk,parent in stream_to_station.items() if parent==pk]
-   st["streams_count"]=len(station_streams)
-   st["registered"]=sum(reg_index.get(sk,0) for sk in station_streams)
+   st["streams_count"]=1
+   st["registered"]=authoritative_registered
    st["not_cast"]=max(0,st["registered"]-st["participation"])
 
   station_summary=sorted(station_acc.values(),key=lambda x:x["name"])
