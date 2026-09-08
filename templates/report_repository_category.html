@@ -2,6 +2,10 @@
 <header><b>Central PDF Report Repository</b><a href=/report-repository>All Categories</a>{% if is_admin %}<a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><span class="repo-admin-status">Admin</span><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form>{% else %}<a href="{{ url_for('repository_admin_login', next=request.full_path) }}">Admin Login</a>{% endif %}</header>
 <div class=demo>TRAINING / SIMULATION ONLY — central archive of formally closed stream reports.</div>
 <div class=wrap><div class="odm-screen-header project-screen-brand"><img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
+{% set tab_qs='county='+filters.county|urlencode+'&constituency='+filters.constituency|urlencode+'&ward='+filters.ward|urlencode+'&poll_station='+filters.poll_station|urlencode+'&stream='+filters.stream|urlencode %}
+<nav class="report-category-tabs" aria-label="Report categories">
+ {% for tab_key,tab_label in report_tabs %}<a class="report-category-tab{% if election==tab_key %} active{% endif %}" href="{{ url_for('report_repository_category',election=tab_key) }}?{{tab_qs}}" {% if election==tab_key %}aria-current="page"{% endif %}>{{tab_label}}</a>{% endfor %}
+</nav>
 <div class="repository-ribbon">{{title}}</div>
 <form class="repo-filters" method=get>
 <label>County<select name=county onchange="this.form.submit()"><option value="">All Counties</option>{% for v in counties %}<option value="{{v}}" {% if filters.county==v %}selected{% endif %}>{{v|replace('_',' ')|title}}</option>{% endfor %}</select></label>

@@ -1,4 +1,4 @@
-# V22.94: ward-restricted MCA results dashboard feed.
+# V22.95: category-switching tabs on every central report page.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -3023,7 +3023,8 @@ def report_repository_category(election):
  if page>pages:
   page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
  filter_sets=repository_filter_sets(election,filters)
- resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in()))
+ report_tabs=[('president','President'),('governor','Gubernatorial'),('senator','Senatorial'),('woman_rep','Women Rep'),('mna','MNA'),('mca','MCA')]
+ resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',report_tabs=report_tabs,rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in()))
  resp.headers['Cache-Control']='private, max-age=10'
  return resp
 

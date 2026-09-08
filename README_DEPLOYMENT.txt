@@ -1107,3 +1107,8 @@ V22.94 MCA RESULTS FEED
 - Preserves candidate county, constituency and ward in aggregate result rows.
 - Exposes no voter identifiers.
 - Optional cache setting: MCA_DASHBOARD_CACHE_SECONDS=3.
+V22.95 REPORT CATEGORY TABS
+- Adds President, Gubernatorial, Senatorial, Women Rep, MNA and MCA tabs above every report-category ribbon.
+- Highlights the currently selected category.
+- Carries the active County, Constituency, Ward, Polling Station and Stream filters when switching categories.
+- Tabs scroll horizontally on smaller screens.
