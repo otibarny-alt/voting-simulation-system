@@ -1163,3 +1163,8 @@ V23.05 update - complete registered candidate catalogues
 - Presidential, gubernatorial, senatorial, women representative, MNA and MCA result feeds now merge the live candidate-registration catalogue with recorded vote events.
 - Every registered candidate is returned with zero votes before their first selection and remains visible in the correct electoral area.
 - Vote-event candidates are retained as a fallback if the candidate-registration service is temporarily unavailable or a historical registration changes.
+V23.06 update - scoped catalogue recovery
+-----------------------------------------
+- Candidate positions supplied as full labels (including Member of County Assembly and Member of National Assembly) are normalized to their dashboard categories.
+- Local-position feeds retry the candidate-registration catalogue using the exact county, constituency and ward present in vote events.
+- This supports candidate services that return ward or constituency candidates only when the electoral area is provided.

@@ -1,4 +1,4 @@
-# V23.05: every results feed includes all registered candidates, including zero-vote candidates.
+# V23.06: dashboard catalogues support position aliases and electoral-area candidate queries.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -173,8 +173,21 @@ def candidate_portal_catalog(geo):
  payload=r.json()
  rows=payload.get("results",[]) if isinstance(payload,dict) else []
  catalog={k:[] for k,_,_ in ELECTIONS}
+ position_aliases={
+  "president":"president","presidential":"president",
+  "governor":"governor","gubernatorial":"governor",
+  "senator":"senator","senatorial":"senator",
+  "woman_rep":"woman_rep","women_rep":"woman_rep",
+  "woman_representative":"woman_rep","women_representative":"woman_rep",
+  "mna":"mna","member_of_national_assembly":"mna",
+  "member_national_assembly":"mna","national_assembly":"mna",
+  "mca":"mca","member_of_county_assembly":"mca",
+  "member_county_assembly":"mca","county_assembly":"mca"
+ }
  for row in rows:
-  key=str(row.get("position","")).strip().lower()
+  raw_position=str(row.get("position","")).strip().lower()
+  normalized_position=re.sub(r"[^a-z0-9]+","_",raw_position).strip("_")
+  key=position_aliases.get(normalized_position,normalized_position)
   if key not in catalog:
    continue
   catalog[key].append({
@@ -218,23 +231,40 @@ def dashboard_candidate_catalog(election,candidate_totals,event_names=None,event
  event_names=event_names or {}
  event_geo=event_geo or {}
  candidates_by_id={}
- try:
-  catalog=candidate_portal_catalog({})
-  for cand in catalog.get(election,[]):
-   cid=str(cand.get("candidate_id","") or "").strip()
-   if not cid:
-    continue
-   candidates_by_id[cid]={
-    "candidate_id":cid,
-    "name":cand.get("name") or event_names.get(cid) or cid,
-    "county":cand.get("county") or "",
-    "constituency":cand.get("constituency") or "",
-    "ward":cand.get("ward") or "",
-    "photo_url":cand.get("photo_url"),
-    "votes":int(candidate_totals.get(cid,0) or 0)
-   }
- except Exception as exc:
-  app.logger.warning("Candidate catalogue unavailable for %s dashboard: %s",election,exc)
+ # First request the complete catalogue. Also request each exact electoral area
+ # present in vote events: some candidate services intentionally return local
+ # positions only when their county/constituency/ward is supplied.
+ catalogue_geographies=[{}]
+ seen_geo=set()
+ for geo in event_geo.values():
+  scoped={k:str(geo.get(k,"") or "").strip() for k in ("county","constituency","ward")}
+  marker=tuple(scoped[k].lower() for k in ("county","constituency","ward"))
+  if any(marker) and marker not in seen_geo:
+   seen_geo.add(marker)
+   catalogue_geographies.append(scoped)
+
+ catalogue_errors=[]
+ for geo in catalogue_geographies:
+  try:
+   catalog=candidate_portal_catalog(geo)
+   for cand in catalog.get(election,[]):
+    cid=str(cand.get("candidate_id","") or "").strip()
+    if not cid:
+     continue
+    existing=candidates_by_id.get(cid,{})
+    candidates_by_id[cid]={
+     "candidate_id":cid,
+     "name":cand.get("name") or existing.get("name") or event_names.get(cid) or cid,
+     "county":cand.get("county") or existing.get("county") or geo.get("county","") or "",
+     "constituency":cand.get("constituency") or existing.get("constituency") or geo.get("constituency","") or "",
+     "ward":cand.get("ward") or existing.get("ward") or geo.get("ward","") or "",
+     "photo_url":cand.get("photo_url") or existing.get("photo_url"),
+     "votes":int(candidate_totals.get(cid,0) or 0)
+    }
+  except Exception as exc:
+   catalogue_errors.append(str(exc))
+ if catalogue_errors and not candidates_by_id:
+  app.logger.warning("Candidate catalogue unavailable for %s dashboard: %s",election,"; ".join(catalogue_errors))
 
  for cid in set(event_names) | set(candidate_totals):
   if not cid or cid=="__SKIP__":
