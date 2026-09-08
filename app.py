@@ -1,4 +1,4 @@
-# V23.00: prominent centered approval-check action with click feedback.
+# V23.01: approval result messages displayed below the approval-check button.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg

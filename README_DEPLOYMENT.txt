@@ -1139,3 +1139,7 @@ V23.00 update - approval-check button
 - Centered and enlarged Check Approval & Verify Voter Photos.
 - Added orange default, black hover/focus and green clicked/submitting states.
 - While processing, the button changes to Checking Approval and prevents duplicate submissions.
+V23.01 update - approval message placement
+------------------------------------------
+- Approval and voting-status errors now appear centered directly below the Check Approval & Verify Voter Photos button.
+- This includes the already-voted, missing approval, expired approval, used approval and wrong-station messages.

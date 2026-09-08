@@ -14,8 +14,6 @@
    <a class="open-stream-action-btn" href="/stream-control">Open Voting Stream &amp; Print Opening Report</a>
   </div>
 
-  {% if error %}<div class='vote-error'>{{error}}</div>{% endif %}
-
   {% if stream_ready and terminal_lock %}
    <p class=muted>Voting stream is retained on this computer for each subsequent voter.</p>
 
@@ -35,6 +33,7 @@
      <h3 class="next-voter-title">Next voter</h3>
      <input name=voter_id id=voter_id class=voter-id-input placeholder='Enter voter ID' required autocomplete=off autofocus>
      <div class="approval-check-action-row"><button id="start_btn" class="approval-check-btn" type="submit">Check Approval &amp; Verify Voter Photos</button></div>
+     {% if error %}<div class="vote-error approval-result-error" role="alert">{{error}}</div>{% endif %}
     </div>
    </form>
 
@@ -57,6 +56,7 @@
     <div class="voter-entry-blocked">
      Voter verification is unavailable until the pre-opening process is complete.
     </div>
+    {% if error %}<div class="vote-error approval-result-error" role="alert">{{error}}</div>{% endif %}
    </div>
   {% endif %}
  </div>
