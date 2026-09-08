@@ -1,4 +1,4 @@
-# V23.03: identify the voter and recorded polling station/stream in repeat-vote denials.
+# V23.04: voter-verification management links moved to simulation administration.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -92,6 +92,7 @@ ELECTION_ID = os.getenv("ELECTION_ID", "ODM_INTERNAL_NOMINATIONS").strip()
 ENTRANCE_APPROVAL_MINUTES = int(os.getenv("ENTRANCE_APPROVAL_MINUTES", "30") or 30)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
+VOTER_VERIFICATION_BASE_URL = os.getenv("VOTER_VERIFICATION_BASE_URL", "https://odm-member-photo-verifier.onrender.com").strip().rstrip("/")
 
 
 def managed_data_file(configured_name):
@@ -3118,7 +3119,7 @@ def admin_data_files():
  return render_template(
   "admin_data_files.html",files=files,csrf_token=token,
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
-  persistent=bool(DATA_UPLOAD_DIR)
+  persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL
  )
 
 

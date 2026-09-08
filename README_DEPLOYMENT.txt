@@ -1153,3 +1153,8 @@ V23.03 update - detailed repeat-vote warning
 - Already-voted denials now display the actual National ID number.
 - They also display the recorded polling station and stream, for example: ID No 10703460 has already voted at RATTA PRIMARY SCHOOL — STREAM 01.
 - The same wording is used for both local terminal records and the shared voter-status database.
+V23.04 update - consolidated administration links
+-------------------------------------------------
+- Added Manage Officers and Edit Registration to the protected Voting Simulation Admin Data Files page.
+- Removed these shortcuts from the Voter Verification working screen in the coordinated V15 verifier package.
+- Set VOTER_VERIFICATION_BASE_URL to the public base URL of the verifier service.

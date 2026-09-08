@@ -5,7 +5,8 @@
  <title>Admin Data Files</title>
  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
  <style>
-  .data-admin{max-width:920px;margin:28px auto;padding:0 18px}.data-panel{background:#fff;border:1px solid #ddd;border-radius:14px;padding:22px;margin-bottom:18px}.data-panel h2{margin-top:0}.data-current{background:#f7f7f7;border:1px solid #ddd;border-radius:9px;padding:12px;margin:12px 0}.data-current small{display:block;color:#555;margin-top:5px}.data-upload input[type=file]{display:block;width:100%;padding:11px;border:1px solid #bbb;border-radius:8px;margin:10px 0 14px}.data-upload button{background:#ef7d00;color:#111;border:0;border-radius:8px;padding:11px 17px;font-weight:800;cursor:pointer}.data-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.download-current{display:inline-block;background:#172033;color:#fff;text-decoration:none;border-radius:8px;padding:11px 17px;font-weight:800}.data-message{padding:13px;border-radius:8px;margin-bottom:16px}.data-success{background:#e8f7ec;border:1px solid #5ca66c}.data-error{background:#fdecec;border:1px solid #c75b5b}.data-warning{background:#fff6df;border:1px solid #d5a12d;padding:13px;border-radius:8px;margin-bottom:18px}.admin-nav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}.admin-nav a{font-weight:700}
+ .data-admin{max-width:920px;margin:28px auto;padding:0 18px}.data-panel{background:#fff;border:1px solid #ddd;border-radius:14px;padding:22px;margin-bottom:18px}.data-panel h2{margin-top:0}.data-current{background:#f7f7f7;border:1px solid #ddd;border-radius:9px;padding:12px;margin:12px 0}.data-current small{display:block;color:#555;margin-top:5px}.data-upload input[type=file]{display:block;width:100%;padding:11px;border:1px solid #bbb;border-radius:8px;margin:10px 0 14px}.data-upload button{background:#ef7d00;color:#111;border:0;border-radius:8px;padding:11px 17px;font-weight:800;cursor:pointer}.data-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.download-current{display:inline-block;background:#172033;color:#fff;text-decoration:none;border-radius:8px;padding:11px 17px;font-weight:800}.data-message{padding:13px;border-radius:8px;margin-bottom:16px}.data-success{background:#e8f7ec;border:1px solid #5ca66c}.data-error{background:#fdecec;border:1px solid #c75b5b}.data-warning{background:#fff6df;border:1px solid #d5a12d;padding:13px;border-radius:8px;margin-bottom:18px}.admin-nav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}.admin-nav a{font-weight:700}
+  .verification-admin-actions{display:flex;gap:14px;flex-wrap:wrap}.verification-admin-link{display:inline-block;background:#111;color:#fff!important;text-decoration:none;border:3px solid #ef7d00;border-radius:9px;padding:12px 18px;font-weight:850}.verification-admin-link:hover,.verification-admin-link:focus{background:#ef7d00;color:#111!important}
  </style>
 </head>
 <body>
@@ -13,6 +14,18 @@
 <main class="data-admin">
  <h1>Admin Data Files</h1>
  <p>Manually replace the electoral hierarchy or agents polling-register CSV. The system validates the structure and creates a backup before activating a replacement.</p>
+ <section class="data-panel">
+  <h2>Voter Verification Administration</h2>
+  <p>Open the protected management facilities hosted by the Voter Verification System.</p>
+  {% if voter_verification_base_url %}
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ voter_verification_base_url }}/admin/officers">Manage Officers</a>
+   <a class="verification-admin-link" href="{{ voter_verification_base_url }}/admin/edit-registration">Edit Registration</a>
+  </div>
+  {% else %}
+  <div class="data-warning">Set <code>VOTER_VERIFICATION_BASE_URL</code> to enable the voter-verification administration links.</div>
+  {% endif %}
+ </section>
  {% if not persistent %}<div class="data-warning"><b>Persistence warning:</b> no <code>DATA_UPLOAD_DIR</code> is configured. Uploaded files work immediately but may be lost when Render restarts or redeploys the service. Attach a persistent disk and set <code>DATA_UPLOAD_DIR</code> to its mount path.</div>{% endif %}
  {% if message %}<div class="data-message data-success">{{ message }}</div>{% endif %}
  {% if error %}<div class="data-message data-error">{{ error }}</div>{% endif %}
