@@ -1089,3 +1089,12 @@ V22.84 PRESIDENTIAL DASHBOARD VOTE REFLECTION FIX
 - Merges current zero-vote catalogue candidates with candidates found in durable vote events.
 - Adds a short presidential feed cache controlled by PRES_DASHBOARD_CACHE_SECONDS (default 3).
 - Uses the existing anonymous PostgreSQL mirror and local recovery fallback.
+V22.91 ADMIN DATA FILE UPLOAD
+- Protected page: /admin/data-files
+- Uses the existing ADMIN_USERNAME and ADMIN_PASSWORD login.
+- Accepts manual replacements for county_main.csv and agents_login.csv only.
+- Validates required columns and hierarchy row types before replacement.
+- Creates a timestamped backup and activates the new file atomically.
+- Set DATA_UPLOAD_DIR to a Render persistent-disk mount path (recommended: /var/data).
+- DATA_UPLOAD_MAX_MB controls the maximum accepted upload size (default: 30).
+- Without DATA_UPLOAD_DIR, uploaded replacements are temporary and can disappear after a restart or redeploy.

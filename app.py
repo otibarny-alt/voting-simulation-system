@@ -1,5 +1,5 @@
-# V22.90: one polling-register source for every registered-voter tally calculation.
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time
+# V22.91: protected manual replacement of hierarchy and polling-register CSV files.
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -16,6 +16,7 @@ from markupsafe import escape
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
+app.config["MAX_CONTENT_LENGTH"]=int(os.getenv("DATA_UPLOAD_MAX_MB","30") or 30)*1024*1024
 DB=os.getenv("DEMO_DB_PATH","training_votes.db")
 KENYA_TZ=ZoneInfo("Africa/Nairobi")
 OFFICIAL_CLOSE_TIME="08:00"
@@ -77,6 +78,7 @@ def cfg():
 
 COUNTY_MAIN = os.getenv("COUNTY_MAIN_FILENAME", "county_main.csv")
 AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
+DATA_UPLOAD_DIR = os.getenv("DATA_UPLOAD_DIR", "").strip()
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
 REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
@@ -88,6 +90,19 @@ DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
+
+
+def managed_data_file(configured_name):
+ """Resolve a CSV from persistent upload storage, seeding it from the build."""
+ configured_name=str(configured_name or "").strip()
+ packaged=configured_name if os.path.isabs(configured_name) else os.path.join(app.root_path,configured_name)
+ if not DATA_UPLOAD_DIR:
+  return packaged
+ os.makedirs(DATA_UPLOAD_DIR,exist_ok=True)
+ target=os.path.join(DATA_UPLOAD_DIR,os.path.basename(configured_name))
+ if not os.path.exists(target) and os.path.isfile(packaged):
+  shutil.copy2(packaged,target)
+ return target
 
 def repository_admin_logged_in():
  return bool(session.get("repository_admin"))
@@ -464,7 +479,7 @@ def norm_key(v):
 
 def agent_rows():
  try:
-  with open(AGENTS_LOGIN, encoding="utf-8-sig", errors="replace", newline="") as f:
+  with open(managed_data_file(AGENTS_LOGIN), encoding="utf-8-sig", errors="replace", newline="") as f:
    return list(csv.DictReader(f))
  except Exception:
   return []
@@ -515,7 +530,7 @@ def registered_voters_for_stream(poll_station_code, stream):
 def hierarchy_rows():
  rows=[]
  try:
-  with open(COUNTY_MAIN, encoding="utf-8", errors="replace", newline="") as f:
+  with open(managed_data_file(COUNTY_MAIN), encoding="utf-8-sig", errors="replace", newline="") as f:
    rows=list(csv.DictReader(f))
  except Exception:
   pass
@@ -2741,6 +2756,107 @@ def repository_admin_login():
  if not next_url.startswith("/") or next_url.startswith("//"):
   next_url=url_for("report_repository")
  return render_template("repository_admin_login.html",error=error,next_url=next_url)
+
+
+DATA_FILE_SPECS={
+ "county_main":{
+  "label":"County hierarchy",
+  "configured":lambda:COUNTY_MAIN,
+  "required":{"list_name","name","label"},
+ },
+ "agents_login":{
+  "label":"Agents and registered voters",
+  "configured":lambda:AGENTS_LOGIN,
+  "required":{"agent_id_no","poll_station_code","poll_station_name","total_registered_voters"},
+ },
+}
+
+
+def validate_admin_csv(path,file_type):
+ spec=DATA_FILE_SPECS[file_type]
+ with open(path,encoding="utf-8-sig",errors="strict",newline="") as f:
+  reader=csv.DictReader(f)
+  headers=set(reader.fieldnames or [])
+  missing=spec["required"]-headers
+  if missing:
+   raise ValueError("Missing required columns: "+", ".join(sorted(missing)))
+  rows=0; kinds=set()
+  for row in reader:
+   rows+=1
+   if file_type=="county_main":
+    kinds.add((row.get("list_name") or "").strip())
+   elif rows<=200 and str(row.get("total_registered_voters") or "").strip():
+    if to_int(row.get("total_registered_voters"))<0:
+     raise ValueError("Registered-voter totals cannot be negative.")
+  if rows<1:
+   raise ValueError("The uploaded CSV contains no data rows.")
+  if file_type=="county_main" and not {"county","constituency","ward","poll_station","poll_station_stream"}.issubset(kinds):
+   raise ValueError("County hierarchy must contain county, constituency, ward, poll_station and poll_station_stream rows.")
+ return rows
+
+
+@app.route("/admin/data-files",methods=["GET","POST"])
+def admin_data_files():
+ global _HIERARCHY_CACHE
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+
+ token=session.get("data_files_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32)
+  session["data_files_csrf"]=token
+
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   session["data_files_error"]="Security token expired. Reload the page and try again."
+   return redirect(url_for("admin_data_files"))
+  file_type=(request.form.get("file_type") or "").strip()
+  spec=DATA_FILE_SPECS.get(file_type)
+  upload=request.files.get("csv_file")
+  if not spec or not upload or not upload.filename:
+   session["data_files_error"]="Select the CSV file to upload."
+   return redirect(url_for("admin_data_files"))
+  if not upload.filename.lower().endswith(".csv"):
+   session["data_files_error"]="Only .csv files are accepted."
+   return redirect(url_for("admin_data_files"))
+
+  target=managed_data_file(spec["configured"]())
+  os.makedirs(os.path.dirname(target),exist_ok=True)
+  fd,temp_path=tempfile.mkstemp(prefix="data-upload-",suffix=".csv",dir=os.path.dirname(target))
+  os.close(fd)
+  try:
+   upload.save(temp_path)
+   rows=validate_admin_csv(temp_path,file_type)
+   backup_root=os.path.join(DATA_UPLOAD_DIR or app.root_path,"data_backups")
+   os.makedirs(backup_root,exist_ok=True)
+   if os.path.isfile(target):
+    stamp=kenya_now().strftime("%Y%m%d-%H%M%S-%f")
+    shutil.copy2(target,os.path.join(backup_root,f"{os.path.basename(target)}.{stamp}.bak"))
+   os.replace(temp_path,target)
+   if file_type=="county_main":
+    with _HIERARCHY_LOCK:
+     _HIERARCHY_CACHE=None
+   session["data_files_message"]=f"{spec['label']} CSV replaced successfully ({rows:,} rows)."
+  except Exception as exc:
+   if os.path.exists(temp_path):
+    os.unlink(temp_path)
+   session["data_files_error"]=f"Upload rejected: {exc}"
+  return redirect(url_for("admin_data_files"))
+
+ files=[]
+ for key,spec in DATA_FILE_SPECS.items():
+  path=managed_data_file(spec["configured"]())
+  files.append({
+   "key":key,"label":spec["label"],"filename":os.path.basename(path),
+   "size":os.path.getsize(path) if os.path.isfile(path) else 0,
+   "modified":datetime.fromtimestamp(os.path.getmtime(path),KENYA_TZ).isoformat(timespec="seconds") if os.path.isfile(path) else "Missing"
+  })
+ return render_template(
+  "admin_data_files.html",files=files,csrf_token=token,
+  message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
+  persistent=bool(DATA_UPLOAD_DIR)
+ )
 
 @app.post("/report-repository/admin-logout")
 def repository_admin_logout():
