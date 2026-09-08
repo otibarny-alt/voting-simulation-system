@@ -1,4 +1,4 @@
-# V22.92: protected download links for the two active administration CSV files.
+# V22.93: one authoritative national registered-voter total for every results feed.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -483,6 +483,19 @@ def agent_rows():
    return list(csv.DictReader(f))
  except Exception:
   return []
+
+
+_REGISTERED_TOTAL_CACHE={"signature":None,"value":0}
+def authoritative_registered_total():
+ """Sum the active agents register once; dashboard feeds reuse this exact value."""
+ path=managed_data_file(AGENTS_LOGIN)
+ try: signature=(path,os.path.getmtime(path),os.path.getsize(path))
+ except OSError: return 0
+ if _REGISTERED_TOTAL_CACHE.get("signature")==signature:
+  return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
+ total=sum(to_int(r.get("total_registered_voters",0)) for r in agent_rows())
+ _REGISTERED_TOTAL_CACHE.update({"signature":signature,"value":total})
+ return total
 
 def to_int(v):
  try: return int(float(str(v or "0").replace(",","").strip()))
@@ -1756,6 +1769,7 @@ def _build_woman_rep_dashboard_payload():
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
+   "registered_voters":authoritative_registered_total(),
    "candidate_selections":sum(candidate_totals.values()),
    "skipped":skipped_total,
    "participants":participants_total
@@ -1950,6 +1964,7 @@ def api_dashboard_president():
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
+   "registered_voters":authoritative_registered_total(),
    "candidate_selections":sum(candidate_totals.values()),
    "skipped":skipped_total,
    "participants":participants_total
@@ -2105,6 +2120,7 @@ def api_dashboard_governor():
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
+   "registered_voters":authoritative_registered_total(),
    "candidate_selections":sum(candidate_totals.values()),
    "skipped":skipped_total,
    "participants":participants_total
@@ -2262,6 +2278,7 @@ def api_dashboard_senator():
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
+   "registered_voters":authoritative_registered_total(),
    "candidate_selections":sum(candidate_totals.values()),
    "skipped":skipped_total,
    "participants":participants_total
@@ -2376,7 +2393,7 @@ def _build_mna_dashboard_payload():
  return {
   "source":"training_simulation","simulation_only":True,"election":"mna",
   "candidates":candidates,"streams":list(streams.values()),
-  "totals":{"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}
+  "totals":{"registered_voters":authoritative_registered_total(),"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}
  }
 
 
