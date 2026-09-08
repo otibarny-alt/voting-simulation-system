@@ -1098,3 +1098,7 @@ V22.91 ADMIN DATA FILE UPLOAD
 - Set DATA_UPLOAD_DIR to a Render persistent-disk mount path (recommended: /var/data).
 - DATA_UPLOAD_MAX_MB controls the maximum accepted upload size (default: 30).
 - Without DATA_UPLOAD_DIR, uploaded replacements are temporary and can disappear after a restart or redeploy.
+V22.92 ADMIN CSV DOWNLOAD
+- The protected /admin/data-files page includes a Download Current CSV button for both active data files.
+- Downloads require the existing administrator login.
+- The downloaded bytes are the exact county_main.csv or agents_login.csv currently used by the service.

@@ -1,4 +1,4 @@
-# V22.91: protected manual replacement of hierarchy and polling-register CSV files.
+# V22.92: protected download links for the two active administration CSV files.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file
 from markupsafe import escape
 
 app=Flask(__name__)
@@ -2857,6 +2857,20 @@ def admin_data_files():
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
   persistent=bool(DATA_UPLOAD_DIR)
  )
+
+
+@app.get("/admin/data-files/download/<file_type>")
+def download_admin_data_file(file_type):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.path))
+ spec=DATA_FILE_SPECS.get((file_type or "").strip())
+ if not spec:
+  return Response("Unknown data file.",status=404,mimetype="text/plain")
+ path=managed_data_file(spec["configured"]())
+ if not os.path.isfile(path):
+  return Response("Current data file is missing.",status=404,mimetype="text/plain")
+ return send_file(path,mimetype="text/csv; charset=utf-8",as_attachment=True,
+                  download_name=os.path.basename(path),conditional=True)
 
 @app.post("/report-repository/admin-logout")
 def repository_admin_logout():
