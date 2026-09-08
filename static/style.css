@@ -1195,3 +1195,4 @@ body.photo-zoom-open{overflow:hidden;}
 .admin-reopen-btn:hover{background:#2a2a2a}
 .admin-reopen-help{margin-top:10px;color:#7c2d12;font-size:.95rem}
 .admin-reopen-success{margin:14px 0;padding:14px 16px;border:2px solid #15803d;border-radius:10px;background:#f0fdf4;color:#14532d;font-weight:800}
+.entrance-approval-confirmed{margin:18px 0;padding:18px;border:3px solid #18783b;border-radius:12px;background:#e8f7ec;color:#0e4f27;box-shadow:0 2px 8px #0001}.entrance-approval-title{font-size:22px;font-weight:950;margin-bottom:7px}.entrance-approval-details{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid #79b98b}

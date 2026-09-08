@@ -11,6 +11,19 @@
  <div class=card>
   <h2>ODM Membership Photo Verification</h2>
   <p>Compare the voter physically present with the two photographs below before continuing to the simulated ballot.</p>
+  {% if entrance_approval_confirmed and entrance_approval %}
+  <div class="entrance-approval-confirmed">
+   <div class="entrance-approval-title">✓ VOTER PASSED ENTRANCE VERIFICATION</div>
+   <div>This voter was positively identified and approved to proceed.</div>
+   <div class="entrance-approval-details">
+    <span><b>Approved by:</b> {{ entrance_approval.approved_by }}</span>
+    <span><b>Approved at:</b> {{ entrance_approval.approved_at }}</span>
+    <span><b>Approved station:</b> {{ entrance_approval.polling_station }}</span>
+   </div>
+  </div>
+  {% else %}
+  <div class="station-mismatch">✕ ENTRANCE VERIFICATION NOT CONFIRMED — BALLOT ACCESS DENIED</div>
+  {% endif %}
 
   <div class="member-details">
    <div><b>National ID:</b> {{member.national_id}}</div>
@@ -62,7 +75,7 @@
 
   <div class=actions>
    <form method=post action=/membership/cancel><button class=secondary type=submit>Cancel / Different Voter</button></form>
-   {% if station_match %}
+   {% if station_match and entrance_approval_confirmed and entrance_approval %}
    <form method=post action=/membership/confirm><button type=submit>Identity Confirmed — Continue to Simulation Ballot</button></form>
    {% else %}
    <button type=button disabled>Voting Not Allowed at This Station</button>

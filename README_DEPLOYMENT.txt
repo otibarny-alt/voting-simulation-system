@@ -1116,3 +1116,16 @@ V22.96 update
 -------------
 - Removed the Admin Data Files navigation link from the Voting Stream Control page.
 - The protected Admin Data Files page and its administrator-only links elsewhere remain available.
+V22.97 update - voter verification integration
+------------------------------------------------
+- A voter must first be positively identified and approved in the entrance Voter Verification System.
+- The ballot system checks that approval before retrieving membership details or displaying ballots.
+- Approval is polling-station restricted, expires after ENTRANCE_APPROVAL_MINUTES, and is consumed once after the second photo verification.
+- After ballot submission, the shared voter-status record is marked VOTED.
+- Both Render services must use the exact same DATABASE_URL, ELECTION_ID and ENTRANCE_APPROVAL_MINUTES values.
+V22.98 update - visible entrance approval certificate
+------------------------------------------------------
+- The membership-photo screen now displays a prominent VOTER PASSED ENTRANCE VERIFICATION confirmation.
+- It shows the approving officer, approval time and approved polling station.
+- The Continue to Ballot control is not rendered unless the server supplied a valid entrance approval.
+- Missing, expired, previously used or wrong-station approvals remain blocked before this screen.

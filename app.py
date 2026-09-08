@@ -1,4 +1,4 @@
-# V22.96: hide the Admin Data Files shortcut from Voting Stream Control.
+# V22.98: display and enforce entrance approval on the photo-verification screen.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -88,6 +88,8 @@ KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+ELECTION_ID = os.getenv("ELECTION_ID", "ODM_INTERNAL_NOMINATIONS").strip()
+ENTRANCE_APPROVAL_MINUTES = int(os.getenv("ENTRANCE_APPROVAL_MINUTES", "30") or 30)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 
@@ -281,11 +283,112 @@ def init_global_lock_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_dash_events_date_election ON simulation_dashboard_vote_events(session_date,election)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_dash_events_geo ON simulation_dashboard_vote_events(session_date,election,county,constituency,ward,poll_station,stream)")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS voter_admission_approvals(
+       election_id TEXT NOT NULL,
+       national_id TEXT NOT NULL,
+       polling_station TEXT NOT NULL,
+       approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       approved_by TEXT NOT NULL,
+       consumed_at TIMESTAMPTZ,
+       consumed_station TEXT,
+       consumed_stream TEXT,
+       PRIMARY KEY(election_id,national_id)
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_voter_admission_station ON voter_admission_approvals(election_id,polling_station,approved_at DESC)")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS voter_status(
+       election_id TEXT NOT NULL,
+       national_id TEXT NOT NULL,
+       voted_at TIMESTAMPTZ,
+       voted_at_station TEXT,
+       verified_by TEXT,
+       PRIMARY KEY(election_id,national_id)
+     )
+    """)
    conn.commit()
   _GLOBAL_DB_READY = True
 
 def token_hash(token):
  return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+def entrance_approval_status(national_id,poll_station):
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT a.polling_station,a.approved_at,a.approved_by,a.consumed_at,
+           (a.approved_at >= NOW() - (%s * INTERVAL '1 minute')) AS approval_valid,
+           v.voted_at
+    FROM voter_admission_approvals a
+    LEFT JOIN voter_status v
+      ON v.election_id=a.election_id AND v.national_id=a.national_id
+    WHERE a.election_id=%s AND a.national_id=%s
+   """,(ENTRANCE_APPROVAL_MINUTES,ELECTION_ID,national_id))
+   row=cur.fetchone()
+ if not row:
+  return False,"Entrance approval not found. Return to the entrance verification official for positive identification.",None
+ if row.get("voted_at"):
+  return False,"This voter has already voted and cannot be admitted again.",None
+ if row.get("consumed_at"):
+  return False,"This entrance approval has already been used by a voting terminal.",None
+ if not row.get("approval_valid"):
+  return False,f"Entrance approval has expired. Ask the entrance official to verify the voter again (approval lasts {ENTRANCE_APPROVAL_MINUTES} minutes).",None
+ if station_key(row.get("polling_station"))!=station_key(poll_station):
+  return False,"Entrance approval was issued for a different polling station.",None
+ approval={
+  "national_id":str(national_id),
+  "polling_station":str(row.get("polling_station") or ""),
+  "approved_at":str(row.get("approved_at") or ""),
+  "approved_by":str(row.get("approved_by") or "")
+ }
+ return True,"Entrance approval confirmed.",approval
+
+def consume_entrance_approval(national_id,poll_station,stream):
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    SELECT polling_station,consumed_at,
+           (approved_at >= NOW() - (%s * INTERVAL '1 minute')) AS approval_valid
+    FROM voter_admission_approvals
+    WHERE election_id=%s AND national_id=%s
+    FOR UPDATE
+   """,(ENTRANCE_APPROVAL_MINUTES,ELECTION_ID,national_id))
+   row=cur.fetchone()
+   if not row:
+    return False,"Entrance approval not found."
+   if row.get("consumed_at"):
+    return False,"Entrance approval has already been used."
+   if not row.get("approval_valid"):
+    return False,"Entrance approval expired before ballot access. Return to the entrance official."
+   if station_key(row.get("polling_station"))!=station_key(poll_station):
+    return False,"Entrance approval belongs to a different polling station."
+   cur.execute("""
+    UPDATE voter_admission_approvals
+    SET consumed_at=NOW(),consumed_station=%s,consumed_stream=%s
+    WHERE election_id=%s AND national_id=%s AND consumed_at IS NULL
+      AND approved_at >= NOW() - (%s * INTERVAL '1 minute')
+    RETURNING consumed_at
+   """,(poll_station,stream,ELECTION_ID,national_id,ENTRANCE_APPROVAL_MINUTES))
+   changed=cur.fetchone()
+  conn.commit()
+ return (True,"Entrance approval consumed.") if changed else (False,"Entrance approval could not be claimed. Verify the voter again.")
+
+def mark_shared_voter_voted(national_id,poll_station):
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""
+    INSERT INTO voter_status(election_id,national_id,voted_at,voted_at_station,verified_by)
+    VALUES(%s,%s,NOW(),%s,'SIMULATION_BALLOT')
+    ON CONFLICT(election_id,national_id) DO UPDATE SET
+      voted_at=COALESCE(voter_status.voted_at,EXCLUDED.voted_at),
+      voted_at_station=COALESCE(voter_status.voted_at_station,EXCLUDED.voted_at_station),
+      verified_by=COALESCE(voter_status.verified_by,EXCLUDED.verified_by)
+   """,(ELECTION_ID,national_id,poll_station))
+  conn.commit()
 
 def global_lock_row(session_date,poll_station,stream):
  if not DATABASE_URL:
@@ -1236,6 +1339,13 @@ def start():
  geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
 
  try:
+  entrance_ok,entrance_message,entrance_approval=entrance_approval_status(voter,geo.get("poll_station",""))
+ except Exception as e:
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"Unable to check entrance approval: {e}")
+ if not entrance_ok:
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"VOTING NOT ALLOWED: {entrance_message}")
+
+ try:
   row=lookup_member(voter)
  except Exception as e:
   return render_template("verify.html",error=f"Unable to verify voter from ODM Membership Portal: {e}")
@@ -1255,8 +1365,10 @@ def start():
  session["membership_verified"]=True
  session["membership_station_match"]=station_match
  session["membership_station"]=membership_station
+ session["entrance_approval_checked"]=True
+ session["entrance_approval"]=entrance_approval
  session["geo"]=geo
- return render_template("member_verify.html",member=member,geo=geo,station_match=station_match)
+ return render_template("member_verify.html",member=member,geo=geo,station_match=station_match,entrance_approval_confirmed=True,entrance_approval=entrance_approval)
 
 @app.post("/membership/confirm")
 def confirm_member():
@@ -1292,7 +1404,18 @@ def confirm_member():
  if not ss or ss["closed_at"]:
   session.clear()
   return render_template("verify.html",error="This stream is not open for simulated voting.")
+ if not session.get("entrance_approval_checked") or not session.get("entrance_approval"):
+  session.clear()
+  return render_template("verify.html",error="Entrance approval was not checked. Restart voter verification.")
+ try:
+  approval_claimed,approval_message=consume_entrance_approval(voter,geo.get("poll_station",""),geo.get("stream",""))
+ except Exception as e:
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"Unable to claim entrance approval: {e}")
+ if not approval_claimed:
+  session.clear()
+  return render_template("verify.html",error=f"VOTING NOT ALLOWED: {approval_message}")
  session["voter_id"]=voter
+ session["entrance_approval_consumed"]=True
  session["choices"]={}
  session.pop("pending_voter_id",None)
  return redirect(url_for("ballot",step=0))
@@ -1442,6 +1565,10 @@ def cast():
    (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
     geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
  c.commit(); c.close()
+ try:
+  mark_shared_voter_voted(voter,geo.get("poll_station",""))
+ except Exception as exc:
+  app.logger.error("Could not update shared voter-status record after ballot cast: %s",exc)
  try:
   sync_unmirrored_votes_to_dashboard()
   try:
