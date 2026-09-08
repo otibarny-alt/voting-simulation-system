@@ -1102,3 +1102,8 @@ V22.92 ADMIN CSV DOWNLOAD
 - The protected /admin/data-files page includes a Download Current CSV button for both active data files.
 - Downloads require the existing administrator login.
 - The downloaded bytes are the exact county_main.csv or agents_login.csv currently used by the service.
+V22.94 MCA RESULTS FEED
+- Adds authenticated read-only /api/dashboard/mca and /api/dashboard/member-county-assembly endpoints.
+- Preserves candidate county, constituency and ward in aggregate result rows.
+- Exposes no voter identifiers.
+- Optional cache setting: MCA_DASHBOARD_CACHE_SECONDS=3.
