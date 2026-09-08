@@ -1129,3 +1129,8 @@ V22.98 update - visible entrance approval certificate
 - It shows the approving officer, approval time and approved polling station.
 - The Continue to Ballot control is not rendered unless the server supplied a valid entrance approval.
 - Missing, expired, previously used or wrong-station approvals remain blocked before this screen.
+V22.99 update - completion screen action
+-----------------------------------------
+- Renamed Next voter on this computer to Next Voter.
+- Centered and enlarged the button with orange, black hover/focus and green selected states.
+- Removed the disabled Tally Dashboard Locked Until Voting Closes button from the completion screen.

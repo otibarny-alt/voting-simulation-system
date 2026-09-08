@@ -1,4 +1,4 @@
-# V22.98: display and enforce entrance approval on the photo-verification screen.
+# V22.99: simplified completion screen with prominent Next Voter action.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
