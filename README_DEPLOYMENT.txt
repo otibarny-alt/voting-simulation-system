@@ -1158,3 +1158,8 @@ V23.04 update - consolidated administration links
 - Added Manage Officers and Edit Registration to the protected Voting Simulation Admin Data Files page.
 - Removed these shortcuts from the Voter Verification working screen in the coordinated V15 verifier package.
 - Set VOTER_VERIFICATION_BASE_URL to the public base URL of the verifier service.
+V23.05 update - complete registered candidate catalogues
+--------------------------------------------------------
+- Presidential, gubernatorial, senatorial, women representative, MNA and MCA result feeds now merge the live candidate-registration catalogue with recorded vote events.
+- Every registered candidate is returned with zero votes before their first selection and remains visible in the correct electoral area.
+- Vote-event candidates are retained as a fallback if the candidate-registration service is temporarily unavailable or a historical registration changes.

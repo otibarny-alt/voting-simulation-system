@@ -1,4 +1,4 @@
-# V23.04: voter-verification management links moved to simulation administration.
+# V23.05: every results feed includes all registered candidates, including zero-vote candidates.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -205,6 +205,61 @@ def current_catalog_or_empty(geo):
   return candidate_portal_catalog(geo)
  except Exception:
   return {k:[] for k,_,_ in ELECTIONS}
+
+
+def dashboard_candidate_catalog(election,candidate_totals,event_names=None,event_geo=None):
+ """Merge every registered candidate with anonymous vote-event fallbacks.
+
+ The candidate portal is authoritative for who is registered and for the
+ electoral area in which a candidate may appear. Stored vote events remain a
+ fallback so historical tallies are not hidden if the portal is temporarily
+ unavailable or a registration later changes.
+ """
+ event_names=event_names or {}
+ event_geo=event_geo or {}
+ candidates_by_id={}
+ try:
+  catalog=candidate_portal_catalog({})
+  for cand in catalog.get(election,[]):
+   cid=str(cand.get("candidate_id","") or "").strip()
+   if not cid:
+    continue
+   candidates_by_id[cid]={
+    "candidate_id":cid,
+    "name":cand.get("name") or event_names.get(cid) or cid,
+    "county":cand.get("county") or "",
+    "constituency":cand.get("constituency") or "",
+    "ward":cand.get("ward") or "",
+    "photo_url":cand.get("photo_url"),
+    "votes":int(candidate_totals.get(cid,0) or 0)
+   }
+ except Exception as exc:
+  app.logger.warning("Candidate catalogue unavailable for %s dashboard: %s",election,exc)
+
+ for cid in set(event_names) | set(candidate_totals):
+  if not cid or cid=="__SKIP__":
+   continue
+  geo=event_geo.get(cid,{})
+  existing=candidates_by_id.get(cid)
+  if existing:
+   # Fill any geographic fields omitted by the portal from the vote event.
+   for field in ("county","constituency","ward"):
+    if not existing.get(field) and geo.get(field):
+     existing[field]=geo[field]
+   continue
+  candidates_by_id[cid]={
+   "candidate_id":cid,
+   "name":event_names.get(cid) or cid,
+   "county":geo.get("county","") or "",
+   "constituency":geo.get("constituency","") or "",
+   "ward":geo.get("ward","") or "",
+   "photo_url":None,
+   "votes":int(candidate_totals.get(cid,0) or 0)
+  }
+
+ candidates=list(candidates_by_id.values())
+ candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+ return candidates
 
 
 def pg_url():
@@ -1904,14 +1959,8 @@ def _build_woman_rep_dashboard_payload():
  names={}
  for item in streams.values():
   names.update(item.get("candidate_names",{}))
- candidates=[{
-  "candidate_id":cid,
-  "name":name,
-  "county":candidate_counties.get(cid,""),
-  "photo_url":None,
-  "votes":candidate_totals.get(cid,0)
- } for cid,name in names.items()]
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+ event_geo={cid:{"county":candidate_counties.get(cid,"")} for cid in set(names) | set(candidate_totals)}
+ candidates=dashboard_candidate_catalog("woman_rep",candidate_totals,names,event_geo)
 
  return {
   "source":"training_simulation",
@@ -2080,33 +2129,7 @@ def api_dashboard_president():
  seen_names={}
  for item in streams.values():
   seen_names.update(item.get("candidate_names",{}))
- candidates_by_id={}
- try:
-  catalog=candidate_portal_catalog({})
-  for cand in catalog.get("president",[]):
-   cid=cand.get("candidate_id","")
-   if not cid:
-    continue
-   candidates_by_id[cid]={
-    "candidate_id":cid,
-    "name":cand.get("name") or seen_names.get(cid) or cid,
-    "photo_url":cand.get("photo_url"),
-    "votes":candidate_totals.get(cid,0)
-   }
- except Exception:
-  pass
-
- for cid in set(seen_names) | set(candidate_totals):
-  if cid not in candidates_by_id:
-   candidates_by_id[cid]={
-    "candidate_id":cid,
-    "name":seen_names.get(cid) or cid,
-    "photo_url":None,
-    "votes":candidate_totals.get(cid,0)
-   }
-
- candidates=list(candidates_by_id.values())
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+ candidates=dashboard_candidate_catalog("president",candidate_totals,seen_names)
 
  payload={
   "source":"training_simulation",
@@ -2253,16 +2276,16 @@ def api_dashboard_governor():
   item["session_date"]=sess.get("session_date","")
   item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
 
- # Gubernatorial candidates are county-specific. Build the live candidate list
- # from names present in the anonymous simulation stream aggregates.
- candidates=[]
+ # Merge all registered county candidates, including those with zero votes,
+ # with names retained in anonymous vote events.
  names={}
+ candidate_counties={}
  for item in streams.values():
   names.update(item.get("candidate_names",{}))
- for cid,name in names.items():
-  candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
-
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+  for cid in item.get("candidate_names",{}):
+   candidate_counties[cid]=item.get("county","") or candidate_counties.get(cid,"")
+ event_geo={cid:{"county":candidate_counties.get(cid,"")} for cid in set(names) | set(candidate_totals)}
+ candidates=dashboard_candidate_catalog("governor",candidate_totals,names,event_geo)
 
  payload={
   "source":"training_simulation",
@@ -2411,16 +2434,16 @@ def api_dashboard_senator():
   item["session_date"]=sess.get("session_date","")
   item["status"]="CLOSED" if item["closed_at"] else ("OPEN" if item["opened_at"] else "NOT STARTED")
 
- # Senatorial candidates are county-specific. Build the live candidate list
- # from names present in the anonymous simulation stream aggregates.
- candidates=[]
+ # Merge all registered county candidates, including those with zero votes,
+ # with names retained in anonymous vote events.
  names={}
+ candidate_counties={}
  for item in streams.values():
   names.update(item.get("candidate_names",{}))
- for cid,name in names.items():
-  candidates.append({"candidate_id":cid,"name":name,"photo_url":None,"votes":candidate_totals.get(cid,0)})
-
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+  for cid in item.get("candidate_names",{}):
+   candidate_counties[cid]=item.get("county","") or candidate_counties.get(cid,"")
+ event_geo={cid:{"county":candidate_counties.get(cid,"")} for cid in set(names) | set(candidate_totals)}
+ candidates=dashboard_candidate_catalog("senator",candidate_totals,names,event_geo)
 
  payload={
   "source":"training_simulation",
@@ -2535,12 +2558,8 @@ def _build_mna_dashboard_payload():
  names={}
  for item in streams.values():
   names.update(item.get("candidate_names",{}))
- candidates=[{
-  "candidate_id":cid,"name":name,"county":candidate_counties.get(cid,""),
-  "constituency":candidate_constituencies.get(cid,""),"photo_url":None,
-  "votes":candidate_totals.get(cid,0)
- } for cid,name in names.items()]
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+ event_geo={cid:{"county":candidate_counties.get(cid,""),"constituency":candidate_constituencies.get(cid,"")} for cid in set(names) | set(candidate_totals)}
+ candidates=dashboard_candidate_catalog("mna",candidate_totals,names,event_geo)
  return {
   "source":"training_simulation","simulation_only":True,"election":"mna",
   "candidates":candidates,"streams":list(streams.values()),
@@ -2643,8 +2662,8 @@ def _build_mca_dashboard_payload():
 
  names={}
  for item in streams.values():names.update(item.get("candidate_names",{}))
- candidates=[{"candidate_id":cid,"name":name,"county":candidate_counties.get(cid,""),"constituency":candidate_constituencies.get(cid,""),"ward":candidate_wards.get(cid,""),"photo_url":None,"votes":candidate_totals.get(cid,0)} for cid,name in names.items()]
- candidates.sort(key=lambda x:(-int(x.get("votes",0)),str(x.get("name","")).lower()))
+ event_geo={cid:{"county":candidate_counties.get(cid,""),"constituency":candidate_constituencies.get(cid,""),"ward":candidate_wards.get(cid,"")} for cid in set(names) | set(candidate_totals)}
+ candidates=dashboard_candidate_catalog("mca",candidate_totals,names,event_geo)
  return {"source":"training_simulation","simulation_only":True,"election":"mca","candidates":candidates,"streams":list(streams.values()),"totals":{"registered_voters":authoritative_registered_total(),"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}}
 
 
