@@ -1,4 +1,4 @@
-# V22.95: category-switching tabs on every central report page.
+# V22.96: hide the Admin Data Files shortcut from Voting Stream Control.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg

@@ -1112,3 +1112,7 @@ V22.95 REPORT CATEGORY TABS
 - Highlights the currently selected category.
 - Carries the active County, Constituency, Ward, Polling Station and Stream filters when switching categories.
 - Tabs scroll horizontally on smaller screens.
+V22.96 update
+-------------
+- Removed the Admin Data Files navigation link from the Voting Stream Control page.
+- The protected Admin Data Files page and its administrator-only links elsewhere remain available.
