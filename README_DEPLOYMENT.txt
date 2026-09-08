@@ -1148,3 +1148,8 @@ V23.02 update - locked-stream interference protection
 - Once a stream is locked and ready for voting, the voter screen no longer shows the Open Voting Stream & Print Opening Report control.
 - Removed the statement that the voting stream is retained on the computer from the locked voter screen.
 - The stream-opening control remains available only before a terminal has a ready locked stream.
+V23.03 update - detailed repeat-vote warning
+--------------------------------------------
+- Already-voted denials now display the actual National ID number.
+- They also display the recorded polling station and stream, for example: ID No 10703460 has already voted at RATTA PRIMARY SCHOOL — STREAM 01.
+- The same wording is used for both local terminal records and the shared voter-status database.

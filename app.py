@@ -1,4 +1,4 @@
-# V23.02: hide stream-control navigation after a voting stream is locked.
+# V23.03: identify the voter and recorded polling station/stream in repeat-vote denials.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -313,14 +313,30 @@ def init_global_lock_db():
 def token_hash(token):
  return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
+def polling_location_label(poll_station,stream=""):
+ station_label=re.sub(r"\s+"," ",re.sub(r"[_-]+"," ",str(poll_station or "").strip())).strip().upper()
+ stream_label=re.sub(r"\s+"," ",re.sub(r"[_-]+"," ",str(stream or "").strip())).strip().upper()
+ if station_label and stream_label.startswith(station_label+" "):
+  stream_label=stream_label[len(station_label):].strip()
+ parts=[]
+ for label in (station_label,stream_label):
+  if label and label not in parts:
+   parts.append(label)
+ return " — ".join(parts) or "THE RECORDED POLLING STATION / STREAM"
+
+def already_voted_message(national_id,poll_station="",stream="",include_prefix=True):
+ message=f"ID No {national_id} has already voted at {polling_location_label(poll_station,stream)} and cannot be admitted again."
+ return f"VOTING NOT ALLOWED: {message}" if include_prefix else message
+
 def entrance_approval_status(national_id,poll_station):
  init_global_lock_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     SELECT a.polling_station,a.approved_at,a.approved_by,a.consumed_at,
+           a.consumed_station,a.consumed_stream,
            (a.approved_at >= NOW() - (%s * INTERVAL '1 minute')) AS approval_valid,
-           v.voted_at
+           v.voted_at,v.voted_at_station
     FROM voter_admission_approvals a
     LEFT JOIN voter_status v
       ON v.election_id=a.election_id AND v.national_id=a.national_id
@@ -330,7 +346,8 @@ def entrance_approval_status(national_id,poll_station):
  if not row:
   return False,"Entrance approval not found. Return to the entrance verification official for positive identification.",None
  if row.get("voted_at"):
-  return False,"This voter has already voted and cannot be admitted again.",None
+  voted_station=row.get("voted_at_station") or row.get("consumed_station") or row.get("polling_station")
+  return False,already_voted_message(national_id,voted_station,row.get("consumed_stream"),include_prefix=False),None
  if row.get("consumed_at"):
   return False,"This entrance approval has already been used by a voting terminal.",None
  if not row.get("approval_valid"):
@@ -1333,8 +1350,7 @@ def start():
 
  previous=previous_vote(voter)
  if previous:
-  station=previous["poll_station"] or "the recorded polling station"
-  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
+  return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
 
  geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
 
@@ -1392,9 +1408,8 @@ def confirm_member():
  voter=session.get("pending_voter_id")
  previous=previous_vote(voter)
  if previous:
-  station=previous["poll_station"] or "the recorded polling station"
   session.clear()
-  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
+  return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
  geo=session.get("geo",{})
  lock=terminal_lock()
  if not lock or any(geo.get(k,"")!=lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")):
@@ -1550,10 +1565,9 @@ def cast():
  c=con(); voter=session["voter_id"]; geo=session["geo"]
  existing=c.execute("SELECT poll_station, stream FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
  if existing:
-  station=existing["poll_station"] or "the recorded polling station"
   c.close()
   session.clear()
-  return render_template("verify.html",error=f"Voter ID {voter} has already voted at {station} polling station and cannot vote again.")
+  return render_template("verify.html",error=already_voted_message(voter,existing["poll_station"],existing["stream"]))
  for e in cfg():
   picked=choices.get(e["key"])
   if not isinstance(picked,dict) or not picked.get("candidate_id"):
