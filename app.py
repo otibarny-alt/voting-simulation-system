@@ -1,4 +1,4 @@
-# V23.01: approval result messages displayed below the approval-check button.
+# V23.02: hide stream-control navigation after a voting stream is locked.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg

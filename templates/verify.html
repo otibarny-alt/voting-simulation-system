@@ -10,13 +10,7 @@
 
   <div class="odm-verification-ribbon">Entrance Approval, Voter ID &amp; Photo Verification</div>
 
-  <div class="open-stream-action-row">
-   <a class="open-stream-action-btn" href="/stream-control">Open Voting Stream &amp; Print Opening Report</a>
-  </div>
-
   {% if stream_ready and terminal_lock %}
-   <p class=muted>Voting stream is retained on this computer for each subsequent voter.</p>
-
    <div class="locked-station-panel">
     <div class="locked-station-name">This computer is assigned to:
 <span class="assigned-stream-name">{{ terminal_lock.stream|replace('_',' ')|upper }}</span></div>
@@ -38,6 +32,9 @@
    </form>
 
   {% else %}
+   <div class="open-stream-action-row">
+    <a class="open-stream-action-btn" href="/stream-control">Open Voting Stream &amp; Print Opening Report</a>
+   </div>
    <div class="unassigned-station-panel">
     <div class="unassigned-title">This computer is not yet assigned to any polling station.</div>
     <div class="unassigned-help">

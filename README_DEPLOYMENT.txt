@@ -1143,3 +1143,8 @@ V23.01 update - approval message placement
 ------------------------------------------
 - Approval and voting-status errors now appear centered directly below the Check Approval & Verify Voter Photos button.
 - This includes the already-voted, missing approval, expired approval, used approval and wrong-station messages.
+V23.02 update - locked-stream interference protection
+-----------------------------------------------------
+- Once a stream is locked and ready for voting, the voter screen no longer shows the Open Voting Stream & Print Opening Report control.
+- Removed the statement that the voting stream is retained on the computer from the locked voter screen.
+- The stream-opening control remains available only before a terminal has a ready locked stream.
