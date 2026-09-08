@@ -1,4 +1,4 @@
-# V22.99: simplified completion screen with prominent Next Voter action.
+# V23.00: prominent centered approval-check action with click feedback.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg

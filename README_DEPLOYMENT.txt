@@ -1134,3 +1134,8 @@ V22.99 update - completion screen action
 - Renamed Next voter on this computer to Next Voter.
 - Centered and enlarged the button with orange, black hover/focus and green selected states.
 - Removed the disabled Tally Dashboard Locked Until Voting Closes button from the completion screen.
+V23.00 update - approval-check button
+-------------------------------------
+- Centered and enlarged Check Approval & Verify Voter Photos.
+- Added orange default, black hover/focus and green clicked/submitting states.
+- While processing, the button changes to Checking Approval and prevents duplicate submissions.

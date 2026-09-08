@@ -34,7 +34,7 @@
     <div id=voter_panel>
      <h3 class="next-voter-title">Next voter</h3>
      <input name=voter_id id=voter_id class=voter-id-input placeholder='Enter voter ID' required autocomplete=off autofocus>
-     <div class=actions><span></span><button id=start_btn>Check Approval &amp; Verify Voter Photos</button></div>
+     <div class="approval-check-action-row"><button id="start_btn" class="approval-check-btn" type="submit">Check Approval &amp; Verify Voter Photos</button></div>
     </div>
    </form>
 
@@ -61,3 +61,11 @@
   {% endif %}
  </div>
 </div>
+<script>
+document.getElementById('voter_form')?.addEventListener('submit',function(){
+ const button=document.getElementById('start_btn');
+ button.classList.add('is-selected');
+ button.textContent='Checking Approval…';
+ button.disabled=true;
+});
+</script>
