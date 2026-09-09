@@ -1200,3 +1200,9 @@ V23.10 - PROTECTED VOTERS REGISTER
 - Provides county, constituency, ward and polling-station filters, an on-screen preview, a printable PDF and a CSV download.
 - Groups members by polling station and sorts names alphabetically within each station.
 - The PDF includes Member ID, full name, ODM registration number, electoral area, polling station, a physical-check column and page numbers.
+V23.11 - VOTERS REGISTER HIERARCHY FILTERS
+==========================================
+
+- Replaces manual voters-register filter typing with county_main.csv dropdowns.
+- Uses dependent County > Constituency > Ward > Polling Station selection.
+- Preserves selected filters in the preview and PDF/CSV download links.

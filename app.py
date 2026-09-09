@@ -3305,6 +3305,21 @@ def combined_voters_register():
 def _register_filters():
  return {key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
 
+def _register_hierarchy_options(filters):
+ """Return the county_main.csv branch matching the current register filters."""
+ hierarchy=_hierarchy_cache()
+ def chosen(rows,value):
+  wanted=station_key(value)
+  return next((row for row in rows if wanted and wanted in (station_key(row.get("name")),station_key(row.get("label")))),None)
+ counties=hierarchy["counties"]
+ county=chosen(counties,filters.get("county"))
+ constituencies=hierarchy["constituencies"].get(norm_key((county or {}).get("name","")),[]) if county else []
+ constituency=chosen(constituencies,filters.get("constituency"))
+ wards=hierarchy["wards"].get(norm_key((constituency or {}).get("name","")),[]) if constituency else []
+ ward=chosen(wards,filters.get("ward"))
+ stations=hierarchy["poll_stations"].get(norm_key((ward or {}).get("name","")),[]) if ward else []
+ return {"counties":counties,"constituencies":constituencies,"wards":wards,"stations":stations}
+
 def _filter_register(members,filters):
  return [member for member in members if all(not filters.get(key) or station_key(member.get(key))==station_key(filters[key]) for key in filters)]
 
@@ -3501,9 +3516,9 @@ def admin_voters_register():
  filters=_register_filters()
  try:
   members,stats=combined_voters_register(); members=_filter_register(members,filters); groups=_register_station_groups(members)
-  return render_template("admin_voters_register.html",groups=groups,filters=filters,stats=stats,total=len(members),error=None)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=len(members),error=None)
  except Exception as exc:
-  return render_template("admin_voters_register.html",groups=[],filters=filters,stats={},total=0,error=str(exc)),502
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,error=str(exc)),502
 
 @app.get("/admin/voters-register.csv")
 def download_voters_register_csv():
