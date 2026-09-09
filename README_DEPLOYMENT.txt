@@ -1191,3 +1191,12 @@ The protected Admin Data Files page now includes Membership Registration (Kobo m
 Administrators can download the current membership_registration.csv and upload a validated
 replacement directly to the Kobo Membership Registration project's media. The upload uses
 MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN and invalidates the voting service's CSV cache.
+V23.10 - PROTECTED VOTERS REGISTER
+=================================
+
+- Adds Admin Data Files > Generate Voters Register for authorized administrators.
+- Combines live Kobo membership submissions with membership_registration.csv stored in Kobo media.
+- Uses National ID as the deduplication key; the newest live Kobo submission takes priority over a matching CSV row.
+- Provides county, constituency, ward and polling-station filters, an on-screen preview, a printable PDF and a CSV download.
+- Groups members by polling station and sorts names alphabetically within each station.
+- The PDF includes Member ID, full name, ODM registration number, electoral area, polling station, a physical-check column and page numbers.

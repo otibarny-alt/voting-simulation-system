@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Voters Register</title>
+ <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>
+ .register-admin{max-width:1500px;margin:28px auto;padding:0 18px}.register-panel{background:#fff;border:1px solid #ddd;border-radius:14px;padding:22px;margin-bottom:18px}.register-filters{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}.register-filters label{font-weight:800}.register-filters input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #aaa;border-radius:7px;margin-top:5px}.register-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}.register-button{display:inline-block;background:#111;color:#fff!important;border:3px solid #ef7d00;border-radius:8px;padding:10px 16px;font-weight:850;text-decoration:none;cursor:pointer}.register-button:hover,.register-button:focus{background:#ef7d00;color:#111!important}.register-summary{background:#fff6df;border:1px solid #d5a12d;border-radius:8px;padding:13px;margin:14px 0}.station{break-inside:avoid;margin:20px 0}.station h2{background:#ef7d00;padding:10px 12px;border-radius:7px;margin-bottom:8px}.station table{width:100%;border-collapse:collapse;font-size:14px}.station th,.station td{padding:8px;border:1px solid #ccc;text-align:left}.station th{background:#f1f3f5}.empty{padding:20px;text-align:center;color:#666}@media(max-width:850px){.register-filters{grid-template-columns:1fr}.station{overflow-x:auto}.station table{min-width:900px}}
+ </style>
+</head>
+<body>
+<header><b>Simulation Administration</b><a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><a href="/report-repository">Report Repository</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
+<main class="register-admin">
+ <h1>Voters Register</h1>
+ <p>Protected register for physical voter checks at polling centres. Use the filters to produce a smaller distribution copy.</p>
+ <section class="register-panel">
+  <form method="get">
+   <div class="register-filters">
+    <label>County<input name="county" value="{{ filters.county }}" placeholder="All counties"></label>
+    <label>Constituency<input name="constituency" value="{{ filters.constituency }}" placeholder="All constituencies"></label>
+    <label>Ward<input name="ward" value="{{ filters.ward }}" placeholder="All wards"></label>
+    <label>Polling station<input name="polling_station" value="{{ filters.polling_station }}" placeholder="All polling stations"></label>
+   </div>
+   <div class="register-actions"><button class="register-button" type="submit">Apply Filters</button><a class="register-button" href="{{ url_for('admin_voters_register') }}">Clear Filters</a></div>
+  </form>
+  {% if error %}<div class="register-summary"><b>Register could not be generated:</b> {{ error }}</div>{% else %}
+  <div class="register-summary"><b>{{ total }} members</b> in <b>{{ groups|length }} polling stations</b>. Source: {{ stats.kobo_submissions }} live Kobo submissions + {{ stats.csv_records }} CSV records; {{ stats.csv_added }} CSV-only members added.</div>
+  <div class="register-actions">
+   <a class="register-button" href="{{ url_for('download_voters_register_pdf', county=filters.county, constituency=filters.constituency, ward=filters.ward, polling_station=filters.polling_station) }}">Download Printable PDF</a>
+   <a class="register-button" href="{{ url_for('download_voters_register_csv', county=filters.county, constituency=filters.constituency, ward=filters.ward, polling_station=filters.polling_station) }}">Download CSV</a>
+  </div>
+  {% endif %}
+ </section>
+ {% if groups %}
+  {% for area, station_members in groups %}
+  <section class="register-panel station">
+   <h2>{{ area[3] or 'Polling station not specified' }} — {{ area[2] or 'Ward not specified' }}, {{ area[1] or 'Constituency not specified' }}, {{ area[0] or 'County not specified' }} ({{ station_members|length }})</h2>
+   <table><thead><tr><th>No.</th><th>Member ID</th><th>Full name</th><th>ODM registration no.</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th></tr></thead>
+   <tbody>{% for member in station_members %}<tr><td>{{ loop.index }}</td><td>{{ member.member_id }}</td><td>{{ member.full_name }}</td><td>{{ member.odm_registration_no }}</td><td>{{ member.county }}</td><td>{{ member.constituency }}</td><td>{{ member.ward }}</td><td>{{ member.polling_station }}</td></tr>{% endfor %}</tbody></table>
+  </section>
+  {% endfor %}
+ {% else %}<section class="register-panel empty">No members match the selected filters.</section>{% endif %}
+</main>
+</body></html>

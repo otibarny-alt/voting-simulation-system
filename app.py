@@ -13,6 +13,12 @@ from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file
 from markupsafe import escape
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -3252,6 +3258,93 @@ def replace_kobo_membership_csv(path):
  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
  return delete_failures
 
+def _all_kobo_membership_submissions():
+ if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN must be configured.")
+ rows=[]; url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/?limit=1000"
+ while url:
+  response=requests.get(url,headers=kobo_headers(),timeout=60); response.raise_for_status()
+  payload=response.json(); rows.extend(payload.get("results",[])); url=payload.get("next")
+ return rows
+
+def _register_member_from_kobo(row):
+ first=field(row,"members_particulars/first_name","members_particulars/first_name1","basics/first_name","first_name")
+ middle=field(row,"members_particulars/other_names","members_particulars/other_names1","members_particulars/middle_name","middle_name")
+ surname=field(row,"members_particulars/surname","members_particulars/surname1","basics/surname","surname")
+ full_name=" ".join(value for value in (first,middle,surname) if value).strip() or field(row,"stored_particulars_confirmed/full_name","full_name","name")
+ return {"member_id":field(row,"basics/national_id_no","national_id_no"),"full_name":full_name,
+  "odm_registration_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed","odm_membership_no"),
+  "county":field(row,"electorals_units/county","electorals_units/selected_county","electorals_units/county_name","county"),
+  "constituency":field(row,"electorals_units/constituency","electorals_units/selected_constituency","electorals_units/selected_constituency1","constituency"),
+  "ward":field(row,"electorals_units/ward","electorals_units/selected_ward","electorals_units/selected_ward1","ward"),
+  "polling_station":field(row,"electorals_units/poll_station_label","electorals_units/selected_poll_station1","stored_particulars_confirmed/selected_poll_station1_confirmed","poll_station"),
+  "submission_time":str(row.get("_submission_time") or ""),"source":"Kobo submission"}
+
+def _register_member_from_csv(row):
+ return {"member_id":str(row.get("national_id_no") or "").strip(),
+  "full_name":" ".join(str(row.get(key) or "").strip() for key in ("first_name","middle_name","surname") if str(row.get(key) or "").strip()),
+  "odm_registration_no":str(row.get("odm_membership_no") or "").strip(),"county":str(row.get("county") or "").strip(),
+  "constituency":str(row.get("constituency") or "").strip(),"ward":str(row.get("ward") or "").strip(),
+  "polling_station":str(row.get("poll_station") or "").strip(),"submission_time":"","source":MEMBERSHIP_CSV_FILENAME}
+
+def combined_voters_register():
+ """Merge both sources by National ID; the newest live Kobo record wins."""
+ kobo_rows=_all_kobo_membership_submissions(); newest={}
+ for raw in kobo_rows:
+  member=_register_member_from_kobo(raw); member_id=re.sub(r"\D","",member["member_id"])
+  if not member_id: continue
+  member["member_id"]=member_id; existing=newest.get(member_id)
+  if not existing or member["submission_time"]>=existing["submission_time"]: newest[member_id]=member
+ csv_rows=_load_membership_csv(); csv_added=0
+ for member_id,raw in csv_rows.items():
+  if member_id not in newest: newest[member_id]=_register_member_from_csv(raw); csv_added+=1
+ members=list(newest.values())
+ members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),station_key(member.get("full_name")),member.get("member_id","")))
+ return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"unique_members":len(members)}
+
+def _register_filters():
+ return {key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
+
+def _filter_register(members,filters):
+ return [member for member in members if all(not filters.get(key) or station_key(member.get(key))==station_key(filters[key]) for key in filters)]
+
+def _register_station_groups(members):
+ groups=[]
+ for member in members:
+  key=tuple(member.get(k,"") for k in ("county","constituency","ward","polling_station"))
+  if not groups or groups[-1][0]!=key: groups.append((key,[]))
+  groups[-1][1].append(member)
+ return groups
+
+def _safe_register_filename(filters,extension):
+ area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
+ area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "National"
+ return f"Voters_Register_{area}.{extension}"
+
+def _register_pdf(members,filters):
+ output=BytesIO(); page_width,_=landscape(A4); styles=getSampleStyleSheet()
+ title_style=ParagraphStyle("RegisterTitle",parent=styles["Title"],fontName="Helvetica-Bold",fontSize=16,leading=19,alignment=TA_CENTER,textColor=colors.HexColor("#14213d"),spaceAfter=6)
+ station_style=ParagraphStyle("Station",parent=styles["Heading2"],fontName="Helvetica-Bold",fontSize=12,leading=15,textColor=colors.HexColor("#111111"),spaceAfter=5)
+ small=ParagraphStyle("Small",parent=styles["BodyText"],fontName="Helvetica",fontSize=7.2,leading=8.5)
+ header=ParagraphStyle("Header",parent=small,fontName="Helvetica-Bold",textColor=colors.white,alignment=TA_CENTER)
+ def footer(canvas,doc):
+  canvas.saveState(); canvas.setFont("Helvetica",7); canvas.setFillColor(colors.HexColor("#555555")); canvas.drawString(12*mm,8*mm,"ODM Voters Register - Election Officials' Physical Verification Copy"); canvas.drawRightString(page_width-12*mm,8*mm,f"Page {doc.page}"); canvas.restoreState()
+ doc=SimpleDocTemplate(output,pagesize=landscape(A4),rightMargin=10*mm,leftMargin=10*mm,topMargin=10*mm,bottomMargin=13*mm,title="ODM Voters Register")
+ story=[]; groups=_register_station_groups(members)
+ for index,(area,station_members) in enumerate(groups):
+  county,constituency,ward,polling_station=area
+  story.extend([Paragraph("ODM VOTERS REGISTER",title_style),Paragraph(f"Polling Station: {escape(polling_station or 'Not specified')}",station_style),Paragraph(f"County: {escape(county or 'Not specified')} &nbsp;&nbsp; Constituency: {escape(constituency or 'Not specified')} &nbsp;&nbsp; Ward: {escape(ward or 'Not specified')} &nbsp;&nbsp; Registered members: {len(station_members):,}",small),Spacer(1,4*mm)])
+  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Checked")]]
+  for number,member in enumerate(station_members,1):
+   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],"")
+   data.append([Paragraph(escape(str(value or "")),small) for value in values])
+  table=Table(data,colWidths=[10*mm,22*mm,43*mm,30*mm,24*mm,31*mm,29*mm,50*mm,16*mm],repeatRows=1,hAlign="LEFT")
+  table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#9a9a9a")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")])]))
+  story.append(table)
+  if index<len(groups)-1: story.append(PageBreak())
+ if not groups: story=[Paragraph("ODM VOTERS REGISTER",title_style),Paragraph("No members matched the selected filters.",styles["BodyText"])]
+ doc.build(story,onFirstPage=footer,onLaterPages=footer); return output.getvalue()
+
 
 def validate_admin_csv(path,file_type):
  spec=DATA_FILE_SPECS[file_type]
@@ -3401,6 +3494,37 @@ def download_admin_data_file(file_type):
   return Response("Current data file is missing.",status=404,mimetype="text/plain")
  return send_file(path,mimetype="text/csv; charset=utf-8",as_attachment=True,
                   download_name=os.path.basename(path),conditional=True)
+
+@app.get("/admin/voters-register")
+def admin_voters_register():
+ if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters=_register_filters()
+ try:
+  members,stats=combined_voters_register(); members=_filter_register(members,filters); groups=_register_station_groups(members)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,stats=stats,total=len(members),error=None)
+ except Exception as exc:
+  return render_template("admin_voters_register.html",groups=[],filters=filters,stats={},total=0,error=str(exc)),502
+
+@app.get("/admin/voters-register.csv")
+def download_voters_register_csv():
+ if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters=_register_filters()
+ try:
+  members,_=combined_voters_register(); members=_filter_register(members,filters); output=StringIO(newline="")
+  columns=["member_id","full_name","odm_registration_no","county","constituency","ward","polling_station"]
+  writer=csv.DictWriter(output,fieldnames=columns); writer.writeheader()
+  for member in members: writer.writerow({key:member.get(key,"") for key in columns})
+  return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
+ except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
+
+@app.get("/admin/voters-register.pdf")
+def download_voters_register_pdf():
+ if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters=_register_filters()
+ try:
+  members,_=combined_voters_register(); members=_filter_register(members,filters); pdf=_register_pdf(members,filters)
+  return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=True,download_name=_safe_register_filename(filters,"pdf"),max_age=0)
+ except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
 
 @app.post("/report-repository/admin-logout")
 def repository_admin_logout():
