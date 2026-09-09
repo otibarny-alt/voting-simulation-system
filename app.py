@@ -3177,6 +3177,81 @@ DATA_FILE_SPECS={
  },
 }
 
+MEMBERSHIP_CSV_REQUIRED={
+ "national_id_no","phone_no","odm_membership_no","first_name","middle_name",
+ "surname","county","constituency","ward","poll_station","poll_station_code",
+ "member_id_photo","member_passport_photo"
+}
+
+def kobo_membership_media_files():
+ if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN must be configured.")
+ results=[]
+ url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
+ while url:
+  response=requests.get(url,headers=kobo_headers(),timeout=30)
+  response.raise_for_status()
+  payload=response.json()
+  results.extend(payload.get("results",[]))
+  url=payload.get("next")
+ return results
+
+def current_membership_csv_media():
+ matches=[]
+ for item in kobo_membership_media_files():
+  filename=str((item.get("metadata") or {}).get("filename") or "").strip()
+  if filename.lower()==MEMBERSHIP_CSV_FILENAME.lower():
+   matches.append(item)
+ if not matches:
+  return None
+ return sorted(matches,key=lambda item:str(item.get("date_created") or item.get("uid") or ""),reverse=True)[0]
+
+def validate_membership_csv(path):
+ with open(path,encoding="utf-8-sig",errors="strict",newline="") as source:
+  reader=csv.DictReader(source)
+  headers=set(reader.fieldnames or [])
+  missing=MEMBERSHIP_CSV_REQUIRED-headers
+  if missing:
+   raise ValueError("Missing required columns: "+", ".join(sorted(missing)))
+  rows=0; ids=set()
+  for row in reader:
+   rows+=1
+   national_id=re.sub(r"\D","",str(row.get("national_id_no") or ""))
+   if not re.fullmatch(r"\d{7,8}",national_id):
+    raise ValueError(f"Row {rows + 1} has an invalid National ID.")
+   if national_id in ids:
+    raise ValueError(f"Duplicate National ID found at row {rows + 1}.")
+   ids.add(national_id)
+  if rows<1:
+   raise ValueError("The uploaded CSV contains no data rows.")
+ return rows
+
+def replace_kobo_membership_csv(path):
+ old_files=[]
+ for item in kobo_membership_media_files():
+  filename=str((item.get("metadata") or {}).get("filename") or "").strip()
+  if filename.lower()==MEMBERSHIP_CSV_FILENAME.lower():
+   old_files.append(item)
+ endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
+ with open(path,"rb") as source:
+  response=requests.post(
+   endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
+   files={"content":(MEMBERSHIP_CSV_FILENAME,source,"text/csv")},timeout=90
+  )
+ response.raise_for_status()
+ new_item=response.json()
+ new_uid=str(new_item.get("uid") or "")
+ delete_failures=[]
+ for item in old_files:
+  uid=str(item.get("uid") or "")
+  if not uid or uid==new_uid:
+   continue
+  delete_response=requests.delete(f"{endpoint}{uid}/",headers=kobo_headers(),timeout=30)
+  if delete_response.status_code not in (200,202,204,404):
+   delete_failures.append(uid)
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+ return delete_failures
+
 
 def validate_admin_csv(path,file_type):
  spec=DATA_FILE_SPECS[file_type]
@@ -3220,11 +3295,30 @@ def admin_data_files():
   file_type=(request.form.get("file_type") or "").strip()
   spec=DATA_FILE_SPECS.get(file_type)
   upload=request.files.get("csv_file")
-  if not spec or not upload or not upload.filename:
+  is_membership=file_type=="membership_registration"
+  if (not spec and not is_membership) or not upload or not upload.filename:
    session["data_files_error"]="Select the CSV file to upload."
    return redirect(url_for("admin_data_files"))
   if not upload.filename.lower().endswith(".csv"):
    session["data_files_error"]="Only .csv files are accepted."
+   return redirect(url_for("admin_data_files"))
+
+  if is_membership:
+   fd,temp_path=tempfile.mkstemp(prefix="membership-upload-",suffix=".csv")
+   os.close(fd)
+   try:
+    upload.save(temp_path)
+    rows=validate_membership_csv(temp_path)
+    delete_failures=replace_kobo_membership_csv(temp_path)
+    if delete_failures:
+     session["data_files_message"]=f"Membership Registration CSV uploaded to Kobo ({rows:,} rows). Kobo retained {len(delete_failures)} older copy/copies that could not be removed."
+    else:
+     session["data_files_message"]=f"Membership Registration CSV replaced in Kobo media successfully ({rows:,} rows)."
+   except Exception as exc:
+    session["data_files_error"]=f"Membership CSV upload rejected: {exc}"
+   finally:
+    if os.path.exists(temp_path):
+     os.unlink(temp_path)
    return redirect(url_for("admin_data_files"))
 
   target=managed_data_file(spec["configured"]())
@@ -3258,6 +3352,22 @@ def admin_data_files():
    "size":os.path.getsize(path) if os.path.isfile(path) else 0,
    "modified":datetime.fromtimestamp(os.path.getmtime(path),KENYA_TZ).isoformat(timespec="seconds") if os.path.isfile(path) else "Missing"
   })
+ try:
+  membership_media=current_membership_csv_media()
+  metadata=(membership_media or {}).get("metadata") or {}
+  files.append({
+   "key":"membership_registration","label":"Membership Registration (Kobo media)",
+   "filename":metadata.get("filename") or MEMBERSHIP_CSV_FILENAME,
+   "size":int(metadata.get("size") or 0),
+   "modified":membership_media.get("date_created") if membership_media else "Missing from Kobo media",
+   "remote":True,
+  })
+ except Exception as exc:
+  files.append({
+   "key":"membership_registration","label":"Membership Registration (Kobo media)",
+   "filename":MEMBERSHIP_CSV_FILENAME,"size":0,
+   "modified":"Unable to read Kobo media: "+str(exc),"remote":True,
+  })
  return render_template(
  "admin_data_files.html",files=files,csrf_token=token,
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
@@ -3271,6 +3381,19 @@ def download_admin_data_file(file_type):
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=request.path))
  spec=DATA_FILE_SPECS.get((file_type or "").strip())
+ if (file_type or "").strip()=="membership_registration":
+  try:
+   media=current_membership_csv_media()
+   if not media or not media.get("content"):
+    return Response("membership_registration.csv is missing from Kobo media.",status=404,mimetype="text/plain")
+   upstream=requests.get(media["content"],headers=kobo_headers(),timeout=60)
+   upstream.raise_for_status()
+   return Response(upstream.content,mimetype="text/csv; charset=utf-8",headers={
+    "Content-Disposition":f'attachment; filename="{MEMBERSHIP_CSV_FILENAME}"',
+    "Cache-Control":"no-store",
+   })
+  except Exception as exc:
+   return Response(f"Unable to download membership CSV from Kobo: {exc}",status=502,mimetype="text/plain")
  if not spec:
   return Response("Unknown data file.",status=404,mimetype="text/plain")
  path=managed_data_file(spec["configured"]())

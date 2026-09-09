@@ -1184,3 +1184,10 @@ when their filenames are present in the CSV and the image files exist in Kobo me
 Optional Render variables:
 MEMBERSHIP_CSV_FILENAME=membership_registration.csv
 MEMBERSHIP_CSV_CACHE_SECONDS=300
+
+V23.09 — CENTRAL KOBO MEMBERSHIP CSV ADMINISTRATION
+
+The protected Admin Data Files page now includes Membership Registration (Kobo media).
+Administrators can download the current membership_registration.csv and upload a validated
+replacement directly to the Kobo Membership Registration project's media. The upload uses
+MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN and invalidates the voting service's CSV cache.

@@ -13,7 +13,7 @@
 <header><b>Simulation Administration</b><a href="/">Training Ballot</a><a href="/report-repository">Report Repository</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
 <main class="data-admin">
  <h1>Admin Data Files</h1>
- <p>Manually replace the electoral hierarchy or agents polling-register CSV. The system validates the structure and creates a backup before activating a replacement.</p>
+ <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
  <section class="data-panel">
   <h2>Voter Verification Administration</h2>
   <p>Open the protected management facilities hosted by the Voter Verification System.</p>
@@ -44,12 +44,13 @@
  <section class="data-panel">
   <h2>{{ file.label }}</h2>
   <div class="data-current"><b>Current file:</b> {{ file.filename }}<small>Size: {{ "%.2f"|format(file.size / 1048576) }} MB &nbsp;·&nbsp; Last modified: {{ file.modified }}</small></div>
-  <form class="data-upload" method="post" enctype="multipart/form-data" onsubmit="return confirm('Replace {{ file.filename|e }} with the selected validated CSV?');">
+  <form class="data-upload" method="post" enctype="multipart/form-data" onsubmit="return confirm('Replace {{ file.filename|e }} with the selected validated CSV?{% if file.remote %} This updates the Membership Registration project in Kobo.{% endif %}');">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
    <input type="hidden" name="file_type" value="{{ file.key }}">
    <label><b>Select replacement {{ file.filename }}</b></label>
    <input type="file" name="csv_file" accept=".csv,text/csv" required>
    <div class="data-actions"><button type="submit">Validate and Replace {{ file.filename }}</button><a class="download-current" href="{{ url_for('download_admin_data_file',file_type=file.key) }}">Download Current {{ file.filename }}</a></div>
+   {% if file.remote %}<small>This file is read from and written directly to the Membership Registration project’s Kobo media.</small>{% endif %}
   </form>
  </section>
  {% endfor %}
