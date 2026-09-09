@@ -1173,3 +1173,14 @@ V23.07 update - centralized candidate administration link
 - Added Candidate Registration Administration to the protected Admin Data Files page.
 - The Manage Candidate Applications button opens the candidate portal administrator login in a new tab.
 - Uses the existing CANDIDATE_PORTAL_BASE_URL setting; no additional environment variable is required.
+V23.08 — KOBO MEDIA MEMBERSHIP FALLBACK
+
+Voting-terminal membership lookup now checks live Kobo submissions first and then
+membership_registration.csv in the Membership Registration project's Kobo media.
+The voter is reported as unregistered only when neither source contains the National ID.
+CSV matches retain the existing polling-station restriction and can show media photos
+when their filenames are present in the CSV and the image files exist in Kobo media.
+
+Optional Render variables:
+MEMBERSHIP_CSV_FILENAME=membership_registration.csv
+MEMBERSHIP_CSV_CACHE_SECONDS=300

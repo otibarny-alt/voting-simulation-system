@@ -6,7 +6,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
 from email.message import EmailMessage
-from io import BytesIO
+from io import BytesIO, StringIO
 from urllib.parse import urljoin
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
@@ -85,6 +85,9 @@ REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_repo
 KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip("/")
 MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
+MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_registration.csv").strip()
+MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
+_MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "media": {}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -857,7 +860,7 @@ def field(row,*names):
 def station_key(v):
  return re.sub(r"[^a-z0-9]+","_",str(v or "").strip().lower()).strip("_")
 
-def lookup_member(national_id):
+def _lookup_member_kobo(national_id):
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
   raise RuntimeError("ODM membership connection is not configured.")
  url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/"
@@ -871,6 +874,89 @@ def lookup_member(national_id):
  # Most recent matching submission if duplicates exist.
  rows=sorted(rows,key=lambda x:x.get("_id",0),reverse=True)
  return rows[0]
+
+def _kobo_media_files():
+ results=[]
+ url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
+ while url:
+  r=requests.get(url,headers=kobo_headers(),timeout=30)
+  r.raise_for_status()
+  payload=r.json()
+  results.extend(payload.get("results",[]))
+  url=payload.get("next")
+ return results
+
+def _load_membership_csv():
+ now=time.time()
+ if _MEMBERSHIP_CSV_CACHE["rows"] and now-_MEMBERSHIP_CSV_CACHE["loaded_at"]<MEMBERSHIP_CSV_CACHE_SECONDS:
+  return _MEMBERSHIP_CSV_CACHE["rows"]
+ content=None
+ media={}
+ media_error=None
+ if MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN:
+  try:
+   for item in _kobo_media_files():
+    filename=str((item.get("metadata") or {}).get("filename") or "").strip()
+    if filename:
+     media[filename.replace("\\","/").split("/")[-1].lower()]=item
+   csv_item=media.get(MEMBERSHIP_CSV_FILENAME.lower())
+   if csv_item and csv_item.get("content"):
+    r=requests.get(csv_item["content"],headers=kobo_headers(),timeout=60)
+    r.raise_for_status()
+    content=r.content
+  except Exception as exc:
+   media_error=exc
+ if content is None:
+  local_path=os.path.join(app.root_path,MEMBERSHIP_CSV_FILENAME)
+  if os.path.isfile(local_path):
+   with open(local_path,"rb") as source:
+    content=source.read()
+  elif media_error:
+   raise RuntimeError(f"Unable to load {MEMBERSHIP_CSV_FILENAME} from Kobo media: {media_error}")
+  else:
+   return {}
+ rows={}
+ for raw in csv.DictReader(StringIO(content.decode("utf-8-sig",errors="replace"))):
+  row={str(k or "").strip():("" if v is None else str(v).strip()) for k,v in raw.items()}
+  national_id=re.sub(r"\D","",row.get("national_id_no",""))
+  if national_id:
+   rows[national_id]=row
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=now,rows=rows,media=media)
+ return rows
+
+def _membership_csv_row(national_id):
+ row=_load_membership_csv().get(re.sub(r"\D","",str(national_id or "")))
+ if not row:
+  return None
+ return {
+  "_id":"membership-csv:"+row.get("national_id_no",""),
+  "_membership_source":MEMBERSHIP_CSV_FILENAME,
+  "basics/national_id_no":row.get("national_id_no",""),
+  "members_particulars/first_name":row.get("first_name",""),
+  "members_particulars/other_names":row.get("middle_name",""),
+  "members_particulars/surname":row.get("surname",""),
+  "members_particulars/odm_membership_no":row.get("odm_membership_no",""),
+  "electorals_units/selected_poll_station1":row.get("poll_station",""),
+  "electorals_units/poll_station_label":row.get("poll_station",""),
+  "basics/id_photo":row.get("member_id_photo",""),
+  "basics/passport_photo":row.get("member_passport_photo",""),
+ }
+
+def lookup_member(national_id):
+ """Prefer live Kobo and use membership_registration.csv as the fallback."""
+ live_error=None
+ try:
+  row=_lookup_member_kobo(national_id)
+  if row:
+   return row
+ except Exception as exc:
+  live_error=exc
+ row=_membership_csv_row(national_id)
+ if row:
+  return row
+ if live_error:
+  raise live_error
+ return None
 
 def member_view(row):
  first=field(row,"members_particulars/first_name","members_particulars/first_name1")
@@ -1450,10 +1536,10 @@ def start():
  try:
   row=lookup_member(voter)
  except Exception as e:
-  return render_template("verify.html",error=f"Unable to verify voter from ODM Membership Portal: {e}")
+  return render_template("verify.html",error=f"Unable to verify voter from the membership lookup sources: {e}")
 
  if not row:
-  return render_template("verify.html",error=f"National ID {voter} was not found in the ODM Membership Registration Database.")
+  return render_template("verify.html",error=f"National ID {voter} was not found in Kobo submissions or membership_registration.csv.")
 
  member=member_view(row)
 
@@ -1527,15 +1613,22 @@ def cancel_member():
  session.clear()
  return redirect(url_for("home"))
 
-@app.get("/membership-photo/<int:submission_id>/<kind>")
+@app.get("/membership-photo/<submission_id>/<kind>")
 def membership_photo(submission_id,kind):
  if kind not in ("id","passport"):
   return Response(status=404)
- if session.get("membership_submission_id")!=submission_id:
+ if str(session.get("membership_submission_id"))!=str(submission_id):
   return Response(status=403)
  try:
-  row=submission_detail(submission_id)
-  media=attachment_url(row,kind)
+  if str(submission_id).startswith("membership-csv:"):
+   national_id=str(submission_id).split(":",1)[1]
+   row=_membership_csv_row(national_id) or {}
+   filename=field(row,"basics/id_photo" if kind=="id" else "basics/passport_photo")
+   item=_MEMBERSHIP_CSV_CACHE["media"].get(filename.replace("\\","/").split("/")[-1].lower()) if filename else None
+   media=item.get("content") if item else None
+  else:
+   row=submission_detail(submission_id)
+   media=attachment_url(row,kind)
   if not media:
    return Response(status=404)
   r=requests.get(media,headers=kobo_headers(),timeout=25,stream=True)
