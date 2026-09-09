@@ -1168,3 +1168,8 @@ V23.06 update - scoped catalogue recovery
 - Candidate positions supplied as full labels (including Member of County Assembly and Member of National Assembly) are normalized to their dashboard categories.
 - Local-position feeds retry the candidate-registration catalogue using the exact county, constituency and ward present in vote events.
 - This supports candidate services that return ward or constituency candidates only when the electoral area is provided.
+V23.07 update - centralized candidate administration link
+--------------------------------------------------------
+- Added Candidate Registration Administration to the protected Admin Data Files page.
+- The Manage Candidate Applications button opens the candidate portal administrator login in a new tab.
+- Uses the existing CANDIDATE_PORTAL_BASE_URL setting; no additional environment variable is required.

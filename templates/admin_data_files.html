@@ -26,6 +26,17 @@
   <div class="data-warning">Set <code>VOTER_VERIFICATION_BASE_URL</code> to enable the voter-verification administration links.</div>
   {% endif %}
  </section>
+ <section class="data-panel">
+  <h2>Candidate Registration Administration</h2>
+  <p>Open the protected candidate application, approval and registration management portal.</p>
+  {% if candidate_portal_base_url %}
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ candidate_portal_base_url }}/login" target="_blank" rel="noopener">Manage Candidate Applications</a>
+  </div>
+  {% else %}
+  <div class="data-warning">Set <code>CANDIDATE_PORTAL_BASE_URL</code> to enable the candidate-registration administration link.</div>
+  {% endif %}
+ </section>
  {% if not persistent %}<div class="data-warning"><b>Persistence warning:</b> no <code>DATA_UPLOAD_DIR</code> is configured. Uploaded files work immediately but may be lost when Render restarts or redeploys the service. Attach a persistent disk and set <code>DATA_UPLOAD_DIR</code> to its mount path.</div>{% endif %}
  {% if message %}<div class="data-message data-success">{{ message }}</div>{% endif %}
  {% if error %}<div class="data-message data-error">{{ error }}</div>{% endif %}

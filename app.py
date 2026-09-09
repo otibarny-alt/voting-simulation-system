@@ -1,4 +1,4 @@
-# V23.06: dashboard catalogues support position aliases and electoral-area candidate queries.
+# V23.07: central admin page links to candidate registration administration.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
 import requests
 import psycopg
@@ -3166,9 +3166,10 @@ def admin_data_files():
    "modified":datetime.fromtimestamp(os.path.getmtime(path),KENYA_TZ).isoformat(timespec="seconds") if os.path.isfile(path) else "Missing"
   })
  return render_template(
-  "admin_data_files.html",files=files,csrf_token=token,
+ "admin_data_files.html",files=files,csrf_token=token,
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
-  persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL
+  persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL,
+  candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL
  )
 
 
