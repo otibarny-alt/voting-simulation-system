@@ -44,6 +44,13 @@
    <a class="verification-admin-link" href="{{ url_for('admin_voters_register') }}">Generate Voters Register</a>
   </div>
  </section>
+ <section class="data-panel">
+  <h2>Winners and Runners-up</h2>
+  <p>View the leading candidates, votes and percentage of valid candidate votes for every election category and elective area.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('admin_winners_runners_up') }}">Open Winners &amp; Runners-up Report</a>
+  </div>
+ </section>
  {% if not persistent %}<div class="data-warning"><b>Persistence warning:</b> no <code>DATA_UPLOAD_DIR</code> is configured. Uploaded files work immediately but may be lost when Render restarts or redeploys the service. Attach a persistent disk and set <code>DATA_UPLOAD_DIR</code> to its mount path.</div>{% endif %}
  {% if message %}<div class="data-message data-success">{{ message }}</div>{% endif %}
  {% if error %}<div class="data-message data-error">{{ error }}</div>{% endif %}

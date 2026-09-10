@@ -1218,3 +1218,12 @@ V23.13 - VOTERS REGISTER SERVER ERROR FIX
 - Replaces per-voter full hierarchy scans with a cached county_main.csv geography index.
 - Prevents Render worker exhaustion/timeouts while reconciling voter geography.
 - Invalidates and rebuilds the index automatically whenever county_main.csv is replaced.
+V23.14 - WINNERS AND RUNNERS-UP ADMIN REPORT
+===========================================
+
+- Adds a protected Winners and Runners-up link to the centralized Admin Data Files page.
+- Covers President, Governor, Senator, Women Representative, MNA and MCA contests at their correct elective-area levels.
+- Shows candidate ID, candidate name, votes, percentage of valid candidate votes and total valid votes.
+- Includes accepted zero-vote candidates when determining the runner-up and marks all-zero contests as No result.
+- Identifies joint winners and joint runners-up when votes are tied.
+- Provides browser printing/PDF saving and a CSV download.

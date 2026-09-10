@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Winners and Runners-up</title>
+ <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>
+ .leaders-admin{max-width:1450px;margin:28px auto;padding:0 18px}.leaders-panel{background:#fff;border:1px solid #ddd;border-radius:14px;padding:22px;margin-bottom:20px}.leaders-head{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}.leaders-actions{display:flex;gap:10px;flex-wrap:wrap}.leaders-button{display:inline-block;background:#111;color:#fff!important;border:3px solid #ef7d00;border-radius:8px;padding:10px 16px;font-weight:850;text-decoration:none;cursor:pointer}.leaders-button:hover,.leaders-button:focus{background:#ef7d00;color:#111!important}.leaders-table{width:100%;border-collapse:collapse;margin-top:14px}.leaders-table th,.leaders-table td{padding:11px;border:1px solid #ccc;text-align:left}.leaders-table th{background:#172033;color:#fff}.leaders-table .winner{background:#e7f6eb}.leaders-table .runner{background:#fff5df}.category-title{background:#ef7d00;border-radius:8px;padding:12px 15px;margin:0}.empty{padding:16px;color:#666}.error{background:#fdecec;border:1px solid #c75b5b;padding:14px;border-radius:8px}@media(max-width:800px){.leaders-panel{overflow-x:auto}.leaders-table{min-width:850px}}@media print{header,.leaders-actions{display:none}.leaders-admin{max-width:none;margin:0;padding:0}.leaders-panel{break-inside:avoid;border:0;padding:8px}.leaders-table{font-size:10pt}}
+ </style>
+</head>
+<body>
+<header><b>Simulation Administration</b><a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><a href="/report-repository">Report Repository</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
+<main class="leaders-admin">
+ <div class="leaders-head"><div><h1>Winners and Runners-up</h1><p>Generated {{ generated_at }} · Percentages use valid candidate votes within each contest.</p></div><div class="leaders-actions"><button class="leaders-button" onclick="window.print()">Print / Save PDF</button><a class="leaders-button" href="{{ url_for('download_winners_runners_up_csv') }}">Download CSV</a></div></div>
+ {% if error %}<div class="error"><b>Report could not be generated:</b> {{ error }}</div>{% endif %}
+ {% for section in sections %}
+ <section class="leaders-panel">
+  <h2 class="category-title">{{ section.title }}</h2>
+  {% if section.contests %}
+  <table class="leaders-table"><thead><tr><th>Elective area</th><th>Position</th><th>Candidate ID</th><th>Candidate</th><th>Votes</th><th>Vote share</th><th>Total valid votes</th></tr></thead><tbody>
+  {% for contest in section.contests %}
+   {% if contest.leaders %}{% for leader in contest.leaders %}<tr class="{{ 'winner' if leader.rank == 1 else ('runner' if leader.rank == 2 else '') }}"><td>{{ contest.area_label }}</td><td><b>{{ leader.result }}</b></td><td>{{ leader.candidate_id }}</td><td>{{ leader.name }}</td><td>{{ "{:,}".format(leader.votes) }}</td><td>{{ "%.2f"|format(leader.share) }}%</td><td>{{ "{:,}".format(contest.total_votes) }}</td></tr>{% endfor %}
+   {% else %}<tr><td colspan="7">{{ contest.area_label }} — no candidate votes recorded</td></tr>{% endif %}
+  {% endfor %}
+  </tbody></table>
+  {% else %}<div class="empty">No candidate votes have been recorded for this category.</div>{% endif %}
+ </section>
+ {% endfor %}
+</main>
+</body></html>
