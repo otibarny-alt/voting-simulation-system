@@ -118,6 +118,20 @@ Registered Voters per polling station, and Votes Not Cast. Detailed stream and s
 are also shown. Polling-station registered totals include all streams belonging to the station.
 TRAINING / SIMULATION ONLY.
 
+V23.17 — STREAM OPENING STABILITY AND FASTER BALLOTS
+- Fixes an unhandled PostgreSQL lookup failure at POST /stream/open that could
+  display a generic Internal Server Error before a stream was opened.
+- Lock tables now initialize lazily after a temporary startup database failure.
+- Local zero-vote and stream-state errors return a controlled retry message and
+  do not open, release or reset the selected stream.
+- Candidate catalogues are cached briefly so the six ballot pages do not repeat
+  the same remote candidate-portal request for every category.
+- Optional performance setting: CANDIDATE_CATALOG_CACHE_SECONDS=60.
+- On Render persistent disk deployments also set:
+  DATA_UPLOAD_DIR=/var/data
+  DEMO_DB_PATH=/var/data/training_votes.db
+TRAINING / SIMULATION ONLY.
+
 V23.16 — PROTECTED USER MANUAL
 - Adds a protected System User Manual section to Admin Data Files.
 - View User Manual opens an administrator-only online operating guide.

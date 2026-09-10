@@ -1,5 +1,5 @@
 # V23.07: central admin page links to candidate registration administration.
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -95,6 +95,7 @@ MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_regis
 MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
 _MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "media": {}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
+CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 ELECTION_ID = os.getenv("ELECTION_ID", "ODM_INTERNAL_NOMINATIONS").strip()
@@ -166,7 +167,15 @@ def official_close_reached():
 def close_time_message():
  return "08:00 (8:00 AM) Africa/Nairobi"
 
+_CANDIDATE_CATALOG_CACHE={}
+_CANDIDATE_CATALOG_CACHE_LOCK=threading.Lock()
+
 def candidate_portal_catalog(geo):
+ cache_key=tuple(norm_key(geo.get(k,"")) for k in ("county","constituency","ward"))
+ now=time.monotonic()
+ cached=_CANDIDATE_CATALOG_CACHE.get(cache_key)
+ if cached and now-cached[0] < CANDIDATE_CATALOG_CACHE_SECONDS:
+  return copy.deepcopy(cached[1])
  if not CANDIDATE_PORTAL_BASE_URL:
   raise RuntimeError("Candidate Portal connection is not configured.")
  r=requests.get(
@@ -176,7 +185,7 @@ def candidate_portal_catalog(geo):
    "constituency":geo.get("constituency",""),
    "ward":geo.get("ward","")
   },
-  timeout=20
+  timeout=(4,10)
  )
  r.raise_for_status()
  payload=r.json()
@@ -213,6 +222,8 @@ def candidate_portal_catalog(geo):
   catalog[key].sort(key=lambda x:(x["name"].lower(),x["candidate_id"]))
   for idx,cand in enumerate(catalog[key],start=1):
    cand["slot"]=idx
+ with _CANDIDATE_CATALOG_CACHE_LOCK:
+  _CANDIDATE_CATALOG_CACHE[cache_key]=(time.monotonic(),copy.deepcopy(catalog))
  return catalog
 
 def election_with_candidates(step,geo):
@@ -505,6 +516,7 @@ def mark_shared_voter_voted(national_id,poll_station):
 def global_lock_row(session_date,poll_station,stream):
  if not DATABASE_URL:
   return None
+ init_global_lock_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
@@ -521,6 +533,7 @@ def claim_global_lock(lock_data, owner_token):
  """
  if not DATABASE_URL:
   raise RuntimeError("Global device locking is not configured. Set DATABASE_URL to Render PostgreSQL.")
+ init_global_lock_db()
  now=datetime.now().astimezone().isoformat(timespec="seconds")
  th=token_hash(owner_token)
  with lock_db() as conn:
@@ -1253,8 +1266,25 @@ def admin_reopen_stream():
 def open_stream():
  f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
 
+ if not ps or not st:
+  return render_template(
+   "stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="OPENING BLOCKED: select a polling station and stream, then try again."
+  ),400
+
  # A formally closed stream can only be reopened through the authenticated administrator override.
- previous_session=stream_session(ps,st)
+ try:
+  previous_session=stream_session(ps,st)
+ except Exception as exc:
+  app.logger.exception("Could not read local stream state for %s / %s",ps,st)
+  return render_template(
+   "stream_control.html",row=None,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"OPENING TEMPORARILY UNAVAILABLE: the terminal stream database did not respond. Wait a few seconds and retry. {exc}"
+  ),503
  if previous_session and previous_session["closed_at"]:
   return render_template(
    "stream_control.html",row=previous_session,poll_station=ps,stream=st,
@@ -1264,7 +1294,16 @@ def open_stream():
    can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
 
- central_existing=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
+ try:
+  central_existing=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
+ except Exception as exc:
+  app.logger.exception("Could not read central lock state for %s / %s",ps,st)
+  return render_template(
+   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"OPENING TEMPORARILY UNAVAILABLE: the central lock service did not respond. No stream was opened or reset. Wait a few seconds and retry. {exc}"
+  ),503
  if central_existing and central_existing.get("closed_at"):
   return render_template(
    "stream_control.html",row=previous_session,poll_station=ps,stream=st,
@@ -1286,16 +1325,25 @@ def open_stream():
    error="This device is already centrally locked to another polling-station stream. Use the owner-device reset procedure first."
   )
 
- c=con()
- precast=c.execute("SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
+ c=None
+ try:
+  c=con()
+  precast=c.execute("SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
+ except Exception as exc:
+  app.logger.exception("Could not complete pre-cast check for %s / %s",ps,st)
+  return render_template(
+   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"OPENING TEMPORARILY UNAVAILABLE: the zero-vote check could not be completed. No stream was opened or reset. Wait a few seconds and retry. {exc}"
+  ),503
+ finally:
+  if c is not None:c.close()
  if precast:
-  c.close()
   return render_template("stream_control.html",row=None,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
- c.close()
-
  lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
             "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,
             "poll_station_code":f.get("poll_station_code","").strip(),"session_date":today_iso()}
