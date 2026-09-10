@@ -769,6 +769,7 @@ def hierarchy_rows():
 # browser just to populate the first County dropdown.
 _HIERARCHY_CACHE = None
 _HIERARCHY_LOCK = threading.Lock()
+_REGISTER_GEO_INDEX = None
 
 def _hierarchy_cache():
  global _HIERARCHY_CACHE
@@ -3289,38 +3290,44 @@ def _register_member_from_csv(row):
 
 def _enrich_register_geography(member):
  """Fill/canonicalize a member's electoral labels from county_main.csv."""
- hierarchy=_hierarchy_cache()
- def match(rows,value):
-  wanted=station_key(value)
-  return next((row for row in rows if wanted and wanted in (station_key(row.get("name")),station_key(row.get("label")))),None)
- county=match(hierarchy["counties"],member.get("county"))
- all_constituencies=[row for rows in hierarchy["constituencies"].values() for row in rows]
- constituency=match(all_constituencies,member.get("constituency"))
- if constituency:
-  county=next((row for row in hierarchy["counties"] if norm_key(row.get("name"))==norm_key(constituency.get("county_key"))),county)
- all_wards=[row for rows in hierarchy["wards"].values() for row in rows]
- ward_candidates=[row for row in all_wards if station_key(member.get("ward")) in (station_key(row.get("name")),station_key(row.get("label")))]
- if constituency:
-  narrowed=[row for row in ward_candidates if norm_key(row.get("constituency_key"))==norm_key(constituency.get("name"))]
-  ward=(narrowed or ward_candidates or [None])[0]
- else:
-  ward=(ward_candidates or [None])[0]
-  if ward:
-   constituency=match(all_constituencies,ward.get("constituency_key"))
-   if constituency:
-    county=match(hierarchy["counties"],constituency.get("county_key"))
- stations=[row for rows in hierarchy["poll_stations"].values() for row in rows]
- station_candidates=[row for row in stations if station_key(member.get("polling_station")) in (station_key(row.get("name")),station_key(row.get("label")))]
- if ward:
-  narrowed=[row for row in station_candidates if norm_key(row.get("ward_key"))==norm_key(ward.get("name"))]
-  station=(narrowed or station_candidates or [None])[0]
- else:
-  station=(station_candidates or [None])[0]
+ index=_register_geography_index()
+ def first(kind,value,parent_key="",parent_field=""):
+  candidates=index[kind].get(station_key(value),[])
+  if parent_key and parent_field:
+   narrowed=[row for row in candidates if norm_key(row.get(parent_field))==norm_key(parent_key)]
+   if narrowed: candidates=narrowed
+  return candidates[0] if candidates else None
+ county=first("counties",member.get("county"))
+ constituency=first("constituencies",member.get("constituency"),(county or {}).get("name"),"county_key")
+ ward=first("wards",member.get("ward"),(constituency or {}).get("name"),"constituency_key")
+ station=first("stations",member.get("polling_station"),(ward or {}).get("name"),"ward_key")
+ if not ward and station: ward=first("wards",station.get("ward_key"))
+ if not constituency and ward: constituency=first("constituencies",ward.get("constituency_key"))
+ if not county and constituency: county=first("counties",constituency.get("county_key"))
  if county: member["county"]=county.get("label") or member.get("county","")
  if constituency: member["constituency"]=constituency.get("label") or member.get("constituency","")
  if ward: member["ward"]=ward.get("label") or member.get("ward","")
  if station: member["polling_station"]=station.get("label") or member.get("polling_station","")
  return member
+
+def _register_geography_index():
+ """Build the register's hierarchy lookups once per worker, not once per voter."""
+ global _REGISTER_GEO_INDEX
+ if _REGISTER_GEO_INDEX is not None: return _REGISTER_GEO_INDEX
+ hierarchy=_hierarchy_cache()
+ index={"counties":{},"constituencies":{},"wards":{},"stations":{}}
+ sources={
+  "counties":hierarchy["counties"],
+  "constituencies":[row for rows in hierarchy["constituencies"].values() for row in rows],
+  "wards":[row for rows in hierarchy["wards"].values() for row in rows],
+  "stations":[row for rows in hierarchy["poll_stations"].values() for row in rows],
+ }
+ for kind,rows in sources.items():
+  for row in rows:
+   for alias in {station_key(row.get("name")),station_key(row.get("label"))}:
+    if alias: index[kind].setdefault(alias,[]).append(row)
+ _REGISTER_GEO_INDEX=index
+ return index
 
 def combined_voters_register():
  """Merge both sources by National ID; the newest live Kobo record wins."""
@@ -3426,7 +3433,7 @@ def validate_admin_csv(path,file_type):
 
 @app.route("/admin/data-files",methods=["GET","POST"])
 def admin_data_files():
- global _HIERARCHY_CACHE
+ global _HIERARCHY_CACHE,_REGISTER_GEO_INDEX
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
 
@@ -3485,6 +3492,7 @@ def admin_data_files():
    if file_type=="county_main":
     with _HIERARCHY_LOCK:
      _HIERARCHY_CACHE=None
+     _REGISTER_GEO_INDEX=None
    session["data_files_message"]=f"{spec['label']} CSV replaced successfully ({rows:,} rows)."
   except Exception as exc:
    if os.path.exists(temp_path):

@@ -1212,3 +1212,9 @@ V23.12 - VOTERS REGISTER GEOGRAPHY RECONCILIATION
 - Merges matching Kobo and membership CSV records field by field instead of allowing blank Kobo geography to replace populated CSV values.
 - Recognizes additional Kobo county, constituency and ward field-name variants.
 - Uses county_main.csv to restore and standardize missing electoral-area labels from known constituency, ward and polling-station relationships.
+V23.13 - VOTERS REGISTER SERVER ERROR FIX
+=========================================
+
+- Replaces per-voter full hierarchy scans with a cached county_main.csv geography index.
+- Prevents Render worker exhaustion/timeouts while reconciling voter geography.
+- Invalidates and rebuilds the index automatically whenever county_main.csv is replaced.
