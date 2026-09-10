@@ -3411,18 +3411,21 @@ def _winner_area_label(area_fields,area):
  values=[str(area.get(field) or "").strip() for field in area_fields]
  return " / ".join(value or f"{field.replace('_',' ').title()} not specified" for field,value in zip(area_fields,values))
 
-def winners_and_runners_up_report():
+def winners_and_runners_up_report(filters=None):
+ filters=filters or {}
  sections=[]
  try: registered_catalog=candidate_portal_catalog({})
  except Exception as exc:
   app.logger.warning("Candidate catalogue unavailable for winners report; using stored vote candidates: %s",exc)
   registered_catalog={key:[] for key,_,_ in ELECTIONS}
  for election,title,area_fields in WINNERS_REPORT_ELECTIONS:
+  county_filter=(filters.get(f"{election}_county") or "").strip() if election in ("mna","mca") else ""
   contests={}
   for row in _winner_source_rows(election):
    cid=str(row["candidate_id"] or "").strip()
    if not cid or cid=="__SKIP__": continue
    area={field:str(row[field] or "").strip() for field in area_fields}
+   if county_filter and station_key(area.get("county"))!=station_key(county_filter): continue
    area_key=tuple(station_key(area[field]) for field in area_fields)
    contest=contests.setdefault(area_key,{"area":area,"candidates":{}})
    candidate=contest["candidates"].setdefault(cid,{"candidate_id":cid,"name":str(row["candidate_name"] or cid).strip(),"votes":0})
@@ -3433,6 +3436,7 @@ def winners_and_runners_up_report():
    if not cid: continue
    area={field:str(candidate.get(field) or "").strip() for field in area_fields}
    if area_fields and any(not area[field] for field in area_fields): continue
+   if county_filter and station_key(area.get("county"))!=station_key(county_filter): continue
    area_key=tuple(station_key(area[field]) for field in area_fields)
    contest=contests.setdefault(area_key,{"area":area,"candidates":{}})
    contest["candidates"].setdefault(cid,{"candidate_id":cid,"name":str(candidate.get("name") or cid).strip(),"votes":0})
@@ -3455,7 +3459,7 @@ def winners_and_runners_up_report():
     leaders.append({**item,"rank":rank,"result":result,"share":round((item["votes"]*100/total),2) if total else 0.0})
    results.append({"area":contest["area"],"area_label":_winner_area_label(area_fields,contest["area"]),"total_votes":total,"leaders":leaders})
   results.sort(key=lambda item:tuple(station_key(item["area"].get(field)) for field in area_fields))
-  sections.append({"election":election,"title":title,"contests":results,"contest_count":len(results)})
+  sections.append({"election":election,"title":title,"contests":results,"contest_count":len(results),"county_filter":county_filter})
  return sections
 
 def _register_pdf(members,filters):
@@ -3667,20 +3671,23 @@ def download_voters_register_pdf():
 @app.get("/admin/winners-runners-up")
 def admin_winners_runners_up():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters={key:(request.args.get(key) or "").strip() for key in ("mna_county","mca_county")}
+ counties=_hierarchy_cache()["counties"]
  try:
-  sections=winners_and_runners_up_report()
-  return render_template("admin_winners_runners_up.html",sections=sections,error=None,generated_at=kenya_now().strftime("%d %B %Y, %H:%M"))
+  sections=winners_and_runners_up_report(filters)
+  return render_template("admin_winners_runners_up.html",sections=sections,filters=filters,counties=counties,error=None,generated_at=kenya_now().strftime("%d %B %Y, %H:%M"))
  except Exception as exc:
   app.logger.exception("Unable to generate winners and runners-up report")
-  return render_template("admin_winners_runners_up.html",sections=[],error=str(exc),generated_at=kenya_now().strftime("%d %B %Y, %H:%M")),502
+  return render_template("admin_winners_runners_up.html",sections=[],filters=filters,counties=counties,error=str(exc),generated_at=kenya_now().strftime("%d %B %Y, %H:%M")),502
 
 @app.get("/admin/winners-runners-up.csv")
 def download_winners_runners_up_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters={key:(request.args.get(key) or "").strip() for key in ("mna_county","mca_county")}
  try:
   output=StringIO(newline=""); columns=["category","elective_area","position","candidate_id","candidate_name","votes","vote_share_percent","total_valid_votes"]
   writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
-  for section in winners_and_runners_up_report():
+  for section in winners_and_runners_up_report(filters):
    for contest in section["contests"]:
     for leader in contest["leaders"]:
      writer.writerow({"category":section["title"],"elective_area":contest["area_label"],"position":leader["result"],"candidate_id":leader["candidate_id"],"candidate_name":leader["name"],"votes":leader["votes"],"vote_share_percent":f'{leader["share"]:.2f}',"total_valid_votes":contest["total_votes"]})

@@ -1227,3 +1227,10 @@ V23.14 - WINNERS AND RUNNERS-UP ADMIN REPORT
 - Includes accepted zero-vote candidates when determining the runner-up and marks all-zero contests as No result.
 - Identifies joint winners and joint runners-up when votes are tied.
 - Provides browser printing/PDF saving and a CSV download.
+V23.15 - MNA AND MCA WINNERS COUNTY FILTERS
+==========================================
+
+- Adds independent MNA county and MCA county filters to the Winners and Runners-up report.
+- Populates both dropdowns from county_main.csv.
+- Leaves President, Governor, Senator and Women Representative sections unchanged.
+- Carries the selected filters into the CSV download and printed report.
