@@ -3274,9 +3274,9 @@ def _register_member_from_kobo(row):
  full_name=" ".join(value for value in (first,middle,surname) if value).strip() or field(row,"stored_particulars_confirmed/full_name","full_name","name")
  return {"member_id":field(row,"basics/national_id_no","national_id_no"),"full_name":full_name,
   "odm_registration_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed","odm_membership_no"),
-  "county":field(row,"electorals_units/county","electorals_units/selected_county","electorals_units/county_name","county"),
-  "constituency":field(row,"electorals_units/constituency","electorals_units/selected_constituency","electorals_units/selected_constituency1","constituency"),
-  "ward":field(row,"electorals_units/ward","electorals_units/selected_ward","electorals_units/selected_ward1","ward"),
+  "county":field(row,"electorals_units/county","electorals_units/selected_county","electorals_units/selected_county1","electorals_units/county_name","particulars_confirmation/selected_county1_confirmation","stored_particulars_confirmed/selected_county1_confirmed","county"),
+  "constituency":field(row,"electorals_units/constituency","electorals_units/selected_constituency","electorals_units/selected_constituency1","particulars_confirmation/selected_constituency1_confirmation","stored_particulars_confirmed/selected_constituency1_confirmed","constituency"),
+  "ward":field(row,"electorals_units/ward","electorals_units/selected_ward","electorals_units/selected_ward1","particulars_confirmation/selected_ward1_confirmation","stored_particulars_confirmed/selected_ward1_confirmed","ward"),
   "polling_station":field(row,"electorals_units/poll_station_label","electorals_units/selected_poll_station1","stored_particulars_confirmed/selected_poll_station1_confirmed","poll_station"),
   "submission_time":str(row.get("_submission_time") or ""),"source":"Kobo submission"}
 
@@ -3287,6 +3287,41 @@ def _register_member_from_csv(row):
   "constituency":str(row.get("constituency") or "").strip(),"ward":str(row.get("ward") or "").strip(),
   "polling_station":str(row.get("poll_station") or "").strip(),"submission_time":"","source":MEMBERSHIP_CSV_FILENAME}
 
+def _enrich_register_geography(member):
+ """Fill/canonicalize a member's electoral labels from county_main.csv."""
+ hierarchy=_hierarchy_cache()
+ def match(rows,value):
+  wanted=station_key(value)
+  return next((row for row in rows if wanted and wanted in (station_key(row.get("name")),station_key(row.get("label")))),None)
+ county=match(hierarchy["counties"],member.get("county"))
+ all_constituencies=[row for rows in hierarchy["constituencies"].values() for row in rows]
+ constituency=match(all_constituencies,member.get("constituency"))
+ if constituency:
+  county=next((row for row in hierarchy["counties"] if norm_key(row.get("name"))==norm_key(constituency.get("county_key"))),county)
+ all_wards=[row for rows in hierarchy["wards"].values() for row in rows]
+ ward_candidates=[row for row in all_wards if station_key(member.get("ward")) in (station_key(row.get("name")),station_key(row.get("label")))]
+ if constituency:
+  narrowed=[row for row in ward_candidates if norm_key(row.get("constituency_key"))==norm_key(constituency.get("name"))]
+  ward=(narrowed or ward_candidates or [None])[0]
+ else:
+  ward=(ward_candidates or [None])[0]
+  if ward:
+   constituency=match(all_constituencies,ward.get("constituency_key"))
+   if constituency:
+    county=match(hierarchy["counties"],constituency.get("county_key"))
+ stations=[row for rows in hierarchy["poll_stations"].values() for row in rows]
+ station_candidates=[row for row in stations if station_key(member.get("polling_station")) in (station_key(row.get("name")),station_key(row.get("label")))]
+ if ward:
+  narrowed=[row for row in station_candidates if norm_key(row.get("ward_key"))==norm_key(ward.get("name"))]
+  station=(narrowed or station_candidates or [None])[0]
+ else:
+  station=(station_candidates or [None])[0]
+ if county: member["county"]=county.get("label") or member.get("county","")
+ if constituency: member["constituency"]=constituency.get("label") or member.get("constituency","")
+ if ward: member["ward"]=ward.get("label") or member.get("ward","")
+ if station: member["polling_station"]=station.get("label") or member.get("polling_station","")
+ return member
+
 def combined_voters_register():
  """Merge both sources by National ID; the newest live Kobo record wins."""
  kobo_rows=_all_kobo_membership_submissions(); newest={}
@@ -3295,12 +3330,17 @@ def combined_voters_register():
   if not member_id: continue
   member["member_id"]=member_id; existing=newest.get(member_id)
   if not existing or member["submission_time"]>=existing["submission_time"]: newest[member_id]=member
- csv_rows=_load_membership_csv(); csv_added=0
+ csv_rows=_load_membership_csv(); csv_added=0; csv_fields_filled=0
  for member_id,raw in csv_rows.items():
-  if member_id not in newest: newest[member_id]=_register_member_from_csv(raw); csv_added+=1
- members=list(newest.values())
+  csv_member=_register_member_from_csv(raw)
+  if member_id not in newest: newest[member_id]=csv_member; csv_added+=1
+  else:
+   for key in ("full_name","odm_registration_no","county","constituency","ward","polling_station"):
+    if not str(newest[member_id].get(key) or "").strip() and str(csv_member.get(key) or "").strip():
+     newest[member_id][key]=csv_member[key]; csv_fields_filled+=1
+ members=[_enrich_register_geography(member) for member in newest.values()]
  members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),station_key(member.get("full_name")),member.get("member_id","")))
- return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"unique_members":len(members)}
+ return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"csv_fields_filled":csv_fields_filled,"unique_members":len(members)}
 
 def _register_filters():
  return {key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}

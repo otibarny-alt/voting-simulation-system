@@ -1206,3 +1206,9 @@ V23.11 - VOTERS REGISTER HIERARCHY FILTERS
 - Replaces manual voters-register filter typing with county_main.csv dropdowns.
 - Uses dependent County > Constituency > Ward > Polling Station selection.
 - Preserves selected filters in the preview and PDF/CSV download links.
+V23.12 - VOTERS REGISTER GEOGRAPHY RECONCILIATION
+=================================================
+
+- Merges matching Kobo and membership CSV records field by field instead of allowing blank Kobo geography to replace populated CSV values.
+- Recognizes additional Kobo county, constituency and ward field-name variants.
+- Uses county_main.csv to restore and standardize missing electoral-area labels from known constituency, ward and polling-station relationships.
