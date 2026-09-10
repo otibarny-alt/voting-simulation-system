@@ -3637,6 +3637,23 @@ def download_admin_data_file(file_type):
  return send_file(path,mimetype="text/csv; charset=utf-8",as_attachment=True,
                   download_name=os.path.basename(path),conditional=True)
 
+@app.get("/admin/user-manual")
+def admin_user_manual():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.path))
+ return render_template("admin_user_manual.html")
+
+@app.get("/admin/user-manual/download")
+def download_admin_user_manual():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.path))
+ path=os.path.join(app.root_path,"static","manuals","ODM_2027_Nomination_System_User_Manual_V1.docx")
+ if not os.path.isfile(path):
+  return Response("User manual is unavailable on this deployment.",status=404,mimetype="text/plain")
+ return send_file(path,
+  mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  as_attachment=True,download_name="ODM_2027_Nomination_System_User_Manual_V1.docx",conditional=True)
+
 @app.get("/admin/voters-register")
 def admin_voters_register():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))

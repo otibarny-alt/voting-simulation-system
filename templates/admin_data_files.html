@@ -51,6 +51,14 @@
    <a class="verification-admin-link" href="{{ url_for('admin_winners_runners_up') }}">Open Winners &amp; Runners-up Report</a>
   </div>
  </section>
+ <section class="data-panel">
+  <h2>System User Manual</h2>
+  <p>Read the end-to-end operating manual for membership registration, candidate administration, voter verification, voting, counting, result declaration and administrator housekeeping.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('admin_user_manual') }}">View User Manual</a>
+   <a class="verification-admin-link" href="{{ url_for('download_admin_user_manual') }}">Download Word Manual</a>
+  </div>
+ </section>
  {% if not persistent %}<div class="data-warning"><b>Persistence warning:</b> no <code>DATA_UPLOAD_DIR</code> is configured. Uploaded files work immediately but may be lost when Render restarts or redeploys the service. Attach a persistent disk and set <code>DATA_UPLOAD_DIR</code> to its mount path.</div>{% endif %}
  {% if message %}<div class="data-message data-success">{{ message }}</div>{% endif %}
  {% if error %}<div class="data-message data-error">{{ error }}</div>{% endif %}

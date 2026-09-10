@@ -118,6 +118,14 @@ Registered Voters per polling station, and Votes Not Cast. Detailed stream and s
 are also shown. Polling-station registered totals include all streams belonging to the station.
 TRAINING / SIMULATION ONLY.
 
+V23.16 — PROTECTED USER MANUAL
+- Adds a protected System User Manual section to Admin Data Files.
+- View User Manual opens an administrator-only online operating guide.
+- Download Word Manual provides the complete editable DOCX manual.
+- Covers membership, candidate registration, verification, voting, all six counts,
+  results, declaration, incident handling and Admin Housekeeping.
+TRAINING / SIMULATION ONLY.
+
 
 V12 — A4 PRINT BUTTONS
 - Every elective-position tally has its own Print button.
