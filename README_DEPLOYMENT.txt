@@ -1283,3 +1283,10 @@ V23.20 — SAFE KOBO MEMBERSHIP CSV REPLACEMENT
 - Automatically restores the previous CSV if Kobo rejects the replacement.
 - Displays Kobo's response detail to administrators instead of only the generic
   "400 Client Error: Bad Request" message.
+
+V23.21 — KOBO REQUIRED DESCRIPTION FIELD
+
+- Adds the multipart description field now required by Kobo's project media API.
+- Applies the required field to both membership CSV replacement uploads and
+  automatic backup restoration uploads.
+- Resolves the Kobo response: {"description": ["This field is required."]}.

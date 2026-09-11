@@ -1,4 +1,4 @@
-# V23.20: safely replace same-name Kobo membership media files.
+# V23.21: include Kobo's required form-media description field.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3350,7 +3350,10 @@ def replace_kobo_membership_csv(path):
  try:
   with open(path,"rb") as source:
    response=requests.post(
-    endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
+    endpoint,headers=kobo_headers(),data={
+     "file_type":"form_media",
+     "description":"ODM membership registration fallback CSV",
+    },
     files={"content":(MEMBERSHIP_CSV_FILENAME,source,"text/csv")},timeout=90
    )
   if not response.ok:
@@ -3359,7 +3362,10 @@ def replace_kobo_membership_csv(path):
   rollback_note=""
   if rollback_bytes is not None:
    restore_response=requests.post(
-    endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
+    endpoint,headers=kobo_headers(),data={
+     "file_type":"form_media",
+     "description":"ODM membership registration fallback CSV (restored backup)",
+    },
     files={"content":(MEMBERSHIP_CSV_FILENAME,BytesIO(rollback_bytes),"text/csv")},timeout=90
    )
    rollback_note=" The previous Kobo file was restored." if restore_response.ok else " WARNING: Kobo also rejected restoration of the previous file: "+error_detail(restore_response)
