@@ -1299,3 +1299,18 @@ V23.22 — COMPLETE KOBO FORM-MEDIA REQUEST
 - Applies the identical request contract to automatic backup restoration.
 - Includes the HTTP status and upload endpoint in any subsequent administrator
   error rather than displaying an unexplained truncated HTML document.
+
+V23.23 — MEMBERSHIP SELF-SERVICE AND APPROVAL PORTAL
+
+- Adds the public /membership portal for private registration-status lookup.
+- Existing CSV members must match National ID and registered phone number before
+  viewing their record or submitting corrections.
+- People not found in the CSV can submit a new membership registration request.
+- Additions and corrections remain pending in PostgreSQL and do not alter the
+  membership CSV until an authenticated administrator approves them.
+- Adds Admin Data Files > Review Membership Requests, with Pending, Approved,
+  Rejected and All views and a mandatory rejection reason.
+- Approval safely writes the request into membership_registration.csv in Kobo
+  media; rejection leaves the CSV unchanged and is visible on the member's page.
+- County, constituency, ward and polling-station inputs cascade from county_main.csv.
+- Requires the existing DATABASE_URL, KOBO_API_TOKEN and MEMBERSHIP_ASSET_UID settings.

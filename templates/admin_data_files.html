@@ -38,6 +38,14 @@
   {% endif %}
  </section>
  <section class="data-panel">
+  <h2>Membership Self-Service Administration</h2>
+  <p>Review additions and corrections submitted by members. Only approved requests are written into the Kobo membership registration CSV.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('admin_membership_requests') }}">Review Membership Requests</a>
+   <a class="verification-admin-link" href="{{ url_for('membership_portal') }}" target="_blank" rel="noopener">Open Public Membership Portal</a>
+  </div>
+ </section>
+ <section class="data-panel">
   <h2>Voters Register</h2>
   <p>Generate the physical-checking register from live Kobo membership submissions and the Kobo media membership CSV. Duplicate National IDs are merged, polling stations are grouped together, and members are sorted by name.</p>
   <div class="verification-admin-actions">

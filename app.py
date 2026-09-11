@@ -1,4 +1,4 @@
-# V23.22: use Kobo's complete multipart form-media upload contract.
+# V23.23: member self-service registration and administrator approval portal.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -413,6 +413,22 @@ def init_global_lock_db():
        PRIMARY KEY(election_id,national_id)
      )
     """)
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS membership_change_requests(
+       id BIGSERIAL PRIMARY KEY,
+       national_id TEXT NOT NULL,
+       request_type TEXT NOT NULL CHECK(request_type IN ('new','edit')),
+       request_data JSONB NOT NULL,
+       original_data JSONB,
+       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       reviewed_at TIMESTAMPTZ,
+       reviewed_by TEXT,
+       rejection_reason TEXT
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_status_date ON membership_change_requests(status,submitted_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_national_id ON membership_change_requests(national_id,submitted_at DESC)")
    conn.commit()
   _GLOBAL_DB_READY = True
 
@@ -3238,6 +3254,112 @@ MEMBERSHIP_CSV_REQUIRED={
  "member_id_photo","member_passport_photo"
 }
 
+MEMBERSHIP_SELF_SERVICE_FIELDS=(
+ "phone_no","odm_membership_no","first_name","middle_name","surname",
+ "county","constituency","ward","poll_station","poll_station_code",
+)
+
+def clean_national_id(value):
+ return re.sub(r"\D","",str(value or ""))
+
+def clean_phone(value):
+ digits=re.sub(r"\D","",str(value or ""))
+ if digits.startswith("254") and len(digits)==12:
+  digits="0"+digits[3:]
+ elif len(digits)==9:
+  digits="0"+digits
+ return digits
+
+def membership_request_row(row):
+ if not row:
+  return None
+ item=dict(row)
+ for key in ("request_data","original_data"):
+  value=item.get(key)
+  if isinstance(value,str):
+   try:item[key]=json.loads(value)
+   except Exception:item[key]={}
+  elif value is None:item[key]={}
+ return item
+
+def latest_membership_request(national_id):
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT * FROM membership_change_requests
+                  WHERE national_id=%s ORDER BY submitted_at DESC,id DESC LIMIT 1""",
+               (clean_national_id(national_id),))
+   return membership_request_row(cur.fetchone())
+
+def membership_csv_source_bytes():
+ media=current_membership_csv_media()
+ if media and media.get("content"):
+  response=requests.get(media["content"],headers=kobo_headers(),timeout=90)
+  response.raise_for_status()
+  return response.content
+ local_path=os.path.join(app.root_path,MEMBERSHIP_CSV_FILENAME)
+ if os.path.isfile(local_path):
+  with open(local_path,"rb") as source:
+   return source.read()
+ raise RuntimeError(f"{MEMBERSHIP_CSV_FILENAME} is missing from Kobo media and no packaged fallback exists.")
+
+def approve_membership_request(request_id,reviewer):
+ """Apply one pending request to the authoritative CSV and mark it approved."""
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("SELECT pg_advisory_xact_lock(hashtext('membership-registration-csv-update'))")
+   cur.execute("SELECT * FROM membership_change_requests WHERE id=%s FOR UPDATE",(request_id,))
+   request_row=membership_request_row(cur.fetchone())
+   if not request_row:
+    raise ValueError("Membership request was not found.")
+   if request_row["status"]!="pending":
+    raise ValueError("This membership request has already been reviewed.")
+   raw=membership_csv_source_bytes()
+   text=raw.decode("utf-8-sig",errors="replace")
+   reader=csv.DictReader(StringIO(text))
+   headers=list(reader.fieldnames or [])
+   missing=MEMBERSHIP_CSV_REQUIRED-set(headers)
+   if missing:
+    raise ValueError("Current membership CSV is missing required columns: "+", ".join(sorted(missing)))
+   rows=[]; matched=False; national_id=request_row["national_id"]
+   updates=request_row.get("request_data") or {}
+   for source_row in reader:
+    row={key:("" if value is None else str(value)) for key,value in source_row.items()}
+    if clean_national_id(row.get("national_id_no"))==national_id:
+     if request_row["request_type"]=="new":
+      raise ValueError("This National ID was added to the membership CSV while the request was pending.")
+     for key in MEMBERSHIP_SELF_SERVICE_FIELDS:
+      row[key]=str(updates.get(key,"")).strip()
+     row["national_id_no"]=national_id
+     matched=True
+    rows.append(row)
+   if request_row["request_type"]=="edit" and not matched:
+    raise ValueError("The member record to be edited is no longer present in the membership CSV.")
+   if request_row["request_type"]=="new":
+    new_row={header:"" for header in headers}
+    new_row["national_id_no"]=national_id
+    for key in MEMBERSHIP_SELF_SERVICE_FIELDS:
+     new_row[key]=str(updates.get(key,"")).strip()
+    rows.append(new_row)
+   output=StringIO(newline="")
+   writer=csv.DictWriter(output,fieldnames=headers,extrasaction="ignore")
+   writer.writeheader(); writer.writerows(rows)
+   fd,temp_path=tempfile.mkstemp(prefix="membership-approved-",suffix=".csv")
+   os.close(fd)
+   try:
+    with open(temp_path,"wb") as target:
+     target.write(output.getvalue().encode("utf-8-sig"))
+    validate_membership_csv(temp_path)
+    replace_kobo_membership_csv(temp_path)
+   finally:
+    if os.path.exists(temp_path):os.unlink(temp_path)
+   cur.execute("""UPDATE membership_change_requests
+                  SET status='approved',reviewed_at=NOW(),reviewed_by=%s,rejection_reason=NULL
+                  WHERE id=%s""",(reviewer,request_id))
+  conn.commit()
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+
 def kobo_membership_media_files():
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
   raise RuntimeError("MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN must be configured.")
@@ -3729,6 +3851,146 @@ def admin_data_files():
   persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL,
   candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL
  )
+
+
+@app.route("/membership",methods=["GET","POST"])
+def membership_portal():
+ """Public entry point for private membership status and change requests."""
+ error=None
+ if request.method=="POST":
+  national_id=clean_national_id(request.form.get("national_id"))
+  phone=clean_phone(request.form.get("phone"))
+  if not re.fullmatch(r"\d{7,8}",national_id):
+   error="Enter a valid 7- or 8-digit National ID number."
+  elif not re.fullmatch(r"0\d{9}",phone):
+   error="Enter a valid registered phone number."
+  else:
+   try:
+    csv_row=_load_membership_csv().get(national_id)
+    latest=latest_membership_request(national_id)
+    expected_phone=clean_phone((csv_row or {}).get("phone_no"))
+    if not csv_row and latest:
+     expected_phone=clean_phone((latest.get("request_data") or {}).get("phone_no"))
+    if expected_phone and not hmac.compare_digest(phone,expected_phone):
+     error="The National ID and phone number do not match the membership record."
+    else:
+     session["membership_member_id"]=national_id
+     session["membership_member_phone"]=phone
+     session["membership_member_existing"]=bool(csv_row)
+     session["membership_csrf"]=secrets.token_urlsafe(32)
+     return redirect(url_for("membership_application"))
+   except Exception as exc:
+    app.logger.exception("Membership portal lookup failed")
+    error=f"Membership lookup is temporarily unavailable: {exc}"
+ return render_template("membership_portal.html",error=error)
+
+
+@app.route("/membership/application",methods=["GET","POST"])
+def membership_application():
+ national_id=clean_national_id(session.get("membership_member_id"))
+ if not national_id:
+  return redirect(url_for("membership_portal"))
+ try:
+  current=_load_membership_csv().get(national_id)
+  latest=latest_membership_request(national_id)
+ except Exception as exc:
+  return render_template("membership_application.html",national_id=national_id,current={},values={},latest=None,csrf_token=session.get("membership_csrf",""),error=str(exc),message=None),502
+ token=session.get("membership_csrf") or secrets.token_urlsafe(32)
+ session["membership_csrf"]=token
+ message=session.pop("membership_message",None); error=None
+ pending=bool(latest and latest.get("status")=="pending")
+ values=dict(current or {})
+ if latest and not current and latest.get("request_data"):
+  values.update(latest["request_data"])
+ values.setdefault("phone_no",session.get("membership_member_phone",""))
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   error="Security token expired. Reload the page and try again."
+  elif pending:
+   error="Your previous request is still pending administrator review."
+  else:
+   submitted={key:str(request.form.get(key) or "").strip() for key in MEMBERSHIP_SELF_SERVICE_FIELDS}
+   submitted["phone_no"]=clean_phone(submitted["phone_no"])
+   values.update(submitted)
+   required_labels={
+    "phone_no":"Phone number","odm_membership_no":"ODM registration number",
+    "first_name":"First name","surname":"Surname","county":"County",
+    "constituency":"Constituency","ward":"Ward","poll_station":"Polling station",
+   }
+   missing=[label for key,label in required_labels.items() if not submitted.get(key)]
+   if missing:
+    error="Complete the following fields: "+", ".join(missing)+"."
+   elif not re.fullmatch(r"0\d{9}",submitted["phone_no"]):
+    error="Enter a valid phone number."
+   else:
+    request_type="edit" if current else "new"
+    init_global_lock_db()
+    with lock_db() as conn:
+     with conn.cursor() as cur:
+      cur.execute("""INSERT INTO membership_change_requests
+       (national_id,request_type,request_data,original_data,status)
+       VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending')""",
+       (national_id,request_type,json.dumps(submitted),json.dumps(current or {})))
+     conn.commit()
+    session["membership_message"]="Your membership request was submitted and is pending administrator approval."
+    return redirect(url_for("membership_application"))
+ return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message)
+
+
+@app.post("/membership/logout")
+def membership_logout():
+ for key in ("membership_member_id","membership_member_phone","membership_member_existing","membership_csrf","membership_message"):
+  session.pop(key,None)
+ return redirect(url_for("membership_portal"))
+
+
+@app.route("/admin/membership-requests",methods=["GET","POST"])
+def admin_membership_requests():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.path))
+ token=session.get("membership_admin_csrf") or secrets.token_urlsafe(32)
+ session["membership_admin_csrf"]=token
+ message=session.pop("membership_admin_message",None); error=session.pop("membership_admin_error",None)
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   session["membership_admin_error"]="Security token expired. Reload the page and try again."
+   return redirect(url_for("admin_membership_requests"))
+  try:
+   request_id=int(request.form.get("request_id") or 0)
+   decision=(request.form.get("decision") or "").strip().lower()
+   if decision=="approve":
+    approve_membership_request(request_id,ADMIN_USERNAME or "administrator")
+    session["membership_admin_message"]="Membership request approved and the Kobo CSV was updated."
+   elif decision=="reject":
+    reason=(request.form.get("rejection_reason") or "").strip()
+    if not reason:raise ValueError("Enter a reason for rejection.")
+    init_global_lock_db()
+    with lock_db() as conn:
+     with conn.cursor() as cur:
+      cur.execute("""UPDATE membership_change_requests SET status='rejected',reviewed_at=NOW(),
+                     reviewed_by=%s,rejection_reason=%s WHERE id=%s AND status='pending'""",
+                  (ADMIN_USERNAME or "administrator",reason,request_id))
+      if cur.rowcount!=1:raise ValueError("The request was not found or was already reviewed.")
+     conn.commit()
+    session["membership_admin_message"]="Membership request rejected."
+   else:raise ValueError("Choose Approve or Reject.")
+  except Exception as exc:
+   app.logger.exception("Membership request review failed")
+   session["membership_admin_error"]=str(exc)
+  return redirect(url_for("admin_membership_requests",status=request.args.get("status","pending")))
+ status=(request.args.get("status") or "pending").strip().lower()
+ if status not in ("pending","approved","rejected","all"):status="pending"
+ init_global_lock_db()
+ with lock_db() as conn:
+  with conn.cursor() as cur:
+   if status=="all":
+    cur.execute("SELECT * FROM membership_change_requests ORDER BY submitted_at DESC,id DESC LIMIT 500")
+   else:
+    cur.execute("SELECT * FROM membership_change_requests WHERE status=%s ORDER BY submitted_at DESC,id DESC LIMIT 500",(status,))
+   rows=[membership_request_row(row) for row in cur.fetchall()]
+ return render_template("admin_membership_requests.html",rows=rows,status=status,csrf_token=token,message=message,error=error)
 
 
 @app.get("/admin/data-files/download/<file_type>")

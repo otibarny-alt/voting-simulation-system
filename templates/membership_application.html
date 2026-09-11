@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>My Membership Registration</title>
+ <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>
+ .member-page{max-width:1000px;margin:28px auto;padding:0 18px}.member-card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:26px}.member-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:16px 22px}.member-field label{display:block;font-weight:800;margin-bottom:6px}.member-field input,.member-field select{width:100%;background:#fff}.wide{grid-column:1/-1}.notice{padding:13px;border-radius:9px;margin:14px 0}.success{background:#e7f7eb;border:1px solid #44945a}.error{background:#fdecec;border:1px solid #c52b37;color:#8b1520}.pending{background:#fff2d8;border:1px solid #ef7d00}.approved{background:#e7f7eb;border:1px solid #218b41}.rejected{background:#fdecec;border:1px solid #c52b37}.form-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.save{background:#ef7d00;color:#111;font-weight:800}.logout{display:inline}.readonly-id{background:#eee!important}.help{font-size:.9rem;color:#606873;margin-top:4px}@media(max-width:680px){.member-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+ </style>
+</head><body>
+<header><b>ODM Membership Registration Portal</b><form class="logout" method="post" action="{{ url_for('membership_logout') }}"><button type="submit">Exit Private Page</button></form></header>
+<main class="member-page"><section class="member-card">
+ <h1>{% if current %}My Membership Details{% else %}New Membership Registration{% endif %}</h1>
+ <div class="notice {% if current %}approved{% else %}pending{% endif %}"><b>National ID:</b> {{ national_id }} · {% if current %}Membership record found in the registration CSV.{% else %}No approved CSV record was found. Complete the form to request registration.{% endif %}</div>
+ {% if latest %}<div class="notice {{ latest.status }}"><b>Latest request: {{ latest.status|upper }}</b>{% if latest.status == 'pending' %} — awaiting administrator review.{% elif latest.status == 'approved' %} — approved on {{ latest.reviewed_at }}.{% elif latest.status == 'rejected' %} — {{ latest.rejection_reason }}{% endif %}</div>{% endif %}
+ {% if message %}<div class="notice success">{{ message }}</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+ <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="poll_station_code" id="poll_station_code" value="{{ values.get('poll_station_code','') }}">
+  <div class="member-grid">
+   <div class="member-field"><label>National ID</label><input class="readonly-id" value="{{ national_id }}" readonly></div>
+   <div class="member-field"><label for="phone_no">Phone number</label><input id="phone_no" name="phone_no" value="{{ values.get('phone_no','') }}" inputmode="tel" required></div>
+   <div class="member-field"><label for="odm_membership_no">ODM registration number</label><input id="odm_membership_no" name="odm_membership_no" value="{{ values.get('odm_membership_no','') }}" required></div>
+   <div class="member-field"><label for="first_name">First name</label><input id="first_name" name="first_name" value="{{ values.get('first_name','') }}" required></div>
+   <div class="member-field"><label for="middle_name">Middle name</label><input id="middle_name" name="middle_name" value="{{ values.get('middle_name','') }}"></div>
+   <div class="member-field"><label for="surname">Surname</label><input id="surname" name="surname" value="{{ values.get('surname','') }}" required></div>
+   <div class="member-field"><label for="county">County</label><select id="county" name="county" data-current="{{ values.get('county','') }}" required></select></div>
+   <div class="member-field"><label for="constituency">Constituency</label><select id="constituency" name="constituency" data-current="{{ values.get('constituency','') }}" required></select></div>
+   <div class="member-field"><label for="ward">Ward</label><select id="ward" name="ward" data-current="{{ values.get('ward','') }}" required></select></div>
+   <div class="member-field"><label for="poll_station">Polling station</label><select id="poll_station" name="poll_station" data-current="{{ values.get('poll_station','') }}" required></select><div class="help">Polling station code: <span id="station-code-label">{{ values.get('poll_station_code','') or '—' }}</span></div></div>
+  </div>
+  <div class="form-actions"><button class="save" type="submit" {% if latest and latest.status == 'pending' %}disabled{% endif %}>Submit for Administrator Approval</button><button type="reset" class="secondary">Cancel Unsaved Changes</button></div>
+ </form>
+</section></main>
+<script>
+const controls={county:document.getElementById('county'),constituency:document.getElementById('constituency'),ward:document.getElementById('ward'),poll_station:document.getElementById('poll_station')};
+async function load(level,select,parent,current){select.innerHTML='<option value="">Loading…</option>';const q=new URLSearchParams({level});if(parent)q.set('parent',parent);const res=await fetch('/api/hierarchy?'+q);const data=await res.json();select.innerHTML='<option value="">Select '+level.replace('_',' ')+'</option>';for(const row of data.rows||[]){const option=document.createElement('option');option.value=row.name;option.textContent=row.label||row.name;option.dataset.code=row.poll_station_code||'';if(String(row.name).toLowerCase()===String(current).toLowerCase()||String(row.label).toLowerCase()===String(current).toLowerCase())option.selected=true;select.appendChild(option)}}
+async function initialize(){await load('counties',controls.county,'',controls.county.dataset.current);await load('constituencies',controls.constituency,controls.county.value,controls.constituency.dataset.current);await load('wards',controls.ward,controls.constituency.value,controls.ward.dataset.current);await load('stations',controls.poll_station,controls.ward.value,controls.poll_station.dataset.current);setCode()}
+function setCode(){const selected=controls.poll_station.selectedOptions[0];const code=(selected&&selected.dataset.code)||document.getElementById('poll_station_code').value;document.getElementById('poll_station_code').value=code;document.getElementById('station-code-label').textContent=code||'—'}
+controls.county.addEventListener('change',async()=>{await load('constituencies',controls.constituency,controls.county.value,'');await load('wards',controls.ward,'','');await load('stations',controls.poll_station,'','');setCode()});
+controls.constituency.addEventListener('change',async()=>{await load('wards',controls.ward,controls.constituency.value,'');await load('stations',controls.poll_station,'','');setCode()});
+controls.ward.addEventListener('change',async()=>{await load('stations',controls.poll_station,controls.ward.value,'');setCode()});controls.poll_station.addEventListener('change',setCode);initialize();
+</script></body></html>
