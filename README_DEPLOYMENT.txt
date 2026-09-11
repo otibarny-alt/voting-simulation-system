@@ -1264,3 +1264,12 @@ V23.18 — REPORT REPOSITORY LINK AND ERROR RECOVERY
   the normal repository screen with a clear connection warning instead of an
   unhelpful Internal Server Error page.
 - Full exception details remain in Render Logs for administrator diagnosis.
+V23.19 — CSV ENCODING NORMALIZATION
+
+- Admin CSV uploads now accept UTF-8, UTF-8 with BOM, Windows-1252 and Latin-1.
+- Accepted files are normalized to UTF-8 with BOM before validation, local
+  activation or upload to Kobo media.
+- This fixes Excel-exported membership CSV files containing Windows punctuation
+  bytes such as 0x95 while preserving strict column, National ID and duplicate
+  validation.
+- Empty and binary files remain rejected.

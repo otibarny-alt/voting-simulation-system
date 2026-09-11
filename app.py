@@ -1,4 +1,4 @@
-# V23.18: restore report-repository navigation and recover repository DB errors.
+# V23.19: normalize Windows-encoded CSV uploads to UTF-8.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3261,6 +3261,30 @@ def current_membership_csv_media():
   return None
  return sorted(matches,key=lambda item:str(item.get("date_created") or item.get("uid") or ""),reverse=True)[0]
 
+def normalize_uploaded_csv_utf8(path):
+ """Decode common spreadsheet CSV encodings and rewrite as UTF-8 with BOM."""
+ with open(path,"rb") as source:
+  raw=source.read()
+ if not raw:
+  raise ValueError("The uploaded CSV is empty.")
+ if b"\x00" in raw:
+  raise ValueError("The uploaded file appears to be binary, not a CSV text file.")
+ decoded=None; source_encoding=None
+ for encoding in ("utf-8-sig","utf-8","cp1252","iso-8859-1"):
+  try:
+   decoded=raw.decode(encoding,errors="strict")
+   source_encoding=encoding
+   break
+  except UnicodeDecodeError:
+   continue
+ if decoded is None:
+  raise ValueError("The CSV text encoding could not be recognized. Save it as UTF-8 CSV and try again.")
+ # Kobo and the application receive one predictable encoding regardless of
+ # whether Excel exported UTF-8, Windows-1252 or Latin-1 source bytes.
+ with open(path,"wb") as target:
+  target.write(decoded.encode("utf-8-sig"))
+ return source_encoding
+
 def validate_membership_csv(path):
  with open(path,encoding="utf-8-sig",errors="strict",newline="") as source:
   reader=csv.DictReader(source)
@@ -3590,12 +3614,13 @@ def admin_data_files():
    os.close(fd)
    try:
     upload.save(temp_path)
+    source_encoding=normalize_uploaded_csv_utf8(temp_path)
     rows=validate_membership_csv(temp_path)
     delete_failures=replace_kobo_membership_csv(temp_path)
     if delete_failures:
-     session["data_files_message"]=f"Membership Registration CSV uploaded to Kobo ({rows:,} rows). Kobo retained {len(delete_failures)} older copy/copies that could not be removed."
+     session["data_files_message"]=f"Membership Registration CSV uploaded to Kobo ({rows:,} rows; normalized from {source_encoding} to UTF-8). Kobo retained {len(delete_failures)} older copy/copies that could not be removed."
     else:
-     session["data_files_message"]=f"Membership Registration CSV replaced in Kobo media successfully ({rows:,} rows)."
+     session["data_files_message"]=f"Membership Registration CSV replaced in Kobo media successfully ({rows:,} rows; normalized from {source_encoding} to UTF-8)."
    except Exception as exc:
     session["data_files_error"]=f"Membership CSV upload rejected: {exc}"
    finally:
@@ -3609,6 +3634,7 @@ def admin_data_files():
   os.close(fd)
   try:
    upload.save(temp_path)
+   normalize_uploaded_csv_utf8(temp_path)
    rows=validate_admin_csv(temp_path,file_type)
    backup_root=os.path.join(DATA_UPLOAD_DIR or app.root_path,"data_backups")
    os.makedirs(backup_root,exist_ok=True)
