@@ -1,4 +1,4 @@
-# V23.21: include Kobo's required form-media description field.
+# V23.22: use Kobo's complete multipart form-media upload contract.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3312,6 +3312,7 @@ def replace_kobo_membership_csv(path):
   if filename.lower()==MEMBERSHIP_CSV_FILENAME.lower():
    old_files.append(item)
  endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
+ upload_endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files.json"
 
  def error_detail(response):
   try:
@@ -3322,7 +3323,7 @@ def replace_kobo_membership_csv(path):
   if not detail:
    detail=(response.text or "").strip()
   detail=re.sub(r"\s+"," ",detail)[:800]
-  return detail or f"HTTP {response.status_code}"
+  return f"HTTP {response.status_code}: {detail}" if detail else f"HTTP {response.status_code}"
 
  # Kobo reserves form-media filenames and rejects a second file with the same
  # name. Retain the current bytes for rollback, remove only matching copies,
@@ -3350,9 +3351,10 @@ def replace_kobo_membership_csv(path):
  try:
   with open(path,"rb") as source:
    response=requests.post(
-    endpoint,headers=kobo_headers(),data={
+    upload_endpoint,headers=kobo_headers(),data={
      "file_type":"form_media",
      "description":"ODM membership registration fallback CSV",
+     "metadata":json.dumps({"filename":MEMBERSHIP_CSV_FILENAME}),
     },
     files={"content":(MEMBERSHIP_CSV_FILENAME,source,"text/csv")},timeout=90
    )
@@ -3362,14 +3364,15 @@ def replace_kobo_membership_csv(path):
   rollback_note=""
   if rollback_bytes is not None:
    restore_response=requests.post(
-    endpoint,headers=kobo_headers(),data={
+    upload_endpoint,headers=kobo_headers(),data={
      "file_type":"form_media",
      "description":"ODM membership registration fallback CSV (restored backup)",
+     "metadata":json.dumps({"filename":MEMBERSHIP_CSV_FILENAME}),
     },
     files={"content":(MEMBERSHIP_CSV_FILENAME,BytesIO(rollback_bytes),"text/csv")},timeout=90
    )
    rollback_note=" The previous Kobo file was restored." if restore_response.ok else " WARNING: Kobo also rejected restoration of the previous file: "+error_detail(restore_response)
-  raise RuntimeError("Kobo rejected the replacement upload: "+str(upload_exc)+rollback_note) from upload_exc
+  raise RuntimeError("Kobo rejected the replacement upload at "+upload_endpoint+": "+str(upload_exc)+rollback_note) from upload_exc
 
  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
  return []

@@ -1290,3 +1290,12 @@ V23.21 — KOBO REQUIRED DESCRIPTION FIELD
 - Applies the required field to both membership CSV replacement uploads and
   automatic backup restoration uploads.
 - Resolves the Kobo response: {"description": ["This field is required."]}.
+
+V23.22 — COMPLETE KOBO FORM-MEDIA REQUEST
+
+- Sends membership CSV uploads to Kobo's explicit /files.json API endpoint.
+- Includes metadata JSON with the reserved membership_registration.csv filename,
+  in addition to content, file_type and description.
+- Applies the identical request contract to automatic backup restoration.
+- Includes the HTTP status and upload endpoint in any subsequent administrator
+  error rather than displaying an unexplained truncated HTML document.
