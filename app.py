@@ -1,4 +1,4 @@
-# V23.19: normalize Windows-encoded CSV uploads to UTF-8.
+# V23.20: safely replace same-name Kobo membership media files.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3312,24 +3312,61 @@ def replace_kobo_membership_csv(path):
   if filename.lower()==MEMBERSHIP_CSV_FILENAME.lower():
    old_files.append(item)
  endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
- with open(path,"rb") as source:
-  response=requests.post(
-   endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
-   files={"content":(MEMBERSHIP_CSV_FILENAME,source,"text/csv")},timeout=90
-  )
- response.raise_for_status()
- new_item=response.json()
- new_uid=str(new_item.get("uid") or "")
- delete_failures=[]
+
+ def error_detail(response):
+  try:
+   payload=response.json()
+   detail=json.dumps(payload,ensure_ascii=False) if payload else ""
+  except Exception:
+   detail=""
+  if not detail:
+   detail=(response.text or "").strip()
+  detail=re.sub(r"\s+"," ",detail)[:800]
+  return detail or f"HTTP {response.status_code}"
+
+ # Kobo reserves form-media filenames and rejects a second file with the same
+ # name. Retain the current bytes for rollback, remove only matching copies,
+ # and then upload the already validated replacement.
+ rollback_bytes=None
+ if old_files:
+  current=sorted(old_files,key=lambda item:str(item.get("date_created") or item.get("uid") or ""),reverse=True)[0]
+  content_url=str(current.get("content") or "").strip()
+  if not content_url:
+   current_uid=str(current.get("uid") or "")
+   content_url=f"{endpoint}{current_uid}/content/"
+  backup_response=requests.get(content_url,headers=kobo_headers(),timeout=90)
+  if not backup_response.ok:
+   raise RuntimeError("Could not back up the current Kobo membership CSV before replacement: "+error_detail(backup_response))
+  rollback_bytes=backup_response.content
+
  for item in old_files:
   uid=str(item.get("uid") or "")
-  if not uid or uid==new_uid:
+  if not uid:
    continue
   delete_response=requests.delete(f"{endpoint}{uid}/",headers=kobo_headers(),timeout=30)
   if delete_response.status_code not in (200,202,204,404):
-   delete_failures.append(uid)
+   raise RuntimeError("Kobo could not remove the previous membership CSV: "+error_detail(delete_response))
+
+ try:
+  with open(path,"rb") as source:
+   response=requests.post(
+    endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
+    files={"content":(MEMBERSHIP_CSV_FILENAME,source,"text/csv")},timeout=90
+   )
+  if not response.ok:
+   raise RuntimeError(error_detail(response))
+ except Exception as upload_exc:
+  rollback_note=""
+  if rollback_bytes is not None:
+   restore_response=requests.post(
+    endpoint,headers=kobo_headers(),data={"file_type":"form_media"},
+    files={"content":(MEMBERSHIP_CSV_FILENAME,BytesIO(rollback_bytes),"text/csv")},timeout=90
+   )
+   rollback_note=" The previous Kobo file was restored." if restore_response.ok else " WARNING: Kobo also rejected restoration of the previous file: "+error_detail(restore_response)
+  raise RuntimeError("Kobo rejected the replacement upload: "+str(upload_exc)+rollback_note) from upload_exc
+
  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
- return delete_failures
+ return []
 
 def _all_kobo_membership_submissions():
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:

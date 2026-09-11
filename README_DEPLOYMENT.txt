@@ -1273,3 +1273,13 @@ V23.19 — CSV ENCODING NORMALIZATION
   bytes such as 0x95 while preserving strict column, National ID and duplicate
   validation.
 - Empty and binary files remain rejected.
+
+V23.20 — SAFE KOBO MEMBERSHIP CSV REPLACEMENT
+
+- Resolves Kobo HTTP 400 errors caused by uploading a form-media file while an
+  existing file has the same reserved membership_registration.csv filename.
+- Backs up the current Kobo CSV bytes before removing the old named media file.
+- Uploads the validated UTF-8 replacement only after the filename is available.
+- Automatically restores the previous CSV if Kobo rejects the replacement.
+- Displays Kobo's response detail to administrators instead of only the generic
+  "400 Client Error: Bad Request" message.
