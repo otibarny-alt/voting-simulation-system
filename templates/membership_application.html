@@ -4,7 +4,7 @@
  <title>My Membership Registration</title>
  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
  <style>
- .member-page{max-width:1000px;margin:28px auto;padding:0 18px}.member-card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:26px}.member-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:16px 22px}.member-field label{display:block;font-weight:800;margin-bottom:6px}.member-field input,.member-field select{width:100%;background:#fff}.wide{grid-column:1/-1}.notice{padding:13px;border-radius:9px;margin:14px 0}.success{background:#e7f7eb;border:1px solid #44945a}.error{background:#fdecec;border:1px solid #c52b37;color:#8b1520}.pending{background:#fff2d8;border:1px solid #ef7d00}.approved{background:#e7f7eb;border:1px solid #218b41}.rejected{background:#fdecec;border:1px solid #c52b37}.form-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.save{background:#ef7d00;color:#111;font-weight:800}.logout{display:inline}.readonly-id{background:#eee!important}.help{font-size:.9rem;color:#606873;margin-top:4px}@media(max-width:680px){.member-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+ .member-page{max-width:1000px;margin:28px auto;padding:0 18px}.member-card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:26px}.member-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:16px 22px}.member-field label{display:block;font-weight:800;margin-bottom:6px}.member-field input,.member-field select{width:100%;background:#fff}.wide{grid-column:1/-1}.notice{padding:13px;border-radius:9px;margin:14px 0}.success{background:#e7f7eb;border:1px solid #44945a}.error{background:#fdecec;border:1px solid #c52b37;color:#8b1520}.pending{background:#fff2d8;border:1px solid #ef7d00}.approved{background:#e7f7eb;border:1px solid #218b41}.rejected{background:#fdecec;border:1px solid #c52b37}.edit-lock{background:#eef5ff;border:1px solid #4b87c5}.form-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.save{background:#ef7d00;color:#111;font-weight:800}.unlock{background:#1769aa;font-weight:800}.cancel-edit{background:#fff;color:#111;border:2px solid #555}.logout{display:inline}.readonly-id{background:#eee!important}.help{font-size:.9rem;color:#606873;margin-top:4px}.member-field input:disabled,.member-field select:disabled{background:#edf0f2;color:#343a40;opacity:1;cursor:not-allowed}@media(max-width:680px){.member-grid{grid-template-columns:1fr}.wide{grid-column:auto}}
  </style>
 </head><body>
 <header><b>ODM Membership Registration Portal</b><form class="logout" method="post" action="{{ url_for('membership_logout') }}"><button type="submit">Exit Private Page</button></form></header>
@@ -12,22 +12,27 @@
  <h1>{% if current %}My Membership Details{% else %}New Membership Registration{% endif %}</h1>
  <div class="notice {% if current %}approved{% else %}pending{% endif %}"><b>National ID:</b> {{ national_id }} · {% if current %}Membership record found in the registration CSV.{% else %}No approved CSV record was found. Complete the form to request registration.{% endif %}</div>
  {% if latest %}<div class="notice {{ latest.status }}"><b>Latest request: {{ latest.status|upper }}</b>{% if latest.status == 'pending' %} — awaiting administrator review.{% elif latest.status == 'approved' %} — approved on {{ latest.reviewed_at }}.{% elif latest.status == 'rejected' %} — {{ latest.rejection_reason }}{% endif %}</div>{% endif %}
+ {% if current %}<div id="edit-lock-notice" class="notice edit-lock"><b>Details locked:</b> Your saved information is protected from accidental changes. Select <b>Unlock Details for Editing</b> only when you intend to submit corrections.</div>{% endif %}
  {% if message %}<div class="notice success">{{ message }}</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
  <form method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="poll_station_code" id="poll_station_code" value="{{ values.get('poll_station_code','') }}">
   <div class="member-grid">
    <div class="member-field"><label>National ID</label><input class="readonly-id" value="{{ national_id }}" readonly></div>
-   <div class="member-field"><label for="phone_no">Phone number</label><input id="phone_no" name="phone_no" value="{{ values.get('phone_no','') }}" inputmode="tel" required></div>
-   <div class="member-field"><label for="odm_membership_no">ODM registration number</label><input id="odm_membership_no" name="odm_membership_no" value="{{ values.get('odm_membership_no','') }}" required></div>
-   <div class="member-field"><label for="first_name">First name</label><input id="first_name" name="first_name" value="{{ values.get('first_name','') }}" required></div>
-   <div class="member-field"><label for="middle_name">Middle name</label><input id="middle_name" name="middle_name" value="{{ values.get('middle_name','') }}"></div>
-   <div class="member-field"><label for="surname">Surname</label><input id="surname" name="surname" value="{{ values.get('surname','') }}" required></div>
-   <div class="member-field"><label for="county">County</label><select id="county" name="county" data-current="{{ values.get('county','') }}" required></select></div>
-   <div class="member-field"><label for="constituency">Constituency</label><select id="constituency" name="constituency" data-current="{{ values.get('constituency','') }}" required></select></div>
-   <div class="member-field"><label for="ward">Ward</label><select id="ward" name="ward" data-current="{{ values.get('ward','') }}" required></select></div>
-   <div class="member-field"><label for="poll_station">Polling station</label><select id="poll_station" name="poll_station" data-current="{{ values.get('poll_station','') }}" required></select><div class="help">Polling station code: <span id="station-code-label">{{ values.get('poll_station_code','') or '—' }}</span></div></div>
+   <div class="member-field"><label for="phone_no">Phone number</label><input data-member-editable id="phone_no" name="phone_no" value="{{ values.get('phone_no','') }}" inputmode="tel" required {% if current %}disabled{% endif %}></div>
+   <div class="member-field"><label for="odm_membership_no">ODM registration number</label><input data-member-editable id="odm_membership_no" name="odm_membership_no" value="{{ values.get('odm_membership_no','') }}" required {% if current %}disabled{% endif %}></div>
+   <div class="member-field"><label for="first_name">First name</label><input data-member-editable id="first_name" name="first_name" value="{{ values.get('first_name','') }}" required {% if current %}disabled{% endif %}></div>
+   <div class="member-field"><label for="middle_name">Middle name</label><input data-member-editable id="middle_name" name="middle_name" value="{{ values.get('middle_name','') }}" {% if current %}disabled{% endif %}></div>
+   <div class="member-field"><label for="surname">Surname</label><input data-member-editable id="surname" name="surname" value="{{ values.get('surname','') }}" required {% if current %}disabled{% endif %}></div>
+   <div class="member-field"><label for="county">County</label><select data-member-editable id="county" name="county" data-current="{{ values.get('county','') }}" required {% if current %}disabled{% endif %}></select></div>
+   <div class="member-field"><label for="constituency">Constituency</label><select data-member-editable id="constituency" name="constituency" data-current="{{ values.get('constituency','') }}" required {% if current %}disabled{% endif %}></select></div>
+   <div class="member-field"><label for="ward">Ward</label><select data-member-editable id="ward" name="ward" data-current="{{ values.get('ward','') }}" required {% if current %}disabled{% endif %}></select></div>
+   <div class="member-field"><label for="poll_station">Polling station</label><select data-member-editable id="poll_station" name="poll_station" data-current="{{ values.get('poll_station','') }}" required {% if current %}disabled{% endif %}></select><div class="help">Polling station code: <span id="station-code-label">{{ values.get('poll_station_code','') or '—' }}</span></div></div>
   </div>
-  <div class="form-actions"><button class="save" type="submit" {% if latest and latest.status == 'pending' %}disabled{% endif %}>Submit for Administrator Approval</button><button type="reset" class="secondary">Cancel Unsaved Changes</button></div>
+  <div class="form-actions">
+   {% if current and not (latest and latest.status == 'pending') %}<button id="unlock-edit" class="unlock" type="button">Unlock Details for Editing</button><button id="cancel-edit" class="cancel-edit" type="button" hidden>Cancel Editing</button>{% endif %}
+   <button id="submit-request" class="save" type="submit" {% if current or (latest and latest.status == 'pending') %}disabled{% endif %}>Submit for Administrator Approval</button>
+   {% if not current %}<button type="reset" class="secondary">Cancel Unsaved Changes</button>{% endif %}
+  </div>
  </form>
 </section></main>
 <script>
@@ -38,4 +43,8 @@ function setCode(){const selected=controls.poll_station.selectedOptions[0];const
 controls.county.addEventListener('change',async()=>{await load('constituencies',controls.constituency,controls.county.value,'');await load('wards',controls.ward,'','');await load('stations',controls.poll_station,'','');setCode()});
 controls.constituency.addEventListener('change',async()=>{await load('wards',controls.ward,controls.constituency.value,'');await load('stations',controls.poll_station,'','');setCode()});
 controls.ward.addEventListener('change',async()=>{await load('stations',controls.poll_station,controls.ward.value,'');setCode()});controls.poll_station.addEventListener('change',setCode);initialize();
+const memberForm=document.querySelector('.member-card form[method="post"]');const editableFields=[...document.querySelectorAll('[data-member-editable]')];const unlockButton=document.getElementById('unlock-edit');const cancelButton=document.getElementById('cancel-edit');const submitButton=document.getElementById('submit-request');
+function setEditLocked(locked){editableFields.forEach(field=>field.disabled=locked);if(unlockButton)unlockButton.hidden=!locked;if(cancelButton)cancelButton.hidden=locked;if(submitButton)submitButton.disabled=locked;const notice=document.getElementById('edit-lock-notice');if(notice)notice.innerHTML=locked?'<b>Details locked:</b> Your saved information is protected from accidental changes. Select <b>Unlock Details for Editing</b> only when you intend to submit corrections.':'<b>Editing unlocked:</b> Review every change carefully, then submit it for administrator approval or cancel editing.'}
+unlockButton?.addEventListener('click',()=>{setEditLocked(false);document.getElementById('phone_no')?.focus()});
+cancelButton?.addEventListener('click',async()=>{memberForm.reset();await initialize();setEditLocked(true)});
 </script></body></html>

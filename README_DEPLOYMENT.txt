@@ -1322,3 +1322,13 @@ V23.24 — NATIONAL-ID-ONLY MEMBERSHIP ACCESS
   valid 7- or 8-digit National ID number.
 - Phone number remains an editable membership detail and all submitted changes
   still require administrator approval before the Kobo CSV is updated.
+
+V23.25 — PROTECTED MEMBER EDIT MODE
+
+- Existing membership records open with every editable field disabled.
+- Adds an explicit Unlock Details for Editing button before saved values can be
+  changed or submitted.
+- Cancel Editing discards unsaved changes, restores saved values and locks the
+  form again.
+- Members with a pending request remain fully locked until administrator review.
+- New registration forms remain open because no saved record can be overwritten.

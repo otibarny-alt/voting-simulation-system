@@ -1,4 +1,4 @@
-# V23.24: National-ID-only membership portal access.
+# V23.25: locked-by-default existing membership edit page.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
