@@ -1332,3 +1332,8 @@ V23.25 — PROTECTED MEMBER EDIT MODE
   form again.
 - Members with a pending request remain fully locked until administrator review.
 - New registration forms remain open because no saved record can be overwritten.
+
+V23.26 — MEMBERSHIP PORTAL NAVIGATION
+
+- Removes the Voting System link from the public membership registration page.
+- The membership portal no longer provides public navigation into the voting interface.

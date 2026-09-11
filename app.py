@@ -1,4 +1,4 @@
-# V23.25: locked-by-default existing membership edit page.
+# V23.26: remove voting-system link from public membership portal.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
