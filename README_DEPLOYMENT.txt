@@ -1314,3 +1314,11 @@ V23.23 — MEMBERSHIP SELF-SERVICE AND APPROVAL PORTAL
   media; rejection leaves the CSV unchanged and is visible on the member's page.
 - County, constituency, ward and polling-station inputs cascade from county_main.csv.
 - Requires the existing DATABASE_URL, KOBO_API_TOKEN and MEMBERSHIP_ASSET_UID settings.
+
+V23.24 — NATIONAL-ID-ONLY MEMBERSHIP ACCESS
+
+- Removes the phone-number field and phone matching from membership portal login.
+- Members now open the registration-status and correction page using only their
+  valid 7- or 8-digit National ID number.
+- Phone number remains an editable membership detail and all submitted changes
+  still require administrator approval before the Kobo CSV is updated.

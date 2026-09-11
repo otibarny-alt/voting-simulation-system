@@ -1,4 +1,4 @@
-# V23.23: member self-service registration and administrator approval portal.
+# V23.24: National-ID-only membership portal access.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3859,26 +3859,19 @@ def membership_portal():
  error=None
  if request.method=="POST":
   national_id=clean_national_id(request.form.get("national_id"))
-  phone=clean_phone(request.form.get("phone"))
   if not re.fullmatch(r"\d{7,8}",national_id):
    error="Enter a valid 7- or 8-digit National ID number."
-  elif not re.fullmatch(r"0\d{9}",phone):
-   error="Enter a valid registered phone number."
   else:
    try:
     csv_row=_load_membership_csv().get(national_id)
     latest=latest_membership_request(national_id)
-    expected_phone=clean_phone((csv_row or {}).get("phone_no"))
-    if not csv_row and latest:
-     expected_phone=clean_phone((latest.get("request_data") or {}).get("phone_no"))
-    if expected_phone and not hmac.compare_digest(phone,expected_phone):
-     error="The National ID and phone number do not match the membership record."
-    else:
-     session["membership_member_id"]=national_id
-     session["membership_member_phone"]=phone
-     session["membership_member_existing"]=bool(csv_row)
-     session["membership_csrf"]=secrets.token_urlsafe(32)
-     return redirect(url_for("membership_application"))
+    session["membership_member_id"]=national_id
+    session["membership_member_phone"]=clean_phone(
+     (csv_row or {}).get("phone_no") or ((latest or {}).get("request_data") or {}).get("phone_no")
+    )
+    session["membership_member_existing"]=bool(csv_row)
+    session["membership_csrf"]=secrets.token_urlsafe(32)
+    return redirect(url_for("membership_application"))
    except Exception as exc:
     app.logger.exception("Membership portal lookup failed")
     error=f"Membership lookup is temporarily unavailable: {exc}"
