@@ -1256,3 +1256,11 @@ V23.15 - MNA AND MCA WINNERS COUNTY FILTERS
 - Populates both dropdowns from county_main.csv.
 - Leaves President, Governor, Senator and Women Representative sections unchanged.
 - Carries the selected filters into the CSV download and printed report.
+V23.18 — REPORT REPOSITORY LINK AND ERROR RECOVERY
+
+- Restores a visible Report Repository link on the main voting page.
+- Keeps the existing Report Repository link on the central Admin Data Files page.
+- Repository summary and category pages now catch database failures and render
+  the normal repository screen with a clear connection warning instead of an
+  unhelpful Internal Server Error page.
+- Full exception details remain in Render Logs for administrator diagnosis.

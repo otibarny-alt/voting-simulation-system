@@ -1,4 +1,4 @@
-# V23.07: central admin page links to candidate registration administration.
+# V23.18: restore report-repository navigation and recover repository DB errors.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3766,10 +3766,18 @@ def repository_admin_logout():
 
 @app.get("/report-repository")
 def report_repository():
- if not DATABASE_URL:return render_template('report_repository.html',groups=[],total_reports=0,error='Central repository requires DATABASE_URL (shared PostgreSQL).')
- counts=repository_counts(); order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
+ order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
+ counts={}; error=''
+ if not DATABASE_URL:
+  error='Central repository requires DATABASE_URL (shared PostgreSQL).'
+ else:
+  try:
+   counts=repository_counts()
+  except Exception:
+   app.logger.exception('Report repository summary could not be loaded')
+   error='The report database is temporarily unavailable. The repository link is working; please retry shortly or check the Render database connection.'
  groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
- resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error='',is_admin=repository_admin_logged_in()))
+ resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error=error,is_admin=repository_admin_logged_in()))
  resp.headers['Cache-Control']='private, max-age=15'
  return resp
 
@@ -3778,18 +3786,23 @@ def report_repository_category(election):
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed:return Response('Report category not found',status=404)
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
- init_global_lock_db()
  filters={k:(request.args.get(k,'') or '').strip() for k in ('county','constituency','ward','poll_station','stream')}
  try: page=max(1,int(request.args.get('page','1')))
  except Exception: page=1
  per_page=50
- rows,total=repository_category_rows(election,filters,page,per_page)
- pages=max(1,(total+per_page-1)//per_page)
- if page>pages:
-  page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
- filter_sets=repository_filter_sets(election,filters)
+ error=''; rows=[]; total=0; pages=1; filter_sets={'counties':[],'constituencies':[],'wards':[],'stations':[],'streams':[]}
+ try:
+  init_global_lock_db()
+  rows,total=repository_category_rows(election,filters,page,per_page)
+  pages=max(1,(total+per_page-1)//per_page)
+  if page>pages:
+   page=pages; rows,total=repository_category_rows(election,filters,page,per_page)
+  filter_sets=repository_filter_sets(election,filters)
+ except Exception:
+  app.logger.exception('Report repository category could not be loaded: %s',election)
+  error='The report database is temporarily unavailable. Please retry shortly or check the Render database connection.'
  report_tabs=[('president','President'),('governor','Gubernatorial'),('senator','Senatorial'),('woman_rep','Women Rep'),('mna','MNA'),('mca','MCA')]
- resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',report_tabs=report_tabs,rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in()))
+ resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',report_tabs=report_tabs,rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in(),error=error))
  resp.headers['Cache-Control']='private, max-age=10'
  return resp
 

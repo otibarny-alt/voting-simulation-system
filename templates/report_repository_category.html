@@ -7,6 +7,7 @@
  {% for tab_key,tab_label in report_tabs %}<a class="report-category-tab{% if election==tab_key %} active{% endif %}" href="{{ url_for('report_repository_category',election=tab_key) }}?{{tab_qs}}" {% if election==tab_key %}aria-current="page"{% endif %}>{{tab_label}}</a>{% endfor %}
 </nav>
 <div class="repository-ribbon">{{title}}</div>
+{% if error %}<div class=error>{{error}}</div>{% endif %}
 <form class="repo-filters" method=get>
 <label>County<select name=county onchange="this.form.submit()"><option value="">All Counties</option>{% for v in counties %}<option value="{{v}}" {% if filters.county==v %}selected{% endif %}>{{v|replace('_',' ')|title}}</option>{% endfor %}</select></label>
 <label>Constituency<select name=constituency onchange="this.form.submit()" {% if not filters.county %}disabled{% endif %}><option value="">All Constituencies</option>{% for v in constituencies %}<option value="{{v}}" {% if filters.constituency==v %}selected{% endif %}>{{v|replace('_',' ')|title}}</option>{% endfor %}</select></label>
