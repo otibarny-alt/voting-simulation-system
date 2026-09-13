@@ -1,4 +1,4 @@
-# V23.29: preview saved and newly selected membership photos.
+# V23.30: prevent central-lock connection-pool exhaustion during resets.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -130,20 +130,28 @@ if DATABASE_URL:
   _pool_url = DATABASE_URL
   if _pool_url.startswith("postgres://"):
    _pool_url = "postgresql://" + _pool_url[len("postgres://"):]
+  _pool_min=max(0,int(os.getenv("PG_POOL_MIN_SIZE", "0") or 0))
+  _pool_max=max(1,int(os.getenv("PG_POOL_MAX_SIZE", "2") or 2))
+  if _pool_min>_pool_max:
+   _pool_min=_pool_max
+  _pool_timeout=max(5,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "30") or 30))
   PG_POOL = ConnectionPool(
    conninfo=_pool_url,
-   min_size=int(os.getenv("PG_POOL_MIN_SIZE", "2") or 2),
-   max_size=int(os.getenv("PG_POOL_MAX_SIZE", "8") or 8),
-   timeout=10,
+   min_size=_pool_min,
+   max_size=_pool_max,
+   timeout=_pool_timeout,
+   max_idle=300,
+   max_lifetime=1800,
    kwargs={"row_factory": dict_row},
    open=True
   )
   # Build the minimum pool connections during worker startup so the first
   # repository request does not pay the Render PostgreSQL/TLS connection cost.
-  try:
-   PG_POOL.wait(timeout=10)
-  except Exception as exc:
-   app.logger.warning("PostgreSQL pool warm-up did not complete: %s", exc)
+  if _pool_min:
+   try:
+    PG_POOL.wait(timeout=_pool_timeout)
+   except Exception as exc:
+    app.logger.warning("PostgreSQL pool warm-up did not complete: %s", exc)
  except Exception as exc:
   app.logger.warning("Could not start PostgreSQL connection pool: %s", exc)
   PG_POOL = None
@@ -322,7 +330,7 @@ def lock_db():
  if not DATABASE_URL:
   raise RuntimeError("DATABASE_URL is required for global device locking.")
  if PG_POOL is not None:
-  return PG_POOL.connection()
+  return PG_POOL.connection(timeout=max(5,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "30") or 30)))
  return psycopg.connect(pg_url(), row_factory=dict_row)
 
 def init_global_lock_db():
@@ -610,7 +618,7 @@ def owns_global_lock(lock_data, owner_token):
  return hmac.compare_digest(row.get("owner_token_hash",""),token_hash(owner_token))
 
 def mark_global_stream_closed(lock_data, owner_token):
- if not owns_global_lock(lock_data,owner_token):
+ if not lock_data or not owner_token or not DATABASE_URL:
   return False
  now=kenya_now().isoformat(timespec="seconds")
  with lock_db() as conn:
@@ -670,7 +678,7 @@ def release_global_lock(lock_data, owner_token):
  """
  Only the owning device can release its global lock.
  """
- if not owns_global_lock(lock_data,owner_token):
+ if not lock_data or not owner_token or not DATABASE_URL:
   return False
  now=datetime.now().astimezone().isoformat(timespec="seconds")
  with lock_db() as conn:

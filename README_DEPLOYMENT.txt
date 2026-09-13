@@ -1058,7 +1058,9 @@ V22.56 FAST REPOSITORY ENGINE
 - Cascading filter dropdowns are fetched through one pooled connection.
 - PDF byte data remains lazy-loaded only on View/Download.
 - Added composite metadata indexes for category/date and geographic filtering.
-Optional tuning: PG_POOL_MAX_SIZE=8 and REPO_COUNTS_TTL_SECONDS=20 (defaults already applied; no Render variables required).
+Optional tuning: PG_POOL_MIN_SIZE=0, PG_POOL_MAX_SIZE=2,
+PG_POOL_TIMEOUT_SECONDS=30 and REPO_COUNTS_TTL_SECONDS=20. The pool values are
+already the safe defaults; remove any older PG_POOL_MAX_SIZE=8 override.
 
 
 V22.59 — PDF LOCATION IDENTIFICATION, HIGH-SPEED REPOSITORY PRESERVED
@@ -1364,3 +1366,17 @@ V23.29 — MEMBERSHIP PHOTO PREVIEWS
 - Choosing a replacement image updates its preview immediately before submission.
 - Cancelling an edit discards the selected files and restores the saved previews.
 - Photo preview access is restricted to the National ID in the member's session.
+
+V23.30 — CENTRAL LOCK CONNECTION RELIABILITY
+
+- PostgreSQL pool defaults are sized for the packaged Gunicorn configuration:
+  zero eagerly reserved connections and at most two connections per worker.
+- Connection acquisition waits up to 30 seconds during brief Render database
+  contention instead of failing every reset after 10 seconds.
+- Idle and aged PostgreSQL connections are recycled automatically.
+- Central stream close and owner-device reset now verify ownership and update
+  the lock atomically in one database checkout instead of two.
+- On Render, remove old PG_POOL_MIN_SIZE / PG_POOL_MAX_SIZE overrides or set:
+    PG_POOL_MIN_SIZE=0
+    PG_POOL_MAX_SIZE=2
+    PG_POOL_TIMEOUT_SECONDS=30
