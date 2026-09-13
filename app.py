@@ -1,4 +1,4 @@
-# V23.28: add member ID-photo and passport-photo uploads.
+# V23.29: preview saved and newly selected membership photos.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -1707,6 +1707,35 @@ def membership_photo(submission_id,kind):
   return Response(r.iter_content(chunk_size=65536),
                   content_type=r.headers.get("Content-Type","image/jpeg"))
  except Exception:
+  return Response(status=404)
+
+@app.get("/membership/my-photo/<kind>")
+def membership_self_photo(kind):
+ """Privately preview the signed-in member's saved Kobo media image."""
+ if kind not in ("id","passport"):
+  return Response(status=404)
+ national_id=clean_national_id(session.get("membership_member_id"))
+ if not national_id:
+  return Response(status=403)
+ try:
+  current=_load_membership_csv().get(national_id) or {}
+  latest=latest_membership_request(national_id)
+  values=dict(current)
+  if not current and latest and latest.get("request_data"):
+   values.update(latest["request_data"])
+  key="member_id_photo" if kind=="id" else "member_passport_photo"
+  filename=str(values.get(key) or "").replace("\\","/").split("/")[-1]
+  item=_MEMBERSHIP_CSV_CACHE["media"].get(filename.lower()) if filename else None
+  media=item.get("content") if item else None
+  if not media:
+   return Response(status=404)
+  response=requests.get(media,headers=kobo_headers(),timeout=25,stream=True)
+  response.raise_for_status()
+  return Response(response.iter_content(chunk_size=65536),
+                  content_type=response.headers.get("Content-Type","image/jpeg"),
+                  headers={"Cache-Control":"private, no-store"})
+ except Exception:
+  app.logger.exception("Membership self-service photo preview failed")
   return Response(status=404)
 
 @app.route("/ballot/<int:step>",methods=["GET","POST"])

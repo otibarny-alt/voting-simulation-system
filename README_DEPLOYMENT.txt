@@ -1356,3 +1356,11 @@ V23.28 — MEMBERSHIP ID AND PASSPORT PHOTOS
   written to member_id_photo and member_passport_photo in the approved CSV row.
 - The voter verification and voting simulation lookup can therefore retrieve the
   approved member images using the existing Kobo media integration.
+
+V23.29 — MEMBERSHIP PHOTO PREVIEWS
+
+- Member searches now display the saved ID photo and passport photo directly on
+  the private membership details page.
+- Choosing a replacement image updates its preview immediately before submission.
+- Cancelling an edit discards the selected files and restores the saved previews.
+- Photo preview access is restricted to the National ID in the member's session.
