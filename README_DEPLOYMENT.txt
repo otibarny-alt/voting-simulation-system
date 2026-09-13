@@ -1337,3 +1337,12 @@ V23.26 — MEMBERSHIP PORTAL NAVIGATION
 
 - Removes the Voting System link from the public membership registration page.
 - The membership portal no longer provides public navigation into the voting interface.
+
+V23.27 — AUTOMATIC ODM MEMBERSHIP NUMBER
+
+- New member applications automatically receive ODM followed by the submitted
+  National ID, for example ID 10703460 becomes ODM10703460.
+- The generated ODM registration number is displayed read-only on the form.
+- Server-side submission and administrator-approval processing both enforce the
+  generated value, preventing browser-side alteration.
+- Existing members retain the ODM registration number already saved in the CSV.

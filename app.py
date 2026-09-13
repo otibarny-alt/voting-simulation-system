@@ -1,4 +1,4 @@
-# V23.26: remove voting-system link from public membership portal.
+# V23.27: auto-generate new members' ODM registration numbers.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3324,6 +3324,8 @@ def approve_membership_request(request_id,reviewer):
     raise ValueError("Current membership CSV is missing required columns: "+", ".join(sorted(missing)))
    rows=[]; matched=False; national_id=request_row["national_id"]
    updates=request_row.get("request_data") or {}
+   if request_row["request_type"]=="new":
+    updates["odm_membership_no"]="ODM"+national_id
    for source_row in reader:
     row={key:("" if value is None else str(value)) for key,value in source_row.items()}
     if clean_national_id(row.get("national_id_no"))==national_id:
@@ -3896,6 +3898,8 @@ def membership_application():
  if latest and not current and latest.get("request_data"):
   values.update(latest["request_data"])
  values.setdefault("phone_no",session.get("membership_member_phone",""))
+ if not current:
+  values["odm_membership_no"]="ODM"+national_id
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
@@ -3905,6 +3909,8 @@ def membership_application():
   else:
    submitted={key:str(request.form.get(key) or "").strip() for key in MEMBERSHIP_SELF_SERVICE_FIELDS}
    submitted["phone_no"]=clean_phone(submitted["phone_no"])
+   if not current:
+    submitted["odm_membership_no"]="ODM"+national_id
    values.update(submitted)
    required_labels={
     "phone_no":"Phone number","odm_membership_no":"ODM registration number",
