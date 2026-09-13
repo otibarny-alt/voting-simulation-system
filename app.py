@@ -1,4 +1,4 @@
-# V23.35: make terminal reset fast and independent of the shared DB pool.
+# V23.36: remove 30-second shared-pool waits from stream opening and locking.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -158,6 +158,8 @@ if DATABASE_URL:
 
 _GLOBAL_DB_READY = False
 _GLOBAL_DB_INIT_LOCK = threading.Lock()
+_TERMINAL_LOCK_DB_READY = False
+_TERMINAL_LOCK_DB_INIT_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
 _REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "120") or 120)
 _REPO_FILTER_CACHE = {}
@@ -332,6 +334,44 @@ def lock_db():
  if PG_POOL is not None:
   return PG_POOL.connection(timeout=max(5,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "30") or 30)))
  return psycopg.connect(pg_url(), row_factory=dict_row)
+
+def central_control_db():
+ """Short dedicated connection for time-critical stream lock operations."""
+ if not DATABASE_URL:
+  raise RuntimeError("DATABASE_URL is required for global device locking.")
+ return psycopg.connect(
+  pg_url(),row_factory=dict_row,
+  connect_timeout=max(2,int(os.getenv("PG_CONTROL_CONNECT_TIMEOUT_SECONDS","5") or 5)),
+  options="-c statement_timeout=7000"
+ )
+
+def init_terminal_lock_db():
+ """Create only the small lock table needed to open/reset a terminal.
+
+ The former opening path initialized every reporting and membership table
+ before checking a stream. That work could queue for 30 seconds and is not
+ required for terminal assignment.
+ """
+ global _TERMINAL_LOCK_DB_READY
+ if not DATABASE_URL or _TERMINAL_LOCK_DB_READY:
+  return
+ with _TERMINAL_LOCK_DB_INIT_LOCK:
+  if _TERMINAL_LOCK_DB_READY:
+   return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
+       session_date TEXT NOT NULL,poll_station TEXT NOT NULL,stream TEXT NOT NULL,
+       county TEXT,constituency TEXT,ward TEXT,owner_token_hash TEXT NOT NULL,
+       locked_at TEXT NOT NULL,released_at TEXT,closed_at TEXT,poll_station_code TEXT,
+       PRIMARY KEY(session_date,poll_station,stream)
+     )
+    """)
+    cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS closed_at TEXT")
+    cur.execute("ALTER TABLE simulation_terminal_locks ADD COLUMN IF NOT EXISTS poll_station_code TEXT")
+   conn.commit()
+  _TERMINAL_LOCK_DB_READY=True
 
 def init_global_lock_db():
  global _GLOBAL_DB_READY
@@ -540,8 +580,8 @@ def mark_shared_voter_voted(national_id,poll_station):
 def global_lock_row(session_date,poll_station,stream):
  if not DATABASE_URL:
   return None
- init_global_lock_db()
- with lock_db() as conn:
+ init_terminal_lock_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     SELECT * FROM simulation_terminal_locks
@@ -557,10 +597,10 @@ def claim_global_lock(lock_data, owner_token):
  """
  if not DATABASE_URL:
   raise RuntimeError("Global device locking is not configured. Set DATABASE_URL to Render PostgreSQL.")
- init_global_lock_db()
+ init_terminal_lock_db()
  now=datetime.now().astimezone().isoformat(timespec="seconds")
  th=token_hash(owner_token)
- with lock_db() as conn:
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     INSERT INTO simulation_terminal_locks(
@@ -588,7 +628,7 @@ def claim_global_lock(lock_data, owner_token):
 
  # If an earlier record was explicitly released by the owning device, allow a fresh claim.
  if row and row.get("released_at"):
-  with lock_db() as conn:
+  with central_control_db() as conn:
    with conn.cursor() as cur:
     cur.execute("""
      UPDATE simulation_terminal_locks
@@ -621,7 +661,8 @@ def mark_global_stream_closed(lock_data, owner_token):
  if not lock_data or not owner_token or not DATABASE_URL:
   return False
  now=kenya_now().isoformat(timespec="seconds")
- with lock_db() as conn:
+ init_terminal_lock_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     UPDATE simulation_terminal_locks
@@ -642,7 +683,8 @@ def admin_reopen_global_stream(lock_data, owner_token):
  if not DATABASE_URL or not lock_data or not owner_token:
   return False
  now=kenya_now().isoformat(timespec="seconds")
- with lock_db() as conn:
+ init_terminal_lock_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     UPDATE simulation_terminal_locks
@@ -1387,27 +1429,10 @@ def open_stream():
    can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
 
- try:
-  central_existing=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
- except Exception as exc:
-  app.logger.exception("Could not read central lock state for %s / %s",ps,st)
-  return render_template(
-   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
-   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error=f"OPENING TEMPORARILY UNAVAILABLE: the central lock service did not respond. No stream was opened or reset. Wait a few seconds and retry. {exc}"
-  ),503
- if central_existing and central_existing.get("closed_at"):
-  return render_template(
-   "stream_control.html",row=previous_session,poll_station=ps,stream=st,
-   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="REOPENING BLOCKED: this voting stream is formally closed. An administrator must use the Admin Reopen control.",
-   can_close_now=official_close_reached(),official_close_time=close_time_message()
-  )
-
- # If this device already owns a valid lock, do not allow it to silently move to another stream.
- existing_local=terminal_lock()
+ # Read the signed local assignment without performing a separate central DB
+ # lookup. claim_global_lock() below atomically checks the authoritative row,
+ # so the former preliminary query only doubled opening latency.
+ existing_local=signed_terminal_cookie_lock()
  if existing_local and (existing_local.get("poll_station")!=ps or existing_local.get("stream")!=st):
   return render_template(
    "stream_control.html",
@@ -1445,14 +1470,23 @@ def open_stream():
  try:
   claimed,central_row=claim_global_lock(lock_data,owner_token)
  except Exception as exc:
+  app.logger.exception("Could not atomically claim central stream lock for %s / %s",ps,st)
   return render_template(
    "stream_control.html",row=None,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error=f"OPENING BLOCKED: central device-lock database unavailable. {exc}"
-  )
+   error=f"OPENING TEMPORARILY UNAVAILABLE: the central lock database could not be reached within the short safety timeout. No stream was opened or reset. Retry once the database service is available. {exc}"
+  ),503
 
  if not claimed:
+  if central_row and central_row.get("closed_at"):
+   return render_template(
+    "stream_control.html",row=previous_session,poll_station=ps,stream=st,
+    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+    report_header_image_url=REPORT_HEADER_IMAGE_URL,
+    error="REOPENING BLOCKED: this voting stream is formally closed. An administrator must use the Admin Reopen control.",
+    can_close_now=official_close_reached(),official_close_time=close_time_message()
+   )
   locked_at=(central_row or {}).get("locked_at","")
   return render_template(
    "stream_control.html",row=None,poll_station=ps,stream=st,
