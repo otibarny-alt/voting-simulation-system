@@ -1,4 +1,4 @@
-# V23.36: remove 30-second shared-pool waits from stream opening and locking.
+# V23.37: remove 30-second pool waits from voter entrance approval checks.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -160,6 +160,8 @@ _GLOBAL_DB_READY = False
 _GLOBAL_DB_INIT_LOCK = threading.Lock()
 _TERMINAL_LOCK_DB_READY = False
 _TERMINAL_LOCK_DB_INIT_LOCK = threading.Lock()
+_VOTER_ACCESS_DB_READY = False
+_VOTER_ACCESS_DB_INIT_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
 _REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "120") or 120)
 _REPO_FILTER_CACHE = {}
@@ -373,6 +375,36 @@ def init_terminal_lock_db():
    conn.commit()
   _TERMINAL_LOCK_DB_READY=True
 
+def init_voter_access_db():
+ """Create only the two tables required during voter admission and voting."""
+ global _VOTER_ACCESS_DB_READY
+ if not DATABASE_URL or _VOTER_ACCESS_DB_READY:
+  return
+ with _VOTER_ACCESS_DB_INIT_LOCK:
+  if _VOTER_ACCESS_DB_READY:
+   return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS voter_admission_approvals(
+       election_id TEXT NOT NULL,national_id TEXT NOT NULL,
+       polling_station TEXT NOT NULL,approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       approved_by TEXT NOT NULL,consumed_at TIMESTAMPTZ,
+       consumed_station TEXT,consumed_stream TEXT,
+       PRIMARY KEY(election_id,national_id)
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_voter_admission_station ON voter_admission_approvals(election_id,polling_station,approved_at DESC)")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS voter_status(
+       election_id TEXT NOT NULL,national_id TEXT NOT NULL,voted_at TIMESTAMPTZ,
+       voted_at_station TEXT,verified_by TEXT,
+       PRIMARY KEY(election_id,national_id)
+     )
+    """)
+   conn.commit()
+  _VOTER_ACCESS_DB_READY=True
+
 def init_global_lock_db():
  global _GLOBAL_DB_READY
  if not DATABASE_URL or _GLOBAL_DB_READY:
@@ -499,8 +531,8 @@ def already_voted_message(national_id,poll_station="",stream="",include_prefix=T
  return f"VOTING NOT ALLOWED: {message}" if include_prefix else message
 
 def entrance_approval_status(national_id,poll_station):
- init_global_lock_db()
- with lock_db() as conn:
+ init_voter_access_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     SELECT a.polling_station,a.approved_at,a.approved_by,a.consumed_at,
@@ -533,8 +565,8 @@ def entrance_approval_status(national_id,poll_station):
  return True,"Entrance approval confirmed.",approval
 
 def consume_entrance_approval(national_id,poll_station,stream):
- init_global_lock_db()
- with lock_db() as conn:
+ init_voter_access_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     SELECT polling_station,consumed_at,
@@ -564,8 +596,8 @@ def consume_entrance_approval(national_id,poll_station,stream):
  return (True,"Entrance approval consumed.") if changed else (False,"Entrance approval could not be claimed. Verify the voter again.")
 
 def mark_shared_voter_voted(national_id,poll_station):
- init_global_lock_db()
- with lock_db() as conn:
+ init_voter_access_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     INSERT INTO voter_status(election_id,national_id,voted_at,voted_at_station,verified_by)
