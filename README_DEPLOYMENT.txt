@@ -1399,3 +1399,14 @@ V23.32 — CONSECUTIVE VOTER STREAM PRESERVATION
   database, and a successful central ownership check remains authoritative.
 - The ballot-complete page again shows Close Voting Stream while the stream is
   open and View Closing Tallies after formal closing.
+
+V23.33 — PAGE SPEED AND ERROR ISOLATION
+
+- Removed PostgreSQL ownership checks, SQLite stream reads and vote-count queries
+  from the global rendering path used by membership, administration and dashboard
+  pages.
+- Only voting and stream-control pages now calculate live terminal state.
+- Central database schema setup is lazy instead of blocking every Gunicorn worker
+  during application startup.
+- Repeated terminal-lock checks within one web request reuse the first result.
+- A slow central lock service can no longer delay or crash unrelated public pages.

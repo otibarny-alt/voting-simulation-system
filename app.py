@@ -1,4 +1,4 @@
-# V23.32: preserve the active stream between consecutive voters.
+# V23.33: remove global database work from unrelated page renders.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g
 from markupsafe import escape
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -693,12 +693,9 @@ def release_global_lock(lock_data, owner_token):
   conn.commit()
  return ok
 
-# Create the lock table when the app starts. If PostgreSQL is temporarily unavailable,
-# requests will fail closed when they attempt lock-sensitive actions.
-try:
- init_global_lock_db()
-except Exception as _lock_init_error:
- print("Global lock database initialization warning:",_lock_init_error)
+# PostgreSQL schema initialization is intentionally lazy. Public membership and
+# informational pages must become available without waiting for the central lock
+# database during every Gunicorn worker startup.
 
 TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
 TERMINAL_OWNER_COOKIE = "training_terminal_owner_token"
@@ -710,10 +707,14 @@ def terminal_serializer():
  return URLSafeSerializer(app.secret_key, salt=TERMINAL_LOCK_SALT)
 
 def terminal_lock():
+ if hasattr(g,"terminal_lock_result"):
+  return g.terminal_lock_result
  raw=request.cookies.get(TERMINAL_LOCK_COOKIE,"")
  owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
  if not raw or not owner:
+  g.terminal_lock_result=None
   return None
+ result=None
  try:
   data=terminal_serializer().loads(raw)
   if isinstance(data,dict) and data.get("poll_station") and data.get("stream"):
@@ -721,7 +722,7 @@ def terminal_lock():
    # registry must confirm this exact device owns the stream.
    try:
     if owns_global_lock(data,owner):
-     return data
+     result=data
    except Exception as exc:
     # A short PostgreSQL interruption must not make an already opened terminal
     # appear reset between voters. Accept the signed active-stream cookie only
@@ -732,12 +733,14 @@ def terminal_lock():
      active=terminal_serializer().loads(active_raw)
      if isinstance(active,dict) and all(
       str(active.get(k,""))==str(data.get(k,""))
-      for k in ("session_date","poll_station","stream")
+     for k in ("session_date","poll_station","stream")
      ):
+      g.terminal_lock_result=data
       return data
  except (BadSignature,Exception):
   pass
- return None
+ g.terminal_lock_result=result
+ return result
 
 
 def norm_key(v):
@@ -4428,6 +4431,22 @@ def reset():
 
 @app.context_processor
 def inject_report_branding():
+ # Most pages need only the branding value. Earlier builds performed several
+ # PostgreSQL and SQLite queries here for every template, which made membership,
+ # administration and dashboard pages fail whenever the lock service was slow.
+ defaults={
+  "report_header_image_url":REPORT_HEADER_IMAGE_URL,
+  "terminal_lock":None,"terminal_lock_vote_count":0,"stream_ready":False,
+  "stream_row":None,"closed_stream_row":None,"reset_required":False,
+  "stream_admin_logged_in":repository_admin_logged_in()
+ }
+ stream_endpoints={
+  "home","start","confirm_member","cast","complete","stream_control",
+  "terminal_reset","open_stream","close_stream","admin_reopen_stream",
+  "stream_report","tallies","reset"
+ }
+ if request.endpoint not in stream_endpoints:
+  return defaults
  lock=terminal_lock()
  ready=False
  row=None
@@ -4444,7 +4463,7 @@ def inject_report_branding():
   closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
 
  return {
-  "report_header_image_url": REPORT_HEADER_IMAGE_URL,
+  "report_header_image_url":REPORT_HEADER_IMAGE_URL,
   "terminal_lock": lock,
   "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0,
   "stream_ready": ready,
