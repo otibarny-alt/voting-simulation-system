@@ -1,4 +1,4 @@
-# V23.30: prevent central-lock connection-pool exhaustion during resets.
+# V23.31: simplify the voter-verification header.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg

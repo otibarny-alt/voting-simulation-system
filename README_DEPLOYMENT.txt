@@ -1380,3 +1380,10 @@ V23.30 — CENTRAL LOCK CONNECTION RELIABILITY
     PG_POOL_MIN_SIZE=0
     PG_POOL_MAX_SIZE=2
     PG_POOL_TIMEOUT_SECONDS=30
+
+V23.31 — VOTER VERIFICATION HEADER
+
+- Removed the Membership Registration Status and Report Repository links from
+  the voter entrance and photo-verification page.
+- The underlying membership and repository pages remain available through their
+  intended entry points; only the distracting verification-page links were removed.
