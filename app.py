@@ -1,4 +1,4 @@
-# V23.33: remove global database work from unrelated page renders.
+# V23.34: make terminal reset failures recoverable instead of returning HTTP 500.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -681,17 +681,32 @@ def release_global_lock(lock_data, owner_token):
  if not lock_data or not owner_token or not DATABASE_URL:
   return False
  now=datetime.now().astimezone().isoformat(timespec="seconds")
- with lock_db() as conn:
-  with conn.cursor() as cur:
-   cur.execute("""
-    UPDATE simulation_terminal_locks
-    SET released_at=%s
-    WHERE session_date=%s AND poll_station=%s AND stream=%s
-      AND owner_token_hash=%s AND released_at IS NULL
-   """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
-   ok=cur.rowcount==1
-  conn.commit()
- return ok
+ def perform_release(connection_context):
+  with connection_context as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     UPDATE simulation_terminal_locks
+     SET released_at=%s
+     WHERE session_date=%s AND poll_station=%s AND stream=%s
+       AND owner_token_hash=%s AND released_at IS NULL
+    """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
+    ok=cur.rowcount==1
+   conn.commit()
+  return ok
+
+ try:
+  return perform_release(lock_db())
+ except Exception:
+  if PG_POOL is None:
+   raise
+  # A busy shared pool must not make reset fail immediately. Retry once with
+  # an independent short-lived connection; the ownership token still guards
+  # the UPDATE, so this does not weaken the central-lock rules.
+  app.logger.warning("Central lock release pool attempt failed; retrying directly")
+  return perform_release(psycopg.connect(
+   pg_url(),row_factory=dict_row,
+   connect_timeout=max(5,int(os.getenv("PG_DIRECT_CONNECT_TIMEOUT_SECONDS","10") or 10))
+  ))
 
 # PostgreSQL schema initialization is intentionally lazy. Public membership and
 # informational pages must become available without waiting for the central lock
@@ -1162,8 +1177,17 @@ def terminal_reset():
    error="Terminal reset denied: this browser/device does not own a valid central stream lock."
   )
 
- votes=locked_stream_vote_count(lock)
- row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ try:
+  votes=locked_stream_vote_count(lock)
+  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ except Exception as exc:
+  app.logger.exception("Terminal reset could not read local stream state")
+  return render_template(
+   "stream_control.html",row=None,poll_station=lock.get("poll_station",""),
+   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"TERMINAL RESET TEMPORARILY UNAVAILABLE: the terminal database did not respond. Nothing was reset; wait a few seconds and retry. {exc}"
+  ),503
  can_reset=(votes==0) or (row and row["closed_at"])
  if not can_reset:
   return render_template(
@@ -1174,7 +1198,17 @@ def terminal_reset():
   )
 
  owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
- if not release_global_lock(lock,owner):
+ try:
+  released=release_global_lock(lock,owner)
+ except Exception as exc:
+  app.logger.exception("Terminal reset could not release the central stream lock")
+  return render_template(
+   "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
+   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error=f"TERMINAL RESET TEMPORARILY UNAVAILABLE: the central lock service did not respond. Nothing was reset; this terminal remains assigned to its current stream. Wait a few seconds and retry. {exc}"
+  ),503
+ if not released:
   return render_template(
    "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
    stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
@@ -4450,22 +4484,34 @@ def inject_report_branding():
  lock=terminal_lock()
  ready=False
  row=None
- if lock:
-  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
-  ready=bool(
-   row and row["opened_at"] and not row["closed_at"]
-   and lock.get("session_date")==today_iso()
-   and terminal_active_after_reset(lock)
-  )
- closed_ref=closed_stream_cookie()
  closed_row=None
- if closed_ref and closed_ref.get("session_date")==today_iso():
-  closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+ vote_count=0
+ try:
+  if lock:
+   row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+   vote_count=locked_stream_vote_count(lock)
+   ready=bool(
+    row and row["opened_at"] and not row["closed_at"]
+    and lock.get("session_date")==today_iso()
+    and terminal_active_after_reset(lock)
+   )
+  closed_ref=closed_stream_cookie()
+  if closed_ref and closed_ref.get("session_date")==today_iso():
+   closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+ except Exception as exc:
+  # Rendering an explanatory error page must never trigger a second uncaught
+  # database error. Route handlers remain responsible for reporting the action
+  # failure; these conservative defaults keep all controls safely locked.
+  app.logger.warning("Stream template context database read deferred: %s",exc)
+  ready=False
+  row=None
+  closed_row=None
+  vote_count=0
 
  return {
   "report_header_image_url":REPORT_HEADER_IMAGE_URL,
   "terminal_lock": lock,
-  "terminal_lock_vote_count": locked_stream_vote_count(lock) if lock else 0,
+  "terminal_lock_vote_count": vote_count,
   "stream_ready": ready,
   "stream_row": row or closed_row,
   "closed_stream_row": closed_row,
