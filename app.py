@@ -1,4 +1,4 @@
-# V23.34: make terminal reset failures recoverable instead of returning HTTP 500.
+# V23.35: make terminal reset fast and independent of the shared DB pool.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -694,19 +694,14 @@ def release_global_lock(lock_data, owner_token):
    conn.commit()
   return ok
 
- try:
-  return perform_release(lock_db())
- except Exception:
-  if PG_POOL is None:
-   raise
-  # A busy shared pool must not make reset fail immediately. Retry once with
-  # an independent short-lived connection; the ownership token still guards
-  # the UPDATE, so this does not weaken the central-lock rules.
-  app.logger.warning("Central lock release pool attempt failed; retrying directly")
-  return perform_release(psycopg.connect(
-   pg_url(),row_factory=dict_row,
-   connect_timeout=max(5,int(os.getenv("PG_DIRECT_CONNECT_TIMEOUT_SECONDS","10") or 10))
-  ))
+ # Reset must not queue behind slow report/dashboard requests in the shared
+ # pool. Use one short-lived connection with strict connection and statement
+ # timeouts. The owner-token hash in the UPDATE remains authoritative.
+ return perform_release(psycopg.connect(
+  pg_url(),row_factory=dict_row,
+  connect_timeout=max(2,int(os.getenv("PG_RESET_CONNECT_TIMEOUT_SECONDS","3") or 3)),
+  options="-c statement_timeout=5000"
+ ))
 
 # PostgreSQL schema initialization is intentionally lazy. Public membership and
 # informational pages must become available without waiting for the central lock
@@ -720,6 +715,25 @@ TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
 
 def terminal_serializer():
  return URLSafeSerializer(app.secret_key, salt=TERMINAL_LOCK_SALT)
+
+def signed_terminal_cookie_lock():
+ """Read the signed device assignment without waiting for PostgreSQL.
+
+ Only reset uses this fast path. The database UPDATE still verifies the secret
+ owner-token hash before releasing anything, so a signed cookie alone cannot
+ release another device's stream.
+ """
+ raw=request.cookies.get(TERMINAL_LOCK_COOKIE,"")
+ owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+ if not raw or not owner:
+  return None
+ try:
+  data=terminal_serializer().loads(raw)
+ except BadSignature:
+  return None
+ if not isinstance(data,dict) or not all(data.get(k) for k in ("session_date","poll_station","stream")):
+  return None
+ return data
 
 def terminal_lock():
  if hasattr(g,"terminal_lock_result"):
@@ -1168,7 +1182,11 @@ def stream_distinct_voter_count(ref):
 
 @app.post("/terminal/reset")
 def terminal_reset():
- lock=terminal_lock()
+ # Do not call terminal_lock() here: it confirms ownership through the shared
+ # PostgreSQL pool and can block reset for 30 seconds. The atomic release below
+ # performs the authoritative ownership check with a short direct connection.
+ lock=signed_terminal_cookie_lock()
+ g.terminal_lock_result=lock
  if not lock:
   return render_template(
    "stream_control.html",row=None,poll_station="",stream="",
