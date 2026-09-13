@@ -1,4 +1,4 @@
-# V23.31: simplify the voter-verification header.
+# V23.32: preserve the active stream between consecutive voters.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -719,8 +719,22 @@ def terminal_lock():
   if isinstance(data,dict) and data.get("poll_station") and data.get("stream"):
    # A browser cookie alone is no longer sufficient. The central PostgreSQL
    # registry must confirm this exact device owns the stream.
-   if owns_global_lock(data,owner):
-    return data
+   try:
+    if owns_global_lock(data,owner):
+     return data
+   except Exception as exc:
+    # A short PostgreSQL interruption must not make an already opened terminal
+    # appear reset between voters. Accept the signed active-stream cookie only
+    # as a temporary local fallback; lock-changing actions still require the DB.
+    app.logger.warning("Central lock verification deferred for active terminal: %s",exc)
+    active_raw=request.cookies.get(TERMINAL_ACTIVE_COOKIE,"")
+    if active_raw:
+     active=terminal_serializer().loads(active_raw)
+     if isinstance(active,dict) and all(
+      str(active.get(k,""))==str(data.get(k,""))
+      for k in ("session_date","poll_station","stream")
+     ):
+      return data
  except (BadSignature,Exception):
   pass
  return None
@@ -1583,6 +1597,20 @@ def home():
  session.pop("post_reset_new_stream_locked",None)
  ready,lock,row=voting_stream_ready()
  return render_template("verify.html",stream_ready=ready,stream_row=row)
+
+@app.get("/next-voter")
+def next_voter():
+ """Remove the completed voter's private state without touching stream cookies."""
+ for key in (
+  "pending_voter_id","membership_submission_id","membership_verified",
+  "membership_station_match","membership_station","entrance_approval_checked",
+  "entrance_approval","entrance_approval_consumed","geo","voter_id","choices",
+  "completed"
+ ):
+  session.pop(key,None)
+ response=redirect(url_for("home"))
+ response.headers["Cache-Control"]="no-store"
+ return response
 
 @app.post("/start")
 def start():
@@ -2914,7 +2942,12 @@ def api_dashboard_mca():
 @app.get("/complete")
 def complete():
  if not session.get("completed"):return redirect(url_for("home"))
- return render_template("complete.html",geo=session["geo"])
+ geo=session.get("geo",{})
+ lock=terminal_lock()
+ stream_row=None
+ if lock:
+  stream_row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ return render_template("complete.html",geo=geo,terminal_lock=lock,stream_row=stream_row)
 
 def tallies_available():
  lock=terminal_lock()

@@ -1387,3 +1387,15 @@ V23.31 — VOTER VERIFICATION HEADER
   the voter entrance and photo-verification page.
 - The underlying membership and repository pages remain available through their
   intended entry points; only the distracting verification-page links were removed.
+
+V23.32 — CONSECUTIVE VOTER STREAM PRESERVATION
+
+- The Next Voter control now clears only the completed voter's private ballot,
+  verification and approval state; it does not touch the terminal stream cookies.
+- A brief PostgreSQL central-lock verification interruption no longer makes a
+  valid signed active terminal appear unassigned between voters.
+- The local fallback requires matching signed lock and active-stream cookies.
+  Opening, resetting, closing and changing a stream still require the central
+  database, and a successful central ownership check remains authoritative.
+- The ballot-complete page again shows Close Voting Stream while the stream is
+  open and View Closing Tallies after formal closing.

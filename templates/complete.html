@@ -1,14 +1,17 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training ballot complete</b>{% if stream_row and stream_row["closed_at"] %}
-<a href=/tallies>Simulated Tallies</a>
+<a href=/tallies>View Closing Tallies</a>
+{% elif terminal_lock %}
+<a href="{{ url_for('stream_control',poll_station=terminal_lock.poll_station,stream=terminal_lock.stream) }}">Close Voting Stream</a>
 {% else %}
-<span class="header-tally-locked">Simulated Tallies Locked</span>
+<span class="header-tally-locked">Stream controls temporarily unavailable</span>
 {% endif %}</header><div class=demo>TRAINING / SIMULATION ONLY — no official vote was cast.</div><div class=wrap>
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
 <div class=card><h2>Six simulated selections saved</h2><p>{{geo.poll_station}} · {{geo.stream}}</p>
  <div class="complete-next-voter-row">
-  <a id="complete-next-voter" class="complete-next-voter-btn" href="/">Next Voter</a>
+  <a id="complete-next-voter" class="complete-next-voter-btn" href="{{ url_for('next_voter') }}">Next Voter</a>
+  {% if stream_row and stream_row["closed_at"] %}<a class="complete-next-voter-btn" href="{{ url_for('tallies') }}">View Closing Tallies</a>{% elif terminal_lock %}<a class="complete-next-voter-btn" href="{{ url_for('stream_control',poll_station=terminal_lock.poll_station,stream=terminal_lock.stream) }}">Close Voting Stream</a>{% endif %}
  </div>
 </div></div>
 <script>
