@@ -1346,3 +1346,13 @@ V23.27 — AUTOMATIC ODM MEMBERSHIP NUMBER
 - Server-side submission and administrator-approval processing both enforce the
   generated value, preventing browser-side alteration.
 - Existing members retain the ODM registration number already saved in the CSV.
+
+V23.28 — MEMBERSHIP ID AND PASSPORT PHOTOS
+
+- New membership applications require both an ID Photo and a Passport Photo.
+- Existing members can upload either image only when replacing the current one.
+- Accepted image formats are JPG, JPEG, PNG and WEBP, up to 10 MB per image.
+- Images are stored as private Kobo form media and their generated filenames are
+  written to member_id_photo and member_passport_photo in the approved CSV row.
+- The voter verification and voting simulation lookup can therefore retrieve the
+  approved member images using the existing Kobo media integration.

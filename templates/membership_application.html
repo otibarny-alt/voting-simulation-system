@@ -14,7 +14,7 @@
  {% if latest %}<div class="notice {{ latest.status }}"><b>Latest request: {{ latest.status|upper }}</b>{% if latest.status == 'pending' %} — awaiting administrator review.{% elif latest.status == 'approved' %} — approved on {{ latest.reviewed_at }}.{% elif latest.status == 'rejected' %} — {{ latest.rejection_reason }}{% endif %}</div>{% endif %}
  {% if current %}<div id="edit-lock-notice" class="notice edit-lock"><b>Details locked:</b> Your saved information is protected from accidental changes. Select <b>Unlock Details for Editing</b> only when you intend to submit corrections.</div>{% endif %}
  {% if message %}<div class="notice success">{{ message }}</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
- <form method="post">
+ <form method="post" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="poll_station_code" id="poll_station_code" value="{{ values.get('poll_station_code','') }}">
   <div class="member-grid">
    <div class="member-field"><label>National ID</label><input class="readonly-id" value="{{ national_id }}" readonly></div>
@@ -27,6 +27,8 @@
    <div class="member-field"><label for="constituency">Constituency</label><select data-member-editable id="constituency" name="constituency" data-current="{{ values.get('constituency','') }}" required {% if current %}disabled{% endif %}></select></div>
    <div class="member-field"><label for="ward">Ward</label><select data-member-editable id="ward" name="ward" data-current="{{ values.get('ward','') }}" required {% if current %}disabled{% endif %}></select></div>
    <div class="member-field"><label for="poll_station">Polling station</label><select data-member-editable id="poll_station" name="poll_station" data-current="{{ values.get('poll_station','') }}" required {% if current %}disabled{% endif %}></select><div class="help">Polling station code: <span id="station-code-label">{{ values.get('poll_station_code','') or '—' }}</span></div></div>
+   <div class="member-field"><label for="id_photo">ID Photo</label><input data-member-editable id="id_photo" name="id_photo" type="file" accept="image/jpeg,image/png,image/webp" {% if not current %}required{% else %}disabled{% endif %}><div class="help">{% if values.get('member_id_photo') %}Current file: {{ values.get('member_id_photo') }}. Upload only to replace it.{% else %}Upload a clear image of the member's identification document.{% endif %}</div></div>
+   <div class="member-field"><label for="passport_photo">Passport Photo</label><input data-member-editable id="passport_photo" name="passport_photo" type="file" accept="image/jpeg,image/png,image/webp" {% if not current %}required{% else %}disabled{% endif %}><div class="help">{% if values.get('member_passport_photo') %}Current file: {{ values.get('member_passport_photo') }}. Upload only to replace it.{% else %}Upload a clear passport-style photograph for voter verification.{% endif %}</div></div>
   </div>
   <div class="form-actions">
    {% if current and not (latest and latest.status == 'pending') %}<button id="unlock-edit" class="unlock" type="button">Unlock Details for Editing</button><button id="cancel-edit" class="cancel-edit" type="button" hidden>Cancel Editing</button>{% endif %}

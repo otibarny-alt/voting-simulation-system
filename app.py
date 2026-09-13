@@ -1,4 +1,4 @@
-# V23.27: auto-generate new members' ODM registration numbers.
+# V23.28: add member ID-photo and passport-photo uploads.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -3257,7 +3257,47 @@ MEMBERSHIP_CSV_REQUIRED={
 MEMBERSHIP_SELF_SERVICE_FIELDS=(
  "phone_no","odm_membership_no","first_name","middle_name","surname",
  "county","constituency","ward","poll_station","poll_station_code",
+ "member_id_photo","member_passport_photo",
 )
+
+MEMBERSHIP_IMAGE_FIELDS={
+ "member_id_photo":("id_photo","ID photo"),
+ "member_passport_photo":("passport_photo","Passport photo"),
+}
+
+def upload_membership_image(upload,national_id,kind):
+ """Validate and store a private member image in Kobo form media."""
+ if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN must be configured for photo uploads.")
+ original=str(upload.filename or "").strip()
+ extension=os.path.splitext(original)[1].lower()
+ allowed={".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp"}
+ if extension not in allowed:
+  raise ValueError("Upload JPG, JPEG, PNG or WEBP image files only.")
+ content=upload.read()
+ if not content:
+  raise ValueError("The selected image file is empty.")
+ if len(content)>10*1024*1024:
+  raise ValueError("Each membership image must be 10 MB or smaller.")
+ valid=(
+  content.startswith(b"\xff\xd8\xff") if extension in (".jpg",".jpeg") else
+  content.startswith(b"\x89PNG\r\n\x1a\n") if extension==".png" else
+  content.startswith(b"RIFF") and content[8:12]==b"WEBP"
+ )
+ if not valid:
+  raise ValueError("The selected file does not contain a valid image matching its extension.")
+ filename=f"member_{kind}_{national_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{extension}"
+ endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files.json"
+ response=requests.post(endpoint,headers=kobo_headers(),data={
+  "file_type":"form_media",
+  "description":f"ODM membership {kind.replace('_',' ')} for National ID {national_id}",
+  "metadata":json.dumps({"filename":filename}),
+ },files={"content":(filename,BytesIO(content),allowed[extension])},timeout=90)
+ if not response.ok:
+  detail=re.sub(r"\s+"," ",(response.text or "").strip())[:500]
+  raise RuntimeError(f"Kobo rejected the {kind.replace('_',' ')} upload (HTTP {response.status_code}): {detail}")
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+ return filename
 
 def clean_national_id(value):
  return re.sub(r"\D","",str(value or ""))
@@ -3907,7 +3947,9 @@ def membership_application():
   elif pending:
    error="Your previous request is still pending administrator review."
   else:
-   submitted={key:str(request.form.get(key) or "").strip() for key in MEMBERSHIP_SELF_SERVICE_FIELDS}
+   submitted={key:str(request.form.get(key) or "").strip() for key in MEMBERSHIP_SELF_SERVICE_FIELDS if key not in MEMBERSHIP_IMAGE_FIELDS}
+   for key in MEMBERSHIP_IMAGE_FIELDS:
+    submitted[key]=str((current or {}).get(key) or "").strip()
    submitted["phone_no"]=clean_phone(submitted["phone_no"])
    if not current:
     submitted["odm_membership_no"]="ODM"+national_id
@@ -3918,22 +3960,34 @@ def membership_application():
     "constituency":"Constituency","ward":"Ward","poll_station":"Polling station",
    }
    missing=[label for key,label in required_labels.items() if not submitted.get(key)]
+   if not current:
+    for key,(form_name,label) in MEMBERSHIP_IMAGE_FIELDS.items():
+     upload=request.files.get(form_name)
+     if not upload or not upload.filename:
+      missing.append(label)
    if missing:
     error="Complete the following fields: "+", ".join(missing)+"."
    elif not re.fullmatch(r"0\d{9}",submitted["phone_no"]):
     error="Enter a valid phone number."
    else:
-    request_type="edit" if current else "new"
-    init_global_lock_db()
-    with lock_db() as conn:
-     with conn.cursor() as cur:
-      cur.execute("""INSERT INTO membership_change_requests
-       (national_id,request_type,request_data,original_data,status)
-       VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending')""",
-       (national_id,request_type,json.dumps(submitted),json.dumps(current or {})))
-     conn.commit()
-    session["membership_message"]="Your membership request was submitted and is pending administrator approval."
-    return redirect(url_for("membership_application"))
+    try:
+     for key,(form_name,label) in MEMBERSHIP_IMAGE_FIELDS.items():
+      upload=request.files.get(form_name)
+      if upload and upload.filename:
+       submitted[key]=upload_membership_image(upload,national_id,form_name)
+     request_type="edit" if current else "new"
+     init_global_lock_db()
+     with lock_db() as conn:
+      with conn.cursor() as cur:
+       cur.execute("""INSERT INTO membership_change_requests
+        (national_id,request_type,request_data,original_data,status)
+        VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending')""",
+        (national_id,request_type,json.dumps(submitted),json.dumps(current or {})))
+      conn.commit()
+     session["membership_message"]="Your membership request, ID photo and passport photo were submitted and are pending administrator approval."
+     return redirect(url_for("membership_application"))
+    except (ValueError,RuntimeError) as exc:
+     error=str(exc)
  return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message)
 
 
