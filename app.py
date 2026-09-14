@@ -1,4 +1,4 @@
-# V23.37: remove 30-second pool waits from voter entrance approval checks.
+# V23.38: preserve an opened voting stream across midnight until formal close.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -51,6 +51,7 @@ def con():
  if "candidate_name" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN candidate_name TEXT")
  if "dashboard_event_id" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN dashboard_event_id TEXT")
  if "dashboard_mirrored" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN dashboard_mirrored INTEGER DEFAULT 0")
+ if "session_date" not in vote_cols: c.execute("ALTER TABLE demo_votes ADD COLUMN session_date TEXT")
  c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_voter ON demo_votes(voter_session)')
  c.execute('CREATE INDEX IF NOT EXISTS idx_demo_votes_dashboard_mirrored ON demo_votes(dashboard_mirrored)')
  c.execute('''CREATE TABLE IF NOT EXISTS stream_sessions(
@@ -162,6 +163,8 @@ _TERMINAL_LOCK_DB_READY = False
 _TERMINAL_LOCK_DB_INIT_LOCK = threading.Lock()
 _VOTER_ACCESS_DB_READY = False
 _VOTER_ACCESS_DB_INIT_LOCK = threading.Lock()
+_DASHBOARD_SYNC_RUNNING = False
+_DASHBOARD_SYNC_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
 _REPO_COUNTS_TTL = int(os.getenv("REPO_COUNTS_TTL_SECONDS", "120") or 120)
 _REPO_FILTER_CACHE = {}
@@ -1180,9 +1183,10 @@ def previous_vote(voter_id):
 
 def today_iso(): return kenya_now().date().isoformat()
 
-def stream_session(poll_station,stream):
+def stream_session(poll_station,stream,session_date=None):
+ session_date=session_date or today_iso()
  c=con(); row=c.execute("SELECT * FROM stream_sessions WHERE session_date=? AND poll_station=? AND stream=?",
- (today_iso(),poll_station,stream)).fetchone(); c.close(); return row
+ (session_date,poll_station,stream)).fetchone(); c.close(); return row
 
 def time_status(ts,expected):
  if not ts or not expected: return None
@@ -1271,7 +1275,7 @@ def terminal_reset():
 
  try:
   votes=locked_stream_vote_count(lock)
-  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+  row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
  except Exception as exc:
   app.logger.exception("Terminal reset could not read local stream state")
   return render_template(
@@ -1332,7 +1336,8 @@ def stream_control():
   if not st:
    st=current_lock.get("stream","")
 
- row=stream_session(ps,st) if ps and st else None
+ lookup_date=current_lock.get("session_date") if current_lock else None
+ row=stream_session(ps,st,lookup_date) if ps and st else None
  owns_current=bool(
   current_lock and row
   and current_lock.get("poll_station")==row["poll_station"]
@@ -1468,7 +1473,7 @@ def open_stream():
  if existing_local and (existing_local.get("poll_station")!=ps or existing_local.get("stream")!=st):
   return render_template(
    "stream_control.html",
-   row=stream_session(existing_local.get("poll_station",""),existing_local.get("stream","")),
+   row=stream_session(existing_local.get("poll_station",""),existing_local.get("stream",""),existing_local.get("session_date")),
    poll_station=existing_local.get("poll_station",""),stream=existing_local.get("stream",""),
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
@@ -1599,14 +1604,14 @@ def close_stream():
 
  if not lock or lock.get("poll_station")!=ps or lock.get("stream")!=st:
   return render_template(
-   "stream_control.html",row=stream_session(ps,st),poll_station=ps,stream=st,
+   "stream_control.html",row=stream_session(ps,st,lock.get("session_date")),poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error="Close denied: only the device that owns the central lock for this polling-station stream can close it.",
    can_close_now=official_close_reached(),official_close_time=close_time_message()
   )
 
- row=stream_session(ps,st)
+ row=stream_session(ps,st,lock.get("session_date"))
  if not row:
   return redirect(url_for("stream_control",poll_station=ps,stream=st))
 
@@ -1664,7 +1669,9 @@ def close_stream():
 @app.get("/stream/report")
 def stream_report():
  ps=request.args.get("poll_station","").strip(); st=request.args.get("stream","").strip()
- row=stream_session(ps,st)
+ report_lock=signed_terminal_cookie_lock()
+ report_date=report_lock.get("session_date") if report_lock and report_lock.get("poll_station")==ps and report_lock.get("stream")==st else None
+ row=stream_session(ps,st,report_date)
  if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
  c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
 
@@ -1701,9 +1708,9 @@ def stream_report():
 
 def voting_stream_ready():
  lock=terminal_lock()
- if not lock or lock.get("session_date")!=today_iso():
+ if not lock:
   return False,None,None
- row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+ row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
  if not row or not row["opened_at"] or row["closed_at"]:
   return False,lock,row
  # A previous/stale device lock is not active for voter entry.
@@ -1752,7 +1759,7 @@ def start():
  if previous:
   return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
 
- geo={k:lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")}
+ geo={k:lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")}
 
  try:
   entrance_ok,entrance_message,entrance_approval=entrance_approval_status(voter,geo.get("poll_station",""))
@@ -1812,10 +1819,10 @@ def confirm_member():
   return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
  geo=session.get("geo",{})
  lock=terminal_lock()
- if not lock or any(geo.get(k,"")!=lock.get(k,"") for k in ("county","constituency","ward","poll_station","stream")):
+ if not lock or any(geo.get(k,"")!=lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")):
   session.clear()
   return render_template("verify.html",error="Terminal stream verification changed. Restart voter verification.")
- ss=stream_session(geo.get("poll_station",""),geo.get("stream",""))
+ ss=stream_session(geo.get("poll_station",""),geo.get("stream",""),geo.get("session_date"))
  if not ss or ss["closed_at"]:
   session.clear()
   return render_template("verify.html",error="This stream is not open for simulated voting.")
@@ -2010,28 +2017,19 @@ def cast():
    c.close()
    return redirect(url_for("review"))
   c.execute("""INSERT INTO demo_votes(
-   voter_session,election,candidate,candidate_id,candidate_name,county,constituency,ward,poll_station,stream
-  ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+   voter_session,election,candidate,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,session_date
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
    (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
-    geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"]))
+    geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"],geo.get("session_date") or today_iso()))
  c.commit(); c.close()
  try:
   mark_shared_voter_voted(voter,geo.get("poll_station",""))
  except Exception as exc:
   app.logger.error("Could not update shared voter-status record after ballot cast: %s",exc)
- try:
-  sync_unmirrored_votes_to_dashboard()
-  try:
-   _GOV_DASHBOARD_CACHE["payload"]=None
-   _SEN_DASHBOARD_CACHE["payload"]=None
-   _PRES_DASHBOARD_CACHE["payload"]=None
-   _WOMAN_REP_DASHBOARD_CACHE["payload"]=None
-   _MNA_DASHBOARD_CACHE["payload"]=None
-   _MCA_DASHBOARD_CACHE["payload"]=None
-  except Exception:
-   pass
- except Exception as exc:
-  app.logger.warning("Dashboard mirror sync deferred: %s",exc)
+ for cache in (_GOV_DASHBOARD_CACHE,_SEN_DASHBOARD_CACHE,_PRES_DASHBOARD_CACHE,
+               _WOMAN_REP_DASHBOARD_CACHE,_MNA_DASHBOARD_CACHE,_MCA_DASHBOARD_CACHE):
+  cache["payload"]=None
+ defer_dashboard_sync()
  session["completed"]=True
  return redirect(url_for("complete"))
 
@@ -2048,7 +2046,7 @@ def sync_unmirrored_votes_to_dashboard():
  init_global_lock_db()
  c=con()
  rows=c.execute("""
-  SELECT id,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,dashboard_event_id
+  SELECT id,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,dashboard_event_id,session_date
   FROM demo_votes
   WHERE COALESCE(dashboard_mirrored,0)=0
   ORDER BY id
@@ -2058,14 +2056,13 @@ def sync_unmirrored_votes_to_dashboard():
   return 0
  prepared=[]
  now=kenya_now().isoformat(timespec="seconds")
- session_date=today_iso()
  try:
   for r in rows:
    event_id=(r["dashboard_event_id"] or "").strip() or secrets.token_hex(24)
    if not r["dashboard_event_id"]:
     c.execute("UPDATE demo_votes SET dashboard_event_id=? WHERE id=?",(event_id,r["id"]))
    prepared.append((
-    event_id,session_date,r["election"] or "",r["candidate_id"] or "",r["candidate_name"] or "",
+    event_id,(r["session_date"] or today_iso()),r["election"] or "",r["candidate_id"] or "",r["candidate_name"] or "",
     r["county"] or "",r["constituency"] or "",r["ward"] or "",r["poll_station"] or "",r["stream"] or "",now,r["id"]
    ))
   c.commit()
@@ -2084,6 +2081,27 @@ def sync_unmirrored_votes_to_dashboard():
   return len(prepared)
  finally:
   c.close()
+
+def defer_dashboard_sync():
+ """Mirror dashboard events without delaying completion or Next Voter."""
+ global _DASHBOARD_SYNC_RUNNING
+ with _DASHBOARD_SYNC_LOCK:
+  if _DASHBOARD_SYNC_RUNNING:
+   return
+  _DASHBOARD_SYNC_RUNNING=True
+
+ def worker():
+  global _DASHBOARD_SYNC_RUNNING
+  try:
+   with app.app_context():
+    sync_unmirrored_votes_to_dashboard()
+  except Exception as exc:
+   app.logger.warning("Background dashboard mirror sync deferred: %s",exc)
+  finally:
+   with _DASHBOARD_SYNC_LOCK:
+    _DASHBOARD_SYNC_RUNNING=False
+
+ threading.Thread(target=worker,name="dashboard-vote-sync",daemon=True).start()
 
 
 def dashboard_election_aliases(election):
@@ -3067,19 +3085,19 @@ def complete():
  lock=terminal_lock()
  stream_row=None
  if lock:
-  stream_row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+  stream_row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
  return render_template("complete.html",geo=geo,terminal_lock=lock,stream_row=stream_row)
 
 def tallies_available():
  lock=terminal_lock()
  if lock:
-  row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+  row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
   if row and row["closed_at"]:
    return True,lock,row
 
  closed_ref=closed_stream_cookie()
  if closed_ref and closed_ref.get("session_date")==today_iso():
-  row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+  row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""),closed_ref.get("session_date"))
   if row and row["closed_at"]:
    return True,closed_ref,row
 
@@ -4572,16 +4590,15 @@ def inject_report_branding():
  vote_count=0
  try:
   if lock:
-   row=stream_session(lock.get("poll_station",""),lock.get("stream",""))
+   row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
    vote_count=locked_stream_vote_count(lock)
    ready=bool(
     row and row["opened_at"] and not row["closed_at"]
-    and lock.get("session_date")==today_iso()
     and terminal_active_after_reset(lock)
    )
   closed_ref=closed_stream_cookie()
-  if closed_ref and closed_ref.get("session_date")==today_iso():
-   closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""))
+  if closed_ref:
+   closed_row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""),closed_ref.get("session_date"))
  except Exception as exc:
   # Rendering an explanatory error page must never trigger a second uncaught
   # database error. Route handlers remain responsible for reporting the action
