@@ -1,4 +1,4 @@
-# V23.40: compressed cached static assets and higher-concurrency web serving.
+# V23.41: direct stream closing access and reliable closed-stream tallies.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -716,6 +716,16 @@ def mark_global_stream_closed(lock_data, owner_token):
       AND owner_token_hash=%s AND closed_at IS NULL
    """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
    ok=cur.rowcount==1
+   if not ok:
+    cur.execute("""
+     SELECT owner_token_hash,closed_at FROM simulation_terminal_locks
+     WHERE session_date=%s AND poll_station=%s AND stream=%s LIMIT 1
+    """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
+    existing=cur.fetchone()
+    ok=bool(
+     existing and existing.get("closed_at")
+     and hmac.compare_digest(existing.get("owner_token_hash","") or "",token_hash(owner_token))
+    )
   conn.commit()
  return ok
 
@@ -1636,7 +1646,7 @@ def close_stream():
 
  if not lock or lock.get("poll_station")!=ps or lock.get("stream")!=st:
   return render_template(
-   "stream_control.html",row=stream_session(ps,st,lock.get("session_date")),poll_station=ps,stream=st,
+   "stream_control.html",row=stream_session(ps,st,lock.get("session_date") if lock else None),poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
    report_header_image_url=REPORT_HEADER_IMAGE_URL,
    error="Close denied: only the device that owns the central lock for this polling-station stream can close it.",
@@ -1667,7 +1677,18 @@ def close_stream():
   )
 
  owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
- if not mark_global_stream_closed(lock,owner):
+ try:
+  centrally_closed=mark_global_stream_closed(lock,owner)
+ except Exception as exc:
+  app.logger.warning("Central stream close confirmation failed for %s / %s: %s",ps,st,exc)
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="CLOSING TEMPORARILY UNAVAILABLE: the central lock service did not confirm closure. The stream remains open and no tally state was changed. Retry when the database is available.",
+   can_close_now=True,official_close_time=close_time_message(),owns_current_stream=True
+  ),503
+ if not centrally_closed:
   return render_template(
    "stream_control.html",row=row,poll_station=ps,stream=st,
    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
@@ -1677,9 +1698,25 @@ def close_stream():
   )
 
  now=kenya_now().isoformat(timespec="seconds")
- c=con()
- c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=? AND closed_at IS NULL",(now,row["id"]))
- c.commit(); c.close()
+ c=None
+ try:
+  c=con()
+  c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=? AND closed_at IS NULL",(now,row["id"]))
+  c.commit()
+ except Exception as exc:
+  if c is not None:
+   try:c.rollback()
+   except Exception:pass
+  app.logger.exception("Local closed-stream state could not be saved for %s / %s",ps,st)
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="CLOSING PARTIALLY CONFIRMED: the central record is closed, but the local tally state could not yet be saved. Retry Close Voting Stream; the operation is safe to repeat.",
+   can_close_now=True,official_close_time=close_time_message(),owns_current_stream=True
+  ),503
+ finally:
+  if c is not None:c.close()
 
  # Once closed, voting stops unless an authenticated administrator explicitly reopens this training stream.
  # Preserve a signed read-only reference so the closed stream's tally dashboard
@@ -3128,7 +3165,7 @@ def tallies_available():
    return True,lock,row
 
  closed_ref=closed_stream_cookie()
- if closed_ref and closed_ref.get("session_date")==today_iso():
+ if closed_ref:
   row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""),closed_ref.get("session_date"))
   if row and row["closed_at"]:
    return True,closed_ref,row
@@ -3236,10 +3273,13 @@ def tallies():
      "membership_no":"","photo_url":None,"votes":votes
     })
   candidates.sort(key=lambda x:(-x["votes"],x["name"].lower()))
+  category_candidate_votes=sum(int(c.get("votes",0) or 0) for c in candidates)
   previous_votes=None; previous_rank=0
   for position,cand in enumerate(candidates,start=1):
    if previous_votes is None or cand["votes"]!=previous_votes: previous_rank=position
-   cand["rank"]=previous_rank; previous_votes=cand["votes"]
+   cand["rank"]=previous_rank
+   cand["percentage"]=(100.0*int(cand.get("votes",0) or 0)/category_candidate_votes) if category_candidate_votes else 0.0
+   previous_votes=cand["votes"]
 
   stream_summary=[]; station_acc={}; election_cast=0; election_skipped=0; election_participation=0
   stream_registered_total=authoritative_registered

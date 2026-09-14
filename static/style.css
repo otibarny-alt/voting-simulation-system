@@ -718,6 +718,12 @@ input[type="button"]{
   color:#666;
   margin-bottom:14px;
 }
+.voting-close-access{margin-top:18px}
+.voting-close-access a{
+ display:inline-block;background:#9f111b;color:#fff;border:2px solid #720b12;
+ border-radius:10px;padding:12px 18px;font-weight:800;text-decoration:none;
+}
+.voting-close-access a:hover{background:#7f0d15}
 
 .stream-lock-status{
   display:inline-block;

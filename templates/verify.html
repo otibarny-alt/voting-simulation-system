@@ -10,7 +10,19 @@
 
   <div class="odm-verification-ribbon">Entrance Approval, Voter ID &amp; Photo Verification</div>
 
-  {% if stream_ready and terminal_lock %}
+  {% if terminal_lock and stream_row and stream_row["closed_at"] %}
+   <div class="locked-station-panel closed-stream-home-panel">
+    <div class="locked-station-name">Voting stream formally closed:
+     <span class="assigned-stream-name">{{ terminal_lock.stream|replace('_',' ')|upper }}</span>
+    </div>
+    <div class="locked-station-hierarchy">
+     {{ terminal_lock.county|replace('_',' ')|upper }}
+     › {{ terminal_lock.constituency|replace('_',' ')|upper }}
+     › {{ terminal_lock.ward|replace('_',' ')|upper }}
+    </div>
+    <div class="voting-close-access"><a href="/tallies">View and Generate Closed-Stream Tallies</a></div>
+   </div>
+  {% elif stream_ready and terminal_lock %}
    <div class="locked-station-panel">
     <div class="locked-station-name">This computer is assigned to:
 <span class="assigned-stream-name">{{ terminal_lock.stream|replace('_',' ')|upper }}</span></div>
@@ -20,6 +32,9 @@
      › {{ terminal_lock.ward|replace('_',' ')|upper }}
     </div>
     <div class="stream-lock-status">Voting stream locked — pre-opening completed</div>
+    <div class="voting-close-access">
+     <a href="/stream-control#close-stream-control">Close Voting Stream &amp; Generate Tallies</a>
+    </div>
    </div>
 
    <form method=post action=/start id=voter_form>

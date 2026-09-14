@@ -31,7 +31,7 @@
  </div>
 </div>
 <table class="candidate-tally-table">
-<tr><th>Rank</th><th>Photo</th><th>Candidate</th><th>Votes</th></tr>
+<tr><th>Rank</th><th>Photo</th><th>Candidate</th><th>Votes</th><th>% of Candidate Votes</th></tr>
 {% for c in s.candidates %}
 <tr>
  <td><b>#{{c.rank}}</b></td>
@@ -47,6 +47,7 @@
   {% if c.candidate_id %}<br><small>{{c.candidate_id}}</small>{% endif %}
  </td>
  <td><b>{{c.votes}}</b></td>
+ <td><b>{{"%.2f"|format(c.percentage) }}%</b></td>
 </tr>
 {% endfor %}
 </table>
