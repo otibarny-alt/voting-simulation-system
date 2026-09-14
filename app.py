@@ -1,4 +1,4 @@
-# V23.48: use Kobo's current /submission OpenRosa endpoint (v1 removed).
+# V23.49: allow Kobo's /submission endpoint to select its response media type.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1191,7 +1191,9 @@ def submit_agent_to_kobo(values,field_map):
  # Kobo removed every /api/v1 endpoint in 2026. Transparently repair an old
  # Render override so deployments do not keep receiving HTTP 410 responses.
  submission_url=re.sub(r"/api/v1/submissions/?$","/submission",submission_url.rstrip("/"))
- headers={**kobo_headers(),"Accept":"application/xml","X-OpenRosa-Version":"1.0"}
+ # Do not send Accept: application/xml here. Kobo's current /submission view
+ # does not negotiate that media type and returns HTTP 406 before reading XML.
+ headers={**kobo_headers(),"X-OpenRosa-Version":"1.0"}
  response=requests.post(submission_url,headers=headers,files={"xml_submission_file":("submission.xml",xml_body,"text/xml")},timeout=(10,60))
  if not response.ok:
   detail=(response.text or response.reason or "Kobo rejected the submission").strip()
