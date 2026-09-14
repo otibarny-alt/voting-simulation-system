@@ -1,4 +1,4 @@
-# V23.41: direct stream closing access and reliable closed-stream tallies.
+# V23.42: isolated, reliable central PDF report repository.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -173,6 +173,8 @@ _TERMINAL_LOCK_DB_READY = False
 _TERMINAL_LOCK_DB_INIT_LOCK = threading.Lock()
 _VOTER_ACCESS_DB_READY = False
 _VOTER_ACCESS_DB_INIT_LOCK = threading.Lock()
+_REPOSITORY_DB_READY = False
+_REPOSITORY_DB_INIT_LOCK = threading.Lock()
 _DASHBOARD_SYNC_RUNNING = False
 _DASHBOARD_SYNC_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
@@ -357,8 +359,47 @@ def central_control_db():
  return psycopg.connect(
   pg_url(),row_factory=dict_row,
   connect_timeout=max(2,int(os.getenv("PG_CONTROL_CONNECT_TIMEOUT_SECONDS","5") or 5)),
-  options="-c statement_timeout=7000"
+ options="-c statement_timeout=7000"
  )
+
+def repository_db():
+ """Dedicated connection for repository metadata and PDF payloads."""
+ if not DATABASE_URL:
+  raise RuntimeError("DATABASE_URL is required for the report repository.")
+ return psycopg.connect(
+  pg_url(),row_factory=dict_row,
+  connect_timeout=max(2,int(os.getenv("PG_REPOSITORY_CONNECT_TIMEOUT_SECONDS","5") or 5)),
+  options="-c statement_timeout=30000"
+ )
+
+def init_repository_db():
+ """Initialize only the table used by the PDF repository."""
+ global _REPOSITORY_DB_READY
+ if not DATABASE_URL or _REPOSITORY_DB_READY:
+  return
+ with _REPOSITORY_DB_INIT_LOCK:
+  if _REPOSITORY_DB_READY:
+   return
+  with repository_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
+       id BIGSERIAL PRIMARY KEY,
+       session_date TEXT NOT NULL,
+       election TEXT NOT NULL,
+       election_title TEXT NOT NULL,
+       county TEXT, constituency TEXT, ward TEXT,
+       poll_station TEXT NOT NULL, stream TEXT NOT NULL,
+       closed_at TEXT, deposited_at TEXT NOT NULL,
+       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
+       UNIQUE(session_date,election,poll_station,stream)
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
+   conn.commit()
+  _REPOSITORY_DB_READY=True
 
 def init_terminal_lock_db():
  """Create only the small lock table needed to open/reset a terminal.
@@ -759,8 +800,8 @@ def delete_repository_reports_for_stream(session_date,poll_station,stream):
  Fresh PDFs will be generated after the stream is closed again."""
  if not DATABASE_URL:
   return 0
- init_global_lock_db()
- with lock_db() as conn:
+ init_repository_db()
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     DELETE FROM simulation_pdf_reports
@@ -3383,11 +3424,11 @@ def render_tally_pdf(report_html, ref=None):
 
 def repository_counts(force=False):
  if not DATABASE_URL:return {}
- init_global_lock_db()
+ init_repository_db()
  now=time.monotonic()
  if not force and _REPO_COUNTS_CACHE.get("value") and (now-_REPO_COUNTS_CACHE.get("at",0.0)) < _REPO_COUNTS_TTL:
   return dict(_REPO_COUNTS_CACHE["value"])
- with lock_db() as conn:
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports GROUP BY election")
    value={r['election']:int(r['report_count']) for r in cur.fetchall()}
@@ -3415,7 +3456,8 @@ def repository_filter_sets(election,filters):
   ("stations","poll_station",{"county":filters.get("county",""),"constituency":filters.get("constituency",""),"ward":filters.get("ward","")}),
   ("streams","stream",{"county":filters.get("county",""),"constituency":filters.get("constituency",""),"ward":filters.get("ward",""),"poll_station":filters.get("poll_station","")}),
  ]
- with lock_db() as conn:
+ init_repository_db()
+ with repository_db() as conn:
   with conn.cursor() as cur:
    for out_key,column,parents in specs:
     if column!='county':
@@ -3433,6 +3475,7 @@ def repository_filter_sets(election,filters):
  return result
 
 def repository_category_rows(election,filters,page=1,per_page=50):
+ init_repository_db()
  where=['election=%s']; params=[election]
  for key in ('county','constituency','ward','poll_station','stream'):
   val=(filters.get(key) or '').strip()
@@ -3440,7 +3483,7 @@ def repository_category_rows(election,filters,page=1,per_page=50):
    where.append(f"{key}=%s"); params.append(val)
  offset=(page-1)*per_page
  base=' AND '.join(where)
- with lock_db() as conn:
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute(f"SELECT COUNT(*) AS n FROM simulation_pdf_reports WHERE {base}",params)
    total=int(cur.fetchone()['n'])
@@ -3470,10 +3513,10 @@ def deposit_report():
  title=allowed[election]
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
  filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
- now=kenya_now().isoformat(timespec='seconds'); init_global_lock_db()
+ now=kenya_now().isoformat(timespec='seconds'); init_repository_db()
  # Critical speed path: if this stream/category PDF already exists, do NOT run
  # xhtml2pdf again. Tally pages may be revisited many times after closing.
- with lock_db() as conn:
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT id, filename FROM simulation_pdf_reports
                   WHERE session_date=%s AND election=%s AND poll_station=%s AND stream=%s
@@ -3484,7 +3527,7 @@ def deposit_report():
   return jsonify({"ok":True,"filename":existing.get('filename') or filename,"already_exists":True})
  # Generate the PDF only for a genuinely missing repository item.
  pdf=render_tally_pdf(report_html,ref)
- with lock_db() as conn:
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data)
     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -4460,7 +4503,7 @@ def report_repository_category(election):
  per_page=50
  error=''; rows=[]; total=0; pages=1; filter_sets={'counties':[],'constituencies':[],'wards':[],'stations':[],'streams':[]}
  try:
-  init_global_lock_db()
+  init_repository_db()
   rows,total=repository_category_rows(election,filters,page,per_page)
   pages=max(1,(total+per_page-1)//per_page)
   if page>pages:
@@ -4479,8 +4522,8 @@ def repository_delete(report_id):
  if not repository_admin_logged_in():
   return Response('Administrator login required to delete repository reports.',status=403)
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
- init_global_lock_db()
- with lock_db() as conn:
+ init_repository_db()
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute('SELECT id,election,filename FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
    if not r:return Response('Report not found',status=404)
@@ -4495,8 +4538,8 @@ def repository_delete(report_id):
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
- init_global_lock_db()
- with lock_db() as conn:
+ init_repository_db()
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
  if not r:return Response('Report not found',status=404)
@@ -4507,8 +4550,8 @@ def repository_pdf(report_id):
 @app.get("/report-repository/download/<int:report_id>")
 def repository_download(report_id):
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
- init_global_lock_db()
- with lock_db() as conn:
+ init_repository_db()
+ with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute('SELECT filename,pdf_data FROM simulation_pdf_reports WHERE id=%s',(report_id,)); r=cur.fetchone()
  if not r:return Response('Report not found',status=404)

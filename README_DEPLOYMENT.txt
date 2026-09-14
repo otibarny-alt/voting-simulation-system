@@ -1410,3 +1410,13 @@ V23.33 — PAGE SPEED AND ERROR ISOLATION
   during application startup.
 - Repeated terminal-lock checks within one web request reuse the first result.
 - A slow central lock service can no longer delay or crash unrelated public pages.
+
+V23.42 — RELIABLE CENTRAL PDF REPORT REPOSITORY
+
+- The report repository now uses short dedicated PostgreSQL connections instead
+  of waiting behind terminal, membership and dashboard work in the shared pool.
+- Repository startup initializes only the PDF report table and its essential
+  metadata indexes; it no longer runs the full global schema initializer.
+- Summary counts, category filters, paginated listings, deposits, PDF viewing,
+  downloads, deletions and stream-reopen cleanup all use the isolated path.
+- Optional Render setting: PG_REPOSITORY_CONNECT_TIMEOUT_SECONDS=5.
