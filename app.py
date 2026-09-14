@@ -1,5 +1,5 @@
-# V23.46: public agent recruitment portal backed by membership CSV and Kobo.
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc
+# V23.47: submit agent applications through Kobo's OpenRosa endpoint.
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -7,7 +7,8 @@ from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
 from email.message import EmailMessage
 from io import BytesIO, StringIO
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+from xml.etree import ElementTree as ET
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
@@ -107,7 +108,8 @@ MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "30
 _MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "media": {}}
 AGENTS_ASSET_UID = os.getenv("AGENTS_ASSET_UID", "a4VAzs8X6u5bq6eYWVP4o6").strip()
 AGENTS_FORM_CACHE_SECONDS = int(os.getenv("AGENTS_FORM_CACHE_SECONDS", "600") or 600)
-_AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{}}
+KOBO_OPENROSA_SUBMISSION_URL = os.getenv("KOBO_OPENROSA_SUBMISSION_URL", "").strip()
+_AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{},"deployment":{}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
@@ -1100,7 +1102,7 @@ def agent_form_field_map(force=False):
  if not AGENTS_ASSET_UID or not KOBO_API_TOKEN:
   raise RuntimeError("AGENTS_ASSET_UID and KOBO_API_TOKEN must be configured.")
  response=requests.get(f"{KOBO_BASE_URL}/api/v2/assets/{AGENTS_ASSET_UID}/",headers=kobo_headers(),timeout=(5,25))
- response.raise_for_status(); survey=((response.json().get("content") or {}).get("survey") or [])
+ response.raise_for_status(); asset=response.json(); survey=((asset.get("content") or {}).get("survey") or [])
  by_name={}
  for item in survey:
   if not isinstance(item,dict): continue
@@ -1119,7 +1121,12 @@ def agent_form_field_map(force=False):
  fallbacks={"national_id":"agent_id_no","phone":"agent_phone_no","full_name":"agent_name",
   "gender":"gender","dob":"dob","poll_station_code":"poll_station_code","poll_station":"poll_station_name"}
  for logical,path in fallbacks.items():result.setdefault(logical,path)
- _AGENTS_FORM_CACHE.update(loaded_at=now,field_map=dict(result));return result
+ deployment={
+  "identifier":str(asset.get("deployment__identifier") or "").strip(),
+  "uuid":str(asset.get("deployment__uuid") or "").strip(),
+  "version":str(asset.get("version_id") or asset.get("version") or "").strip(),
+ }
+ _AGENTS_FORM_CACHE.update(loaded_at=now,field_map=dict(result),deployment=deployment);return result
 
 def agent_member_values(row):
  first=str(row.get("first_name") or "").strip();middle=str(row.get("middle_name") or "").strip();surname=str(row.get("surname") or "").strip()
@@ -1137,12 +1144,56 @@ def existing_agent_submission(national_id,field_map):
  return rows[0] if rows else None
 
 def submit_agent_to_kobo(values,field_map):
- payload={field_map[key]:value for key,value in values.items() if value not in (None,"") and key in field_map}
- response=requests.post(f"{KOBO_BASE_URL}/api/v2/assets/{AGENTS_ASSET_UID}/data/",headers={**kobo_headers(),"Content-Type":"application/json","Accept":"application/json"},json=payload,timeout=(5,45))
+ """Create a Kobo response through OpenRosa (API v2 data is read-only)."""
+ deployment=_AGENTS_FORM_CACHE.get("deployment") or {}
+ identifier=str(deployment.get("identifier") or "").strip()
+ root_name=AGENTS_ASSET_UID
+ if identifier:
+  candidate=urlparse(identifier).path.rstrip("/").rsplit("/",1)[-1]
+  if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*",candidate or ""):
+   root_name=candidate
+ root=ET.Element(root_name,{"id":root_name})
+ version=str(deployment.get("version") or "").strip()
+ if version:root.set("version",version)
+
+ def add_value(path,value):
+  parts=[p for p in str(path or "").strip("/").split("/") if p]
+  if parts and parts[0] in ("data",root_name,AGENTS_ASSET_UID):parts=parts[1:]
+  if not parts:return
+  node=root
+  for part in parts:
+   if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*",part):
+    raise RuntimeError(f"Kobo form contains an unsupported XML field name: {part}")
+   child=node.find(part)
+   node=child if child is not None else ET.SubElement(node,part)
+  node.text=str(value)
+
+ for key,value in values.items():
+  if value not in (None,"") and key in field_map:add_value(field_map[key],value)
+ formhub=ET.SubElement(root,"formhub")
+ ET.SubElement(formhub,"uuid").text=str(deployment.get("uuid") or AGENTS_ASSET_UID)
+ if version:add_value("__version__",version)
+ instance_id="uuid:"+str(uuid.uuid4())
+ meta=ET.SubElement(root,"meta");ET.SubElement(meta,"instanceID").text=instance_id
+ xml_body=ET.tostring(root,encoding="utf-8",xml_declaration=True)
+
+ submission_url=KOBO_OPENROSA_SUBMISSION_URL
+ if not submission_url:
+  parsed=urlparse(identifier)
+  if parsed.scheme and parsed.netloc:
+   submission_url=f"{parsed.scheme}://{parsed.netloc}/api/v1/submissions"
+  else:
+   parsed=urlparse(KOBO_BASE_URL)
+   host=parsed.netloc
+   if host.startswith("kf."):host="kc."+host[3:]
+   elif host.startswith("kf-"):host="kc-"+host[3:]
+   submission_url=f"{parsed.scheme or 'https'}://{host}/api/v1/submissions"
+ headers={**kobo_headers(),"Accept":"application/xml","X-OpenRosa-Version":"1.0"}
+ response=requests.post(submission_url,headers=headers,files={"xml_submission_file":("submission.xml",xml_body,"text/xml")},timeout=(10,60))
  if not response.ok:
   detail=(response.text or response.reason or "Kobo rejected the submission").strip()
   raise RuntimeError(f"Kobo rejected the agent application ({response.status_code}): {detail[:700]}")
- return response.json() if response.content else {}
+ return {"id":instance_id}
 
 def field(row,*names):
  for n in names:
