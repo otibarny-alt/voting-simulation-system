@@ -14,6 +14,25 @@
  <a id="repository-sync-open" class="print-tally" href="/report-repository" style="display:none">Open Central PDF Repository</a>
 </div>
 
+{% if closed_stream_row %}
+<div class="admin-reopen-panel no-print">
+ <h2 style="margin-top:0">Closed Voting Stream Administration</h2>
+ <p><b>{{closed_stream_row['poll_station']|replace('_',' ')|title}} — {{closed_stream_row['stream']|replace('_',' ')|title}}</b></p>
+ {% if stream_admin_logged_in %}
+ <form method="post" action="{{ url_for('admin_reopen_stream') }}"
+       onsubmit="return confirm('ADMIN OVERRIDE: Reopen this closed training stream? Existing votes will be preserved and repository PDFs will be regenerated after it is closed again.');">
+  <input type="hidden" name="poll_station" value="{{closed_stream_row['poll_station']}}">
+  <input type="hidden" name="stream" value="{{closed_stream_row['stream']}}">
+  <button type="submit" class="admin-reopen-btn">Admin Reopen Voting Stream</button>
+ </form>
+ {% else %}
+ <a class="admin-reopen-btn" href="{{ url_for('repository_admin_login', next=url_for('stream_control', poll_station=closed_stream_row['poll_station'], stream=closed_stream_row['stream'])) }}">Admin Login to Reopen Stream</a>
+ {% endif %}
+ <a class="closed-tally-btn" style="margin-left:10px;min-width:0;padding:11px 18px;font-size:1rem" href="{{ url_for('stream_control', poll_station=closed_stream_row['poll_station'], stream=closed_stream_row['stream']) }}">Manage Closed Stream</a>
+ <p class="admin-reopen-help">Reopening preserves existing votes. Previously generated PDFs are removed because they become outdated; closing again creates updated reports.</p>
+</div>
+{% endif %}
+
 {% for s in sections %}
 <div class="card tally-section" id="tally-{{s.key}}">
 {% if report_header_image_url %}

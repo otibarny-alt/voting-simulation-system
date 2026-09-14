@@ -1,4 +1,4 @@
-# V23.44: memory-safe report rendering for constrained Render services.
+# V23.45: restored authenticated reopen control on closed tally pages.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc
 import requests
 import psycopg
@@ -1434,7 +1434,8 @@ def admin_reopen_stream():
   return redirect(url_for("stream_control"))
 
  row=stream_session(ps,st)
- central=global_lock_row(today_iso(),ps,st) if DATABASE_URL else None
+ session_date=str(row["session_date"] or today_iso()) if row else today_iso()
+ central=global_lock_row(session_date,ps,st) if DATABASE_URL else None
  if not row or not row["closed_at"] or not central or not central.get("closed_at"):
   return render_template(
    "stream_control.html",row=row,poll_station=ps,stream=st,
@@ -1447,7 +1448,7 @@ def admin_reopen_stream():
 
  owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
  lock_data={
-  "session_date":today_iso(),
+  "session_date":session_date,
   "county":central.get("county") or row["county"] or "",
   "constituency":central.get("constituency") or row["constituency"] or "",
   "ward":central.get("ward") or row["ward"] or "",
@@ -1476,7 +1477,7 @@ def admin_reopen_stream():
  # may participate. Remove only this stream's repository copies; the final close
  # will generate fresh reports containing the complete totals.
  try:
-  delete_repository_reports_for_stream(today_iso(),ps,st)
+  delete_repository_reports_for_stream(session_date,ps,st)
  except Exception as exc:
   app.logger.warning("Could not remove stale repository PDFs during reopen: %s",exc)
 
@@ -1491,7 +1492,7 @@ def admin_reopen_stream():
  resp.set_cookie(TERMINAL_OWNER_COOKIE,owner_token,
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
  resp.set_cookie(TERMINAL_ACTIVE_COOKIE,terminal_serializer().dumps({
-   "session_date":today_iso(),"poll_station":ps,"stream":st
+   "session_date":session_date,"poll_station":ps,"stream":st
   }),httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
  resp.delete_cookie(TERMINAL_CLOSED_COOKIE)
  return resp

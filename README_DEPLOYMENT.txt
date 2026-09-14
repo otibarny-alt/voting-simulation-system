@@ -1443,3 +1443,14 @@ V23.44 — MEMORY-SAFE REPORT DEPOSITION
   each category, with a short pause before the next report request.
 - Gunicorn uses one four-thread worker on memory-constrained Render plans and
   automatically recycles it after approximately 30 requests.
+
+V23.45 — RESTORED CLOSED-STREAM ADMIN REOPEN CONTROL
+
+- The closed tally dashboard again displays a prominent Manage Closed Stream
+  link and the authenticated Admin Reopen Voting Stream control.
+- Administrators who are logged out are taken through the existing protected
+  login and returned to the exact polling station and stream.
+- Reopen now retains the stream's recorded session date instead of assuming
+  today's date, so the control remains reliable across midnight.
+- Existing votes remain preserved; stale repository PDFs are removed and are
+  recreated after the reopened stream is formally closed again.
