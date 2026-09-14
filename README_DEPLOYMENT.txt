@@ -1420,3 +1420,14 @@ V23.42 — RELIABLE CENTRAL PDF REPORT REPOSITORY
 - Summary counts, category filters, paginated listings, deposits, PDF viewing,
   downloads, deletions and stream-reopen cleanup all use the isolated path.
 - Optional Render setting: PG_REPOSITORY_CONNECT_TIMEOUT_SECONDS=5.
+
+V23.43 — RELIABLE CLOSED-TALLY REPOSITORY SYNC
+
+- Closed tally reports begin saving immediately when the tally dashboard opens;
+  the former 2.5-second delay could lose every upload if the page was left early.
+- The dashboard shows progress for all six candidate categories and confirms
+  when repository counts and geographic filters are ready.
+- Failed categories are named and can be retried without closing or reopening
+  the stream. Existing votes and local tally data remain unchanged.
+- Operators should open the Central PDF Repository only after the green
+  all-reports-saved confirmation appears.

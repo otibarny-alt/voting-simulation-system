@@ -1,4 +1,4 @@
-# V23.42: isolated, reliable central PDF report repository.
+# V23.43: reliable closed-tally deposition and visible repository sync.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -4488,7 +4488,11 @@ def report_repository():
    app.logger.exception('Report repository summary could not be loaded')
    error='The report database is temporarily unavailable. The repository link is working; please retry shortly or check the Render database connection.'
  groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
- resp=app.make_response(render_template('report_repository.html',groups=groups,total_reports=sum(g['count'] for g in groups),error=error,is_admin=repository_admin_logged_in()))
+ total_reports=sum(g['count'] for g in groups)
+ resp=app.make_response(render_template(
+  'report_repository.html',groups=groups,total_reports=total_reports,error=error,
+  is_admin=repository_admin_logged_in(),has_closed_stream=bool(closed_stream_cookie())
+ ))
  resp.headers['Cache-Control']='private, max-age=15'
  return resp
 

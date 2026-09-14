@@ -5,6 +5,13 @@
 <div class="repository-ribbon">Central Polling-Station Stream PDF Repository</div>
 {% if error %}<div class=error>{{error}}</div>{% endif %}
 <div class="repo-total">Total Reports: <strong>{{total_reports}}</strong></div>
+{% if total_reports == 0 and has_closed_stream %}
+<div class="card" style="border:2px solid #ef7d00">
+ <h2>Closed tally reports have not yet been saved</h2>
+ <p>Voting records are separate from repository PDFs. Return to the closed tally dashboard and keep it open until all six reports show as saved; the filters will then populate automatically.</p>
+ <a class="repo-open-btn" href="{{ url_for('tallies') }}">Recover and Save Closed-Stream Reports</a>
+</div>
+{% endif %}
 <div class="repo-card-grid">
 {% for g in groups %}
 <a class="repo-category-card" href="/report-repository/{{g.key}}">

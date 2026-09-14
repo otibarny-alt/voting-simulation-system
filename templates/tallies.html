@@ -1,9 +1,17 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
-<header><b>Simulated Tally Dashboard</b><a href=/report-repository>Central PDF Repository</a><a href=/>Training ballot</a></header>
+<header><b>Simulated Tally Dashboard</b><a id="repository-link" href=/report-repository>Central PDF Repository</a><a href=/>Training ballot</a></header>
 <div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
 <div class=wrap>
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
+</div>
+
+<div id="repository-sync" class="card" style="border:2px solid #ef7d00">
+ <h2 style="margin-top:0">Saving Closed-Stream Reports</h2>
+ <p id="repository-sync-message">Preparing all six category reports for the Central PDF Repository. Keep this page open until saving is complete.</p>
+ <div id="repository-sync-progress" role="status" aria-live="polite"><b>Starting…</b></div>
+ <button id="repository-sync-retry" type="button" style="display:none" onclick="depositAllClosedReports()">Retry Failed Reports</button>
+ <a id="repository-sync-open" class="print-tally" href="/report-repository" style="display:none">Open Central PDF Repository</a>
 </div>
 
 {% for s in sections %}
@@ -299,23 +307,64 @@ async function depositOneClosedReport(section, attempt=1){
 }
 
 async function depositAllClosedReports(){
+  if(window.repositorySyncRunning) return;
+  window.repositorySyncRunning=true;
   const sections=[...document.querySelectorAll('.tally-section')];
   // Keep the repository responsive: do not launch six CPU-heavy PDF renders at once.
   // Send one category at a time. The server instantly skips PDFs already deposited,
   // so revisiting this page creates almost no PDF-generation load.
   const results=[];
-  for(const section of sections){
+  const progress=document.getElementById('repository-sync-progress');
+  const message=document.getElementById('repository-sync-message');
+  const retry=document.getElementById('repository-sync-retry');
+  const open=document.getElementById('repository-sync-open');
+  const headerLink=document.getElementById('repository-link');
+  retry.style.display='none'; open.style.display='none';
+  if(headerLink){
+    headerLink.setAttribute('aria-disabled','true');
+    headerLink.title='Wait until all closed-stream reports are saved';
+  }
+  for(let index=0;index<sections.length;index++){
+    const section=sections[index];
+    const title=section.querySelector('h2')?.textContent?.trim() || ('category '+(index+1));
+    progress.innerHTML='<b>Saving '+(index+1)+' of '+sections.length+': '+title+'…</b>';
     results.push(await depositOneClosedReport(section));
     // Give navigation/repository requests a chance to be served between PDF jobs.
     await new Promise(resolve=>setTimeout(resolve,120));
   }
   const failed=results.filter(r=>!r.ok);
-  if(failed.length) console.warn('Repository categories still pending:',failed);
+  window.repositorySyncRunning=false;
+  if(failed.length){
+    const names=failed.map(r=>r.election.replaceAll('_',' ')).join(', ');
+    progress.innerHTML='<b style="color:#9b0000">'+failed.length+' report(s) still need saving: '+names+'.</b>';
+    message.textContent='The votes and tallies remain safe. Use Retry Failed Reports while keeping this page open.';
+    retry.style.display='inline-block';
+    console.warn('Repository categories still pending:',failed);
+    return;
+  }
+  progress.innerHTML='<b style="color:#086b2c">✓ All '+results.length+' category reports are saved in the repository.</b>';
+  message.textContent='Repository counts and geographic filters are now ready.';
+  open.style.display='inline-block';
+  if(headerLink){
+    headerLink.removeAttribute('aria-disabled');
+    headerLink.title='';
+  }
 }
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.tally-section').forEach(updateDateTime);
   captureAllReportDetails();
-  // Closing redirects here. Deposit all six category PDFs centrally after the report page renders.
-  setTimeout(depositAllClosedReports,2500);
+  const repositoryLink=document.getElementById('repository-link');
+  if(repositoryLink){
+    repositoryLink.addEventListener('click',event=>{
+      if(window.repositorySyncRunning){
+        event.preventDefault();
+        document.getElementById('repository-sync')?.scrollIntoView({behavior:'smooth',block:'center'});
+        alert('Please wait until all six closed-stream reports are saved.');
+      }
+    });
+  }
+  // Closing redirects here. Begin immediately: delaying this work allowed an
+  // operator to leave the page before any repository report was saved.
+  depositAllClosedReports();
 });
 </script>
