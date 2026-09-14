@@ -1,5 +1,5 @@
-# V23.43: reliable closed-tally deposition and visible repository sync.
-import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
+# V23.44: memory-safe report rendering for constrained Render services.
+import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -3391,7 +3391,11 @@ def tallies():
 def render_tally_pdf(report_html, ref=None):
  ref=ref or {}
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
- report_html=re.sub(r'(src=["\'])(/[^"\']+)(["\'])',lambda m:m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),report_html,flags=re.I)
+ # Repository PDFs are archival tally documents, not photo-verification pages.
+ # Loading every remote candidate image (twice per candidate) caused xhtml2pdf
+ # to exceed the memory limit on Render. Remove all images from the submitted
+ # section; one local ODM report header is added below.
+ report_html=re.sub(r'<img\b[^>]*>','',report_html,flags=re.I|re.S)
  css="""
  @page { size: A4; margin: 7mm; }
  body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:9pt;line-height:1.12}
@@ -3418,9 +3422,19 @@ def render_tally_pdf(report_html, ref=None):
  except Exception as exc: app.logger.warning("Could not prepare repository PDF header: %s",exc)
  geo_ident='<table border="1" cellspacing="0" cellpadding="3" width="100%" style="border:1px solid #777;margin:0 0 5px 0;font-size:9pt;line-height:1.05"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:9.5pt;padding:3px"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
  html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 4px}.pdf-odm-header img{width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:5px;font-size:9pt">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>'
- buf=BytesIO(); result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
- if result.err: raise RuntimeError("PDF rendering failed")
- return buf.getvalue()
+ buf=BytesIO()
+ try:
+  result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
+  if result.err: raise RuntimeError("PDF rendering failed")
+  return buf.getvalue()
+ finally:
+  buf.close()
+  # xhtml2pdf builds a large temporary document tree. Release it before the
+  # next category request reaches this long-lived Gunicorn worker.
+  try: del result
+  except Exception: pass
+  del html,report_html,pdf_header_html
+  gc.collect()
 
 def repository_counts(force=False):
  if not DATABASE_URL:return {}
@@ -3535,6 +3549,8 @@ def deposit_report():
     (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf)))
   conn.commit()
  invalidate_repository_cache()
+ del pdf,report_html
+ gc.collect()
  return jsonify({"ok":True,"filename":filename})
 
 @app.route("/report-repository/admin-login", methods=["GET","POST"])

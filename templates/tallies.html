@@ -330,7 +330,9 @@ async function depositAllClosedReports(){
     progress.innerHTML='<b>Saving '+(index+1)+' of '+sections.length+': '+title+'…</b>';
     results.push(await depositOneClosedReport(section));
     // Give navigation/repository requests a chance to be served between PDF jobs.
-    await new Promise(resolve=>setTimeout(resolve,120));
+    // Let the server complete cleanup before asking the same worker to render
+    // the next category PDF.
+    await new Promise(resolve=>setTimeout(resolve,1200));
   }
   const failed=results.filter(r=>!r.ok);
   window.repositorySyncRunning=false;

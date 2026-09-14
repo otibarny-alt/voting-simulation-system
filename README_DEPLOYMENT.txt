@@ -1431,3 +1431,15 @@ V23.43 — RELIABLE CLOSED-TALLY REPOSITORY SYNC
   the stream. Existing votes and local tally data remain unchanged.
 - Operators should open the Central PDF Repository only after the green
   all-reports-saved confirmation appears.
+
+V23.44 — MEMORY-SAFE REPORT DEPOSITION
+
+- Archived tally PDFs no longer download every candidate photograph twice
+  during rendering. Candidate names, IDs, vote totals, percentages, geographic
+  identification, participation figures and certification tables remain.
+- The duplicate header embedded in the submitted report section is removed;
+  the PDF keeps one local ODM report header.
+- Large renderer objects are explicitly released and garbage-collected after
+  each category, with a short pause before the next report request.
+- Gunicorn uses one four-thread worker on memory-constrained Render plans and
+  automatically recycles it after approximately 30 requests.
