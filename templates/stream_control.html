@@ -33,7 +33,8 @@ The polling-station stream is centrally reserved to this device. Another device 
          onclick="this.classList.add('reset-clicked')">Reset Terminal for New Stream</button>
 </form>
 {% elif not (row and row["opened_at"] and not row["closed_at"] and not reset_required) %}
-<p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes. Close the stream first.</p>
+<p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes.
+ <a href="#close-stream-control">Go to Close Voting Stream</a>, complete the closing process and tallies, then reset the terminal.</p>
 {% endif %}
 {% endif %}
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
@@ -144,7 +145,7 @@ if(openBtn){
 <p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
 {% if row and not row["closed_at"] %}
- <div class="close-control-panel">
+ <div class="close-control-panel" id="close-stream-control">
   {% if owns_current_stream and can_close_now %}
    <form method=post action=/stream/close class="close-stream-form"
          onsubmit="return confirm('Close this voting stream now? Voting will stop. An authenticated administrator can reopen it later if additional eligible voters must participate.');">

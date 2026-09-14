@@ -1,4 +1,4 @@
-# V23.38: preserve an opened voting stream across midnight until formal close.
+# V23.39: nonblocking terminal state with safe deferred central-lock release.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -768,6 +768,17 @@ def release_global_lock(lock_data, owner_token):
        AND owner_token_hash=%s AND released_at IS NULL
     """,(now,lock_data["session_date"],lock_data["poll_station"],lock_data["stream"],token_hash(owner_token)))
     ok=cur.rowcount==1
+    if not ok:
+     cur.execute("""
+      SELECT owner_token_hash,released_at FROM simulation_terminal_locks
+      WHERE session_date=%s AND poll_station=%s AND stream=%s
+      LIMIT 1
+     """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
+     existing=cur.fetchone()
+     ok=bool(
+      existing and existing.get("released_at")
+      and hmac.compare_digest(existing.get("owner_token_hash","") or "",token_hash(owner_token))
+     )
    conn.commit()
   return ok
 
@@ -788,6 +799,7 @@ TERMINAL_LOCK_COOKIE = "training_terminal_stream_lock"
 TERMINAL_OWNER_COOKIE = "training_terminal_owner_token"
 TERMINAL_ACTIVE_COOKIE = "training_terminal_active_stream"
 TERMINAL_CLOSED_COOKIE = "training_terminal_closed_stream"
+TERMINAL_PENDING_RELEASE_COOKIE = "training_terminal_pending_release"
 TERMINAL_LOCK_SALT = "training-terminal-stream-v22"
 
 def terminal_serializer():
@@ -815,38 +827,24 @@ def signed_terminal_cookie_lock():
 def terminal_lock():
  if hasattr(g,"terminal_lock_result"):
   return g.terminal_lock_result
- raw=request.cookies.get(TERMINAL_LOCK_COOKIE,"")
- owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
- if not raw or not owner:
-  g.terminal_lock_result=None
-  return None
- result=None
- try:
-  data=terminal_serializer().loads(raw)
-  if isinstance(data,dict) and data.get("poll_station") and data.get("stream"):
-   # A browser cookie alone is no longer sufficient. The central PostgreSQL
-   # registry must confirm this exact device owns the stream.
-   try:
-    if owns_global_lock(data,owner):
-     result=data
-   except Exception as exc:
-    # A short PostgreSQL interruption must not make an already opened terminal
-    # appear reset between voters. Accept the signed active-stream cookie only
-    # as a temporary local fallback; lock-changing actions still require the DB.
-    app.logger.warning("Central lock verification deferred for active terminal: %s",exc)
-    active_raw=request.cookies.get(TERMINAL_ACTIVE_COOKIE,"")
-    if active_raw:
-     active=terminal_serializer().loads(active_raw)
-     if isinstance(active,dict) and all(
-      str(active.get(k,""))==str(data.get(k,""))
-     for k in ("session_date","poll_station","stream")
-     ):
-      g.terminal_lock_result=data
-      return data
- except (BadSignature,Exception):
-  pass
+ # Normal navigation must never wait for PostgreSQL. The signed assignment and
+ # HttpOnly owner token identify this device locally; all mutations (claim,
+ # close and release) still enforce the owner-token hash in PostgreSQL.
+ result=signed_terminal_cookie_lock()
  g.terminal_lock_result=result
  return result
+
+def pending_terminal_release():
+ raw=request.cookies.get(TERMINAL_PENDING_RELEASE_COOKIE,"")
+ if not raw:
+  return None
+ try:
+  data=terminal_serializer().loads(raw)
+ except BadSignature:
+  return None
+ if not isinstance(data,dict) or not all(data.get(k) for k in ("session_date","poll_station","stream")):
+  return None
+ return data
 
 
 def norm_key(v):
@@ -1294,32 +1292,35 @@ def terminal_reset():
   )
 
  owner=request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+ release_pending=False
  try:
   released=release_global_lock(lock,owner)
  except Exception as exc:
-  app.logger.exception("Terminal reset could not release the central stream lock")
-  return render_template(
-   "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
-   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error=f"TERMINAL RESET TEMPORARILY UNAVAILABLE: the central lock service did not respond. Nothing was reset; this terminal remains assigned to its current stream. Wait a few seconds and retry. {exc}"
-  ),503
+  app.logger.warning("Central stream release deferred during terminal reset: %s",exc)
+  released=False
+  release_pending=True
  if not released:
-  return render_template(
-   "stream_control.html",row=row,poll_station=lock.get("poll_station",""),
-   stream=lock.get("stream",""),open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error="Terminal reset denied: only the device that originally locked this stream can release it."
-  )
+  # Keep the signed release request and owner token. Before this device can
+  # open another stream, open_stream() must finish releasing this old lock.
+  # This is fail-safe: an unavailable database leaves the old stream over-
+  # locked centrally rather than allowing another device to take it over.
+  release_pending=True
 
  session.clear()
  session["awaiting_new_stream_after_reset"]=True
  session["terminal_reset_completed"]=True
+ if release_pending:
+  session["terminal_reset_notice"]="Terminal reset locally. The previous central lock will be released automatically before a new stream is opened."
  resp=redirect(url_for("stream_control"))
  resp.delete_cookie(TERMINAL_LOCK_COOKIE)
- resp.delete_cookie(TERMINAL_OWNER_COOKIE)
  resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
  resp.delete_cookie(TERMINAL_CLOSED_COOKIE)
+ if release_pending:
+  resp.set_cookie(TERMINAL_PENDING_RELEASE_COOKIE,terminal_serializer().dumps(lock),
+                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+ else:
+  resp.delete_cookie(TERMINAL_OWNER_COOKIE)
+  resp.delete_cookie(TERMINAL_PENDING_RELEASE_COOKIE)
  return resp
 
 @app.get("/stream-control")
@@ -1355,7 +1356,7 @@ def stream_control():
   official_close_time=close_time_message(),
   owns_current_stream=owns_current,
   stream_admin_logged_in=repository_admin_logged_in(),
-  reopened_notice=session.pop("stream_reopened_notice","")
+  reopened_notice=session.pop("stream_reopened_notice","") or session.pop("terminal_reset_notice","")
  )
 
 @app.post("/stream/admin-reopen")
@@ -1504,6 +1505,26 @@ def open_stream():
             "poll_station_code":f.get("poll_station_code","").strip(),"session_date":today_iso()}
  owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
 
+ pending_release=pending_terminal_release()
+ if pending_release:
+  try:
+   previous_released=release_global_lock(pending_release,owner_token)
+  except Exception as exc:
+   app.logger.warning("Pending terminal release could not be completed before opening: %s",exc)
+   return render_template(
+    "stream_control.html",row=None,poll_station=ps,stream=st,
+    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+    report_header_image_url=REPORT_HEADER_IMAGE_URL,
+    error="OPENING PAUSED: this terminal was reset locally, but the previous central lock is still awaiting database confirmation. No new stream was opened. Retry when the central database is available."
+   ),503
+  if not previous_released:
+   return render_template(
+    "stream_control.html",row=None,poll_station=ps,stream=st,
+    open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+    report_header_image_url=REPORT_HEADER_IMAGE_URL,
+    error="OPENING BLOCKED: the previous central stream lock could not be released by this device. An administrator must inspect the central lock record."
+   ),409
+
  try:
   claimed,central_row=claim_global_lock(lock_data,owner_token)
  except Exception as exc:
@@ -1595,6 +1616,7 @@ def open_stream():
   }),
   httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
  )
+ resp.delete_cookie(TERMINAL_PENDING_RELEASE_COOKIE)
  return resp
 
 @app.post("/stream/close")
