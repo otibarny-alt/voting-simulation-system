@@ -1,4 +1,4 @@
-# V23.39: nonblocking terminal state with safe deferred central-lock release.
+# V23.40: compressed cached static assets and higher-concurrency web serving.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy
 import requests
 import psycopg
@@ -13,6 +13,10 @@ from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g
 from markupsafe import escape
+try:
+ from whitenoise import WhiteNoise
+except ImportError:  # Local source inspection can run before dependencies install.
+ WhiteNoise=None
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4, landscape
@@ -23,6 +27,12 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 app.config["MAX_CONTENT_LENGTH"]=int(os.getenv("DATA_UPLOAD_MAX_MB","30") or 30)*1024*1024
+app.config["SEND_FILE_MAX_AGE_DEFAULT"]=3600
+if WhiteNoise is not None:
+ app.wsgi_app=WhiteNoise(
+  app.wsgi_app,root=os.path.join(os.path.dirname(os.path.abspath(__file__)),"static"),
+  prefix="static/",max_age=3600
+ )
 DB=os.getenv("DEMO_DB_PATH","training_votes.db")
 KENYA_TZ=ZoneInfo("Africa/Nairobi")
 OFFICIAL_CLOSE_TIME="08:00"
@@ -132,10 +142,10 @@ if DATABASE_URL:
   if _pool_url.startswith("postgres://"):
    _pool_url = "postgresql://" + _pool_url[len("postgres://"):]
   _pool_min=max(0,int(os.getenv("PG_POOL_MIN_SIZE", "0") or 0))
-  _pool_max=max(1,int(os.getenv("PG_POOL_MAX_SIZE", "2") or 2))
+  _pool_max=max(1,int(os.getenv("PG_POOL_MAX_SIZE", "4") or 4))
   if _pool_min>_pool_max:
    _pool_min=_pool_max
-  _pool_timeout=max(5,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "30") or 30))
+  _pool_timeout=max(3,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "8") or 8))
   PG_POOL = ConnectionPool(
    conninfo=_pool_url,
    min_size=_pool_min,
@@ -337,7 +347,7 @@ def lock_db():
  if not DATABASE_URL:
   raise RuntimeError("DATABASE_URL is required for global device locking.")
  if PG_POOL is not None:
-  return PG_POOL.connection(timeout=max(5,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "30") or 30)))
+  return PG_POOL.connection(timeout=max(3,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "8") or 8)))
  return psycopg.connect(pg_url(), row_factory=dict_row)
 
 def central_control_db():
