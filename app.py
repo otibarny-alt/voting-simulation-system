@@ -1,4 +1,4 @@
-# V23.49: allow Kobo's /submission endpoint to select its response media type.
+# V23.50: map every agent field to its real deployed Kobo XPath.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1082,17 +1082,28 @@ def kobo_headers():
  return {"Authorization": f"Token {KOBO_API_TOKEN}"}
 
 AGENT_FIELD_ALIASES={
- "national_id":["agent_id_no","national_id_no","national_id","id_number"],
- "phone":["agent_phone_no","phone_no","phone_number","mobile_no"],
- "full_name":["agent_name","full_name","member_name","name"],
- "gender":["gender","sex"],"dob":["dob","date_of_birth"],
- "membership_no":["odm_membership_no","membership_no","registration_no"],
- "county":["county","selected_county"],
- "constituency":["constituency","selected_constituency"],
- "ward":["ward","selected_ward"],
- "poll_station":["poll_station_name","poll_station","selected_poll_station1"],
- "poll_station_code":["poll_station_code","polling_station_code"],
+ "national_id":["agent_id_no","agent_national_id","national_id_no","national_id","id_number","national_id_number"],
+ "phone":["agent_phone_no","agent_phone","phone_no","phone_number","mobile_no","mobile_number"],
+ "full_name":["agent_name","agent_full_name","full_name","member_name","name","name_in_full"],
+ "gender":["agent_gender","gender","sex"],"dob":["agent_dob","dob","date_of_birth","birth_date"],
+ "membership_no":["agent_membership_no","agent_odm_membership_no","odm_membership_no","odm_membership_number","odm_registration_number","membership_no","membership_number","registration_no"],
+ "county":["agent_county","county_name","county","selected_county"],
+ "constituency":["agent_constituency","constituency_name","constituency","selected_constituency"],
+ "ward":["agent_ward","ward_name","ward","selected_ward"],
+ "poll_station":["agent_poll_station","agent_polling_station","polling_station_name","poll_station_name","polling_station","poll_station","selected_poll_station1"],
+ "poll_station_code":["agent_poll_station_code","agent_polling_station_code","poll_station_code","polling_station_code","station_code"],
 }
+
+def _agent_field_key(value):
+ """Normalize Kobo names and human labels for safe semantic matching."""
+ return re.sub(r"[^a-z0-9]+","_",str(value or "").strip().lower()).strip("_")
+
+def _agent_label_values(value):
+ if isinstance(value,dict):
+  return [text for item in value.values() for text in _agent_label_values(item)]
+ if isinstance(value,list):
+  return [text for item in value for text in _agent_label_values(item)]
+ return [str(value)] if value not in (None,"") else []
 
 def agent_form_field_map(force=False):
  """Resolve actual grouped Kobo field paths from the deployed agent form."""
@@ -1112,15 +1123,18 @@ def agent_form_field_map(force=False):
   name=str(item.get("name") or "").strip()
   if not name: continue
   path=str(item.get("$xpath") or item.get("xpath") or name).strip().strip("/")
-  by_name.setdefault(name.lower(),path);by_name.setdefault(path.rsplit("/",1)[-1].lower(),path)
+  candidates=[name,path.rsplit("/",1)[-1]]
+  candidates.extend(_agent_label_values(item.get("label")))
+  candidates.extend(_agent_label_values(item.get("hint")))
+  for candidate in candidates:
+   key=_agent_field_key(candidate)
+   if key:by_name.setdefault(key,path)
  result={}
  for logical,aliases in AGENT_FIELD_ALIASES.items():
   for alias in aliases:
-   if alias.lower() in by_name:
-    result[logical]=by_name[alias.lower()];break
- fallbacks={"national_id":"agent_id_no","phone":"agent_phone_no","full_name":"agent_name",
-  "gender":"gender","dob":"dob","poll_station_code":"poll_station_code","poll_station":"poll_station_name"}
- for logical,path in fallbacks.items():result.setdefault(logical,path)
+   key=_agent_field_key(alias)
+   if key in by_name:
+    result[logical]=by_name[key];break
  deployment={
   "identifier":str(asset.get("deployment__identifier") or "").strip(),
   "uuid":str(asset.get("deployment__uuid") or "").strip(),
@@ -1145,6 +1159,10 @@ def existing_agent_submission(national_id,field_map):
 
 def submit_agent_to_kobo(values,field_map):
  """Create a Kobo response through OpenRosa (API v2 data is read-only)."""
+ required=[key for key,value in values.items() if value not in (None,"")]
+ missing=[key.replace("_"," ") for key in required if key not in field_map]
+ if missing:
+  raise RuntimeError("These fields could not be matched to the deployed Kobo Agents form: "+", ".join(missing)+". Check the question names or labels in that form.")
  deployment=_AGENTS_FORM_CACHE.get("deployment") or {}
  identifier=str(deployment.get("identifier") or "").strip()
  root_name=AGENTS_ASSET_UID
