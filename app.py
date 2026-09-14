@@ -1,4 +1,4 @@
-# V23.47: submit agent applications through Kobo's OpenRosa endpoint.
+# V23.48: use Kobo's current /submission OpenRosa endpoint (v1 removed).
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1181,13 +1181,16 @@ def submit_agent_to_kobo(values,field_map):
  if not submission_url:
   parsed=urlparse(identifier)
   if parsed.scheme and parsed.netloc:
-   submission_url=f"{parsed.scheme}://{parsed.netloc}/api/v1/submissions"
+   submission_url=f"{parsed.scheme}://{parsed.netloc}/submission"
   else:
    parsed=urlparse(KOBO_BASE_URL)
    host=parsed.netloc
    if host.startswith("kf."):host="kc."+host[3:]
    elif host.startswith("kf-"):host="kc-"+host[3:]
-   submission_url=f"{parsed.scheme or 'https'}://{host}/api/v1/submissions"
+   submission_url=f"{parsed.scheme or 'https'}://{host}/submission"
+ # Kobo removed every /api/v1 endpoint in 2026. Transparently repair an old
+ # Render override so deployments do not keep receiving HTTP 410 responses.
+ submission_url=re.sub(r"/api/v1/submissions/?$","/submission",submission_url.rstrip("/"))
  headers={**kobo_headers(),"Accept":"application/xml","X-OpenRosa-Version":"1.0"}
  response=requests.post(submission_url,headers=headers,files={"xml_submission_file":("submission.xml",xml_body,"text/xml")},timeout=(10,60))
  if not response.ok:

@@ -1468,8 +1468,8 @@ V23.46 — AGENT RECRUITMENT PORTAL
     AGENTS_ASSET_UID=a4VAzs8X6u5bq6eYWVP4o6
     KOBO_OPENROSA_SUBMISSION_URL=
 
-Agent applications are created through Kobo's OpenRosa submission endpoint.
-The application normally derives the kc.* endpoint automatically from Kobo.
+Agent applications are created through Kobo's current OpenRosa /submission endpoint.
+The application normally derives the kc.*/submission endpoint automatically from Kobo.
 Set KOBO_OPENROSA_SUBMISSION_URL only for a custom/self-hosted Kobo domain.
 - Duplicate agent applications are blocked by National ID before confirmation
   and checked again immediately before writing to Kobo.
