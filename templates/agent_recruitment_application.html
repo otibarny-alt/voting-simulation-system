@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Confirm Agent Application</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>.agent-wrap{max-width:1050px;margin:30px auto;padding:0 18px}.agent-card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:28px}.agent-grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:18px}.agent-grid label{font-weight:800}.agent-grid input{box-sizing:border-box;width:100%;margin-top:6px;background:#eef1f4;color:#222}.agent-note{background:#eef5ff;border:1px solid #78a7df;border-radius:9px;padding:13px;margin:16px 0}.agent-error{background:#fdecec;border:1px solid #c52b37;padding:12px;border-radius:8px;color:#8b1520;font-weight:700}.agent-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}.agent-actions form{margin:0}.confirm{display:flex;gap:10px;align-items:flex-start;margin-top:20px;font-weight:750}.confirm input{width:auto;margin-top:5px}@media(max-width:700px){.agent-grid{grid-template-columns:1fr}}</style>
+</head><body>
+<header><b>ODM Agent Recruitment Portal</b></header>
+<main class="agent-wrap"><section class="agent-card">
+ <h1>Confirm Membership Details</h1>
+ <div class="agent-note">These details were pulled from <b>membership_registration.csv</b> and are locked. To correct them, use the Membership Registration Portal before submitting an agent application.</div>
+ {% if error %}<div class="agent-error">{{error}}</div>{% endif %}
+ <form method="post" id="agent-submit-form">
+  <input type="hidden" name="csrf_token" value="{{csrf_token}}">
+  <div class="agent-grid">
+  {% for key,label in [('national_id','National ID'),('membership_no','ODM membership number'),('full_name','Full name'),('phone','Phone number'),('gender','Gender'),('dob','Date of birth'),('county','County'),('constituency','Constituency'),('ward','Ward'),('poll_station','Polling station'),('poll_station_code','Polling station code')] %}
+   <label>{{label}}<input value="{{values.get(key,'')}}" readonly tabindex="-1"></label>
+  {% endfor %}
+  </div>
+  <label class="confirm"><input type="checkbox" name="confirm_membership" value="yes" required><span>I confirm that these membership details belong to me and I want to submit my agent application to the ODM Kobo Agents Recruitment project.</span></label>
+  <div class="agent-actions"><button type="submit" onclick="this.disabled=true;this.textContent='Submitting to Kobo…';this.form.submit()">Submit Agent Application</button></div>
+ </form>
+ <form method="post" action="{{url_for('agent_recruitment_cancel')}}" style="margin-top:12px"><button type="submit" class="secondary">Cancel / Use Another ID</button></form>
+</section></main></body></html>

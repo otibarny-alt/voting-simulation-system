@@ -1454,3 +1454,20 @@ V23.45 — RESTORED CLOSED-STREAM ADMIN REOPEN CONTROL
   today's date, so the control remains reliable across midnight.
 - Existing votes remain preserved; stale repository PDFs are removed and are
   recreated after the reopened stream is formally closed again.
+
+V23.46 — AGENT RECRUITMENT PORTAL
+
+- Adds an independent public portal at /agents.
+- Applicants enter a 7- or 8-digit National ID. The portal checks only the
+  approved membership_registration.csv source and blocks unregistered IDs.
+- Name, ODM membership number, phone, gender, date of birth, county,
+  constituency, ward, polling station and station code are pulled from the CSV
+  and displayed read-only before submission.
+- The deployed Kobo Agents Recruitment form is inspected to resolve grouped
+  question paths automatically. The configured project is:
+    AGENTS_ASSET_UID=a4VAzs8X6u5bq6eYWVP4o6
+- Duplicate agent applications are blocked by National ID before confirmation
+  and checked again immediately before writing to Kobo.
+- The Membership Portal and Admin Data Files page link to Agent Recruitment.
+- KOBO_API_TOKEN must belong to a Kobo user with permission to view the form,
+  view submissions and add submissions in the Agents Recruitment project.

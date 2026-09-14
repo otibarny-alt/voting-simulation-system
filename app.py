@@ -1,4 +1,4 @@
-# V23.45: restored authenticated reopen control on closed tally pages.
+# V23.46: public agent recruitment portal backed by membership CSV and Kobo.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc
 import requests
 import psycopg
@@ -105,6 +105,9 @@ KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_registration.csv").strip()
 MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
 _MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "media": {}}
+AGENTS_ASSET_UID = os.getenv("AGENTS_ASSET_UID", "a4VAzs8X6u5bq6eYWVP4o6").strip()
+AGENTS_FORM_CACHE_SECONDS = int(os.getenv("AGENTS_FORM_CACHE_SECONDS", "600") or 600)
+_AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
@@ -1075,6 +1078,71 @@ def api_hierarchy():
 
 def kobo_headers():
  return {"Authorization": f"Token {KOBO_API_TOKEN}"}
+
+AGENT_FIELD_ALIASES={
+ "national_id":["agent_id_no","national_id_no","national_id","id_number"],
+ "phone":["agent_phone_no","phone_no","phone_number","mobile_no"],
+ "full_name":["agent_name","full_name","member_name","name"],
+ "gender":["gender","sex"],"dob":["dob","date_of_birth"],
+ "membership_no":["odm_membership_no","membership_no","registration_no"],
+ "county":["county","selected_county"],
+ "constituency":["constituency","selected_constituency"],
+ "ward":["ward","selected_ward"],
+ "poll_station":["poll_station_name","poll_station","selected_poll_station1"],
+ "poll_station_code":["poll_station_code","polling_station_code"],
+}
+
+def agent_form_field_map(force=False):
+ """Resolve actual grouped Kobo field paths from the deployed agent form."""
+ now=time.time(); cached=_AGENTS_FORM_CACHE.get("field_map") or {}
+ if cached and not force and now-float(_AGENTS_FORM_CACHE.get("loaded_at") or 0)<AGENTS_FORM_CACHE_SECONDS:
+  return dict(cached)
+ if not AGENTS_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("AGENTS_ASSET_UID and KOBO_API_TOKEN must be configured.")
+ response=requests.get(f"{KOBO_BASE_URL}/api/v2/assets/{AGENTS_ASSET_UID}/",headers=kobo_headers(),timeout=(5,25))
+ response.raise_for_status(); survey=((response.json().get("content") or {}).get("survey") or [])
+ by_name={}
+ for item in survey:
+  if not isinstance(item,dict): continue
+  question_type=str(item.get("type") or "").lower().replace(" ","_")
+  if question_type in ("begin_group","end_group","begin_repeat","end_repeat"):
+   continue
+  name=str(item.get("name") or "").strip()
+  if not name: continue
+  path=str(item.get("$xpath") or item.get("xpath") or name).strip().strip("/")
+  by_name.setdefault(name.lower(),path);by_name.setdefault(path.rsplit("/",1)[-1].lower(),path)
+ result={}
+ for logical,aliases in AGENT_FIELD_ALIASES.items():
+  for alias in aliases:
+   if alias.lower() in by_name:
+    result[logical]=by_name[alias.lower()];break
+ fallbacks={"national_id":"agent_id_no","phone":"agent_phone_no","full_name":"agent_name",
+  "gender":"gender","dob":"dob","poll_station_code":"poll_station_code","poll_station":"poll_station_name"}
+ for logical,path in fallbacks.items():result.setdefault(logical,path)
+ _AGENTS_FORM_CACHE.update(loaded_at=now,field_map=dict(result));return result
+
+def agent_member_values(row):
+ first=str(row.get("first_name") or "").strip();middle=str(row.get("middle_name") or "").strip();surname=str(row.get("surname") or "").strip()
+ return {"national_id":clean_national_id(row.get("national_id_no")),"phone":clean_phone(row.get("phone_no")),
+  "full_name":" ".join(x for x in (first,middle,surname) if x),"gender":str(row.get("gender") or "").strip(),
+  "dob":str(row.get("dob") or "").strip(),"membership_no":str(row.get("odm_membership_no") or "").strip(),
+  "county":str(row.get("county") or "").strip(),"constituency":str(row.get("constituency") or "").strip(),
+  "ward":str(row.get("ward") or "").strip(),"poll_station":str(row.get("poll_station") or "").strip(),
+  "poll_station_code":str(row.get("poll_station_code") or "").strip()}
+
+def existing_agent_submission(national_id,field_map):
+ path=field_map["national_id"]
+ response=requests.get(f"{KOBO_BASE_URL}/api/v2/assets/{AGENTS_ASSET_UID}/data/",headers=kobo_headers(),params={"query":json.dumps({path:national_id}),"limit":1},timeout=(5,25))
+ response.raise_for_status();payload=response.json();rows=payload.get("results",payload if isinstance(payload,list) else [])
+ return rows[0] if rows else None
+
+def submit_agent_to_kobo(values,field_map):
+ payload={field_map[key]:value for key,value in values.items() if value not in (None,"") and key in field_map}
+ response=requests.post(f"{KOBO_BASE_URL}/api/v2/assets/{AGENTS_ASSET_UID}/data/",headers={**kobo_headers(),"Content-Type":"application/json","Accept":"application/json"},json=payload,timeout=(5,45))
+ if not response.ok:
+  detail=(response.text or response.reason or "Kobo rejected the submission").strip()
+  raise RuntimeError(f"Kobo rejected the agent application ({response.status_code}): {detail[:700]}")
+ return response.json() if response.content else {}
 
 def field(row,*names):
  for n in names:
@@ -4259,6 +4327,59 @@ def membership_portal():
     app.logger.exception("Membership portal lookup failed")
     error=f"Membership lookup is temporarily unavailable: {exc}"
  return render_template("membership_portal.html",error=error)
+
+@app.route("/agents",methods=["GET","POST"])
+def agent_recruitment_portal():
+ error=None
+ if request.method=="POST":
+  national_id=clean_national_id(request.form.get("national_id"))
+  if not re.fullmatch(r"\d{7,8}",national_id):error="Enter a valid 7- or 8-digit National ID number."
+  else:
+   try:
+    row=_load_membership_csv().get(national_id)
+    if not row:error="This National ID was not found in membership_registration.csv. Complete membership registration before applying as an agent."
+    else:
+     field_map=agent_form_field_map()
+     if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID in Kobo. Duplicate applications are not allowed."
+     else:
+      session["agent_member_id"]=national_id;session["agent_csrf"]=secrets.token_urlsafe(32)
+      return redirect(url_for("agent_recruitment_application"))
+   except Exception as exc:
+    app.logger.exception("Agent recruitment verification failed");error=f"Agent verification is temporarily unavailable: {exc}"
+ return render_template("agent_recruitment_portal.html",error=error)
+
+@app.route("/agents/application",methods=["GET","POST"])
+def agent_recruitment_application():
+ national_id=clean_national_id(session.get("agent_member_id"))
+ if not national_id:return redirect(url_for("agent_recruitment_portal"))
+ token=session.get("agent_csrf") or secrets.token_urlsafe(32);session["agent_csrf"]=token
+ try:
+  row=_load_membership_csv().get(national_id)
+  if not row:raise RuntimeError("The verified membership record is no longer available.")
+  values=agent_member_values(row)
+ except Exception as exc:return render_template("agent_recruitment_application.html",values={},csrf_token=token,error=str(exc)),502
+ error=None
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):error="Security token expired. Reload the page and try again."
+  elif request.form.get("confirm_membership")!="yes":error="Confirm that the displayed membership details belong to you."
+  elif not all(values.get(k) for k in ("national_id","full_name","membership_no","poll_station")):error="The membership record is incomplete. National ID, name, ODM membership number and polling station are required."
+  else:
+   try:
+    field_map=agent_form_field_map(force=True)
+    if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID in Kobo."
+    else:
+     result=submit_agent_to_kobo(values,field_map);session.pop("agent_member_id",None);session.pop("agent_csrf",None)
+     submission_id=(result.get("_id") or result.get("id") or "") if isinstance(result,dict) else ""
+     return render_template("agent_recruitment_complete.html",values=values,submission_id=submission_id)
+   except Exception as exc:
+    app.logger.exception("Kobo agent application submission failed");error=f"The application was not saved: {exc}"
+ return render_template("agent_recruitment_application.html",values=values,csrf_token=token,error=error)
+
+@app.post("/agents/cancel")
+def agent_recruitment_cancel():
+ session.pop("agent_member_id",None);session.pop("agent_csrf",None)
+ return redirect(url_for("agent_recruitment_portal"))
 
 
 @app.route("/membership/application",methods=["GET","POST"])
