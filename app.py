@@ -1,4 +1,4 @@
-# V23.52: preserve authoritative opened/closed stream state in all six live result feeds.
+# V23.53: preserve stream state and remove repeated dashboard database waits.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -158,7 +158,11 @@ if DATABASE_URL:
    timeout=_pool_timeout,
    max_idle=300,
    max_lifetime=1800,
-   kwargs={"row_factory": dict_row},
+   kwargs={
+    "row_factory":dict_row,
+    "connect_timeout":max(2,int(os.getenv("PG_CONNECT_TIMEOUT_SECONDS","5") or 5)),
+    "options":"-c statement_timeout=12000"
+   },
    open=True
   )
   # Build the minimum pool connections during worker startup so the first
@@ -355,7 +359,11 @@ def lock_db():
   raise RuntimeError("DATABASE_URL is required for global device locking.")
  if PG_POOL is not None:
   return PG_POOL.connection(timeout=max(3,int(os.getenv("PG_POOL_TIMEOUT_SECONDS", "8") or 8)))
- return psycopg.connect(pg_url(), row_factory=dict_row)
+ return psycopg.connect(
+  pg_url(),row_factory=dict_row,
+  connect_timeout=max(2,int(os.getenv("PG_CONNECT_TIMEOUT_SECONDS","5") or 5)),
+  options="-c statement_timeout=12000"
+ )
 
 def central_control_db():
  """Short dedicated connection for time-critical stream lock operations."""
@@ -2473,27 +2481,27 @@ def dashboard_api_authorized():
 # requests from repeating the same PostgreSQL aggregation at the same moment.
 _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _GOV_DASHBOARD_CACHE_LOCK=threading.Lock()
-GOV_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","3")))
+GOV_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","15")))
 
 _PRES_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _PRES_DASHBOARD_CACHE_LOCK=threading.Lock()
-PRES_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("PRES_DASHBOARD_CACHE_SECONDS","3")))
+PRES_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("PRES_DASHBOARD_CACHE_SECONDS","15")))
 
 _SEN_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _SEN_DASHBOARD_CACHE_LOCK=threading.Lock()
-SEN_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","3")))
+SEN_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","15")))
 
 _WOMAN_REP_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _WOMAN_REP_DASHBOARD_CACHE_LOCK=threading.Lock()
-WOMAN_REP_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("WOMAN_REP_DASHBOARD_CACHE_SECONDS","3")))
+WOMAN_REP_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("WOMAN_REP_DASHBOARD_CACHE_SECONDS","15")))
 
 _MNA_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _MNA_DASHBOARD_CACHE_LOCK=threading.Lock()
-MNA_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("MNA_DASHBOARD_CACHE_SECONDS","3")))
+MNA_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("MNA_DASHBOARD_CACHE_SECONDS","15")))
 
 _MCA_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _MCA_DASHBOARD_CACHE_LOCK=threading.Lock()
-MCA_DASHBOARD_CACHE_SECONDS=max(1,int(os.getenv("MCA_DASHBOARD_CACHE_SECONDS","3")))
+MCA_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("MCA_DASHBOARD_CACHE_SECONDS","15")))
 
 
 def _build_woman_rep_dashboard_payload():
