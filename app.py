@@ -1,4 +1,4 @@
-# V23.50: map every agent field to its real deployed Kobo XPath.
+# V23.52: preserve authoritative opened/closed stream state in all six live result feeds.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -2508,7 +2508,10 @@ def _build_woman_rep_dashboard_payload():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   # released_at only means that the terminal/device lock was released.  It does
+   # not undo the formal opening of the polling-station stream.  A stream stays
+   # OPEN from locked_at until closed_at is recorded.
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "",
     "county":r.get("county") or "",
@@ -2672,8 +2675,8 @@ def api_dashboard_president():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   # A released, unclosed lock is not an active opened stream.
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   # Releasing a device reservation must not erase the formal stream opening.
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "",
     "county":r.get("county") or "",
@@ -2825,8 +2828,8 @@ def api_dashboard_governor():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   # A released, unclosed lock is not an active opened stream.
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   # A released device reservation does not undo the formal stream opening.
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "",
     "county":r.get("county") or "",
@@ -2983,8 +2986,8 @@ def api_dashboard_senator():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   # A released, unclosed lock is not an active opened stream.
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   # A released device reservation does not undo the formal stream opening.
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "",
     "county":r.get("county") or "",
@@ -3127,7 +3130,7 @@ def _build_mna_dashboard_payload():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "","county":r.get("county") or "",
     "constituency":r.get("constituency") or "","ward":r.get("ward") or "",
@@ -3247,7 +3250,7 @@ def _build_mca_dashboard_payload():
   rows,lock_rows=persistent
   sessions=[]
   for r in lock_rows:
-   opened_at=(r.get("locked_at") or "") if not r.get("released_at") or r.get("closed_at") else ""
+   opened_at=r.get("locked_at") or ""
    sessions.append({
     "session_date":r.get("session_date") or "","county":r.get("county") or "",
     "constituency":r.get("constituency") or "","ward":r.get("ward") or "",
@@ -3813,6 +3816,14 @@ def latest_membership_request(national_id):
                   WHERE national_id=%s ORDER BY submitted_at DESC,id DESC LIMIT 1""",
                (clean_national_id(national_id),))
    return membership_request_row(cur.fetchone())
+
+def optional_latest_membership_request(national_id):
+ """Return approval state without taking down the public CSV lookup."""
+ try:
+  return latest_membership_request(national_id),None
+ except Exception as exc:
+  app.logger.warning("Membership approval database unavailable for %s: %s",clean_national_id(national_id),exc)
+  return None,str(exc)
 
 def membership_csv_source_bytes():
  media=current_membership_csv_media()
@@ -4389,12 +4400,13 @@ def membership_portal():
   else:
    try:
     csv_row=_load_membership_csv().get(national_id)
-    latest=latest_membership_request(national_id)
+    latest,approval_db_error=optional_latest_membership_request(national_id)
     session["membership_member_id"]=national_id
     session["membership_member_phone"]=clean_phone(
      (csv_row or {}).get("phone_no") or ((latest or {}).get("request_data") or {}).get("phone_no")
     )
     session["membership_member_existing"]=bool(csv_row)
+    session["membership_approval_db_error"]=bool(approval_db_error)
     session["membership_csrf"]=secrets.token_urlsafe(32)
     return redirect(url_for("membership_application"))
    except Exception as exc:
@@ -4463,9 +4475,9 @@ def membership_application():
   return redirect(url_for("membership_portal"))
  try:
   current=_load_membership_csv().get(national_id)
-  latest=latest_membership_request(national_id)
  except Exception as exc:
   return render_template("membership_application.html",national_id=national_id,current={},values={},latest=None,csrf_token=session.get("membership_csrf",""),error=str(exc),message=None),502
+ latest,approval_db_error=optional_latest_membership_request(national_id)
  token=session.get("membership_csrf") or secrets.token_urlsafe(32)
  session["membership_csrf"]=token
  message=session.pop("membership_message",None); error=None
@@ -4478,7 +4490,9 @@ def membership_application():
   values["odm_membership_no"]="ODM"+national_id
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
-  if not supplied or not hmac.compare_digest(supplied,token):
+  if approval_db_error:
+   error="Your membership details can be viewed, but corrections cannot be submitted until the Render approval database reconnects. Please retry shortly."
+  elif not supplied or not hmac.compare_digest(supplied,token):
    error="Security token expired. Reload the page and try again."
   elif pending:
    error="Your previous request is still pending administrator review."
