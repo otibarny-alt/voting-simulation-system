@@ -1,4 +1,4 @@
-# V23.54: isolate live dashboard reads from heavy repository/schema initialization.
+# V23.55: persist certified stream tallies for correct geographic consolidation.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -413,6 +413,21 @@ def init_repository_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
+    # Polling-station and stream names can repeat in different wards/counties.
+    # Replace the legacy partial geographic uniqueness rule with the full key.
+    cur.execute("ALTER TABLE simulation_pdf_reports DROP CONSTRAINT IF EXISTS simulation_pdf_reports_session_date_election_poll_station_stream_key")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_pdf_full_geo ON simulation_pdf_reports(session_date,election,county,constituency,ward,poll_station,stream)")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_certified_stream_tallies(
+       session_date TEXT NOT NULL,election TEXT NOT NULL,
+       county TEXT NOT NULL DEFAULT '',constituency TEXT NOT NULL DEFAULT '',
+       ward TEXT NOT NULL DEFAULT '',poll_station TEXT NOT NULL,stream TEXT NOT NULL,
+       candidate_id TEXT NOT NULL,candidate_name TEXT,votes INTEGER NOT NULL,
+       certified_at TEXT NOT NULL,
+       PRIMARY KEY(session_date,election,county,constituency,ward,poll_station,stream,candidate_id)
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_certified_tallies_scope ON simulation_certified_stream_tallies(session_date,election,county,constituency,ward)")
    conn.commit()
   _REPOSITORY_DB_READY=True
 
@@ -3693,6 +3708,45 @@ def repository_category_rows(election,filters,page=1,per_page=50):
    rows=cur.fetchall()
  return rows,total
 
+def certify_stream_tally(ref,election):
+ """Persist the anonymous machine-readable tally represented by a stream PDF."""
+ session_date=ref.get("session_date") or today_iso()
+ aliases=dashboard_election_aliases(election)
+ marks=','.join('?' for _ in aliases)
+ c=con()
+ try:
+  rows=c.execute(f"""
+   SELECT candidate_id,candidate_name,COUNT(*) AS n
+   FROM demo_votes
+   WHERE session_date=? AND LOWER(election) IN ({marks})
+     AND county=? AND constituency=? AND ward=? AND poll_station=? AND stream=?
+   GROUP BY candidate_id,candidate_name
+  """,(session_date,*aliases,ref.get('county',''),ref.get('constituency',''),
+       ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''))).fetchall()
+ finally:
+  c.close()
+ if not rows:
+  raise RuntimeError("No structured votes were found for this closed stream report.")
+ now=kenya_now().isoformat(timespec='seconds')
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""DELETE FROM simulation_certified_stream_tallies
+                  WHERE session_date=%s AND election=%s AND county=%s AND constituency=%s
+                    AND ward=%s AND poll_station=%s AND stream=%s""",
+               (session_date,election,ref.get('county',''),ref.get('constituency',''),
+                ref.get('ward',''),ref.get('poll_station',''),ref.get('stream','')))
+   for row in rows:
+    cur.execute("""INSERT INTO simulation_certified_stream_tallies(
+                    session_date,election,county,constituency,ward,poll_station,stream,
+                    candidate_id,candidate_name,votes,certified_at)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (session_date,election,ref.get('county',''),ref.get('constituency',''),
+                 ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),
+                 row['candidate_id'] or '',row['candidate_name'] or '',int(row['n'] or 0),now))
+  conn.commit()
+ return len(rows)
+
 @app.post("/report-repository/deposit")
 def deposit_report():
  available,ref,row=tallies_available()
@@ -3714,14 +3768,19 @@ def deposit_report():
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
  filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
  now=kenya_now().isoformat(timespec='seconds'); init_repository_db()
+ # Store the structured tally before handling the PDF. This makes repeated
+ # deposits/backfills repair consolidation even when the PDF already exists.
+ certify_stream_tally(ref,election)
  # Critical speed path: if this stream/category PDF already exists, do NOT run
  # xhtml2pdf again. Tally pages may be revisited many times after closing.
  with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT id, filename FROM simulation_pdf_reports
-                  WHERE session_date=%s AND election=%s AND poll_station=%s AND stream=%s
+                  WHERE session_date=%s AND election=%s AND county=%s AND constituency=%s
+                    AND ward=%s AND poll_station=%s AND stream=%s
                   LIMIT 1""",
-               (ref.get('session_date',today_iso()),election,ref.get('poll_station',''),ref.get('stream','')))
+               (ref.get('session_date',today_iso()),election,ref.get('county',''),ref.get('constituency',''),
+                ref.get('ward',''),ref.get('poll_station',''),ref.get('stream','')))
    existing=cur.fetchone()
  if existing:
   return jsonify({"ok":True,"filename":existing.get('filename') or filename,"already_exists":True})
@@ -3731,7 +3790,7 @@ def deposit_report():
   with conn.cursor() as cur:
    cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data)
     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    ON CONFLICT(session_date,election,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,county=EXCLUDED.county,constituency=EXCLUDED.constituency,ward=EXCLUDED.ward,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data""",
+    ON CONFLICT(session_date,election,county,constituency,ward,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data""",
     (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf)))
   conn.commit()
  invalidate_repository_cache()
@@ -4209,16 +4268,55 @@ WINNERS_REPORT_ELECTIONS=(
 )
 
 def _winner_source_rows(election):
- """Read the same durable anonymous tallies used by the results dashboards."""
- persistent=_persistent_dashboard_snapshot(election)
- if persistent is not None: return persistent[0]
+ """Read certified closed-stream tallies, never raw votes from open streams."""
+ aliases=dashboard_election_aliases(election)
+ if DATABASE_URL:
+  try:
+   init_repository_db()
+   with repository_db() as conn:
+    with conn.cursor() as cur:
+     cur.execute("""SELECT MAX(d) AS d FROM (
+                    SELECT session_date AS d FROM simulation_certified_stream_tallies WHERE LOWER(election)=ANY(%s)
+                    UNION ALL
+                    SELECT session_date AS d FROM simulation_dashboard_vote_events WHERE LOWER(election)=ANY(%s)
+                   ) dates""",(list(aliases),list(aliases)))
+     latest=cur.fetchone(); session_date=(latest.get('d') if latest else None)
+     if session_date:
+      cur.execute("""SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,SUM(votes) AS n
+                     FROM simulation_certified_stream_tallies
+                     WHERE session_date=%s AND LOWER(election)=ANY(%s)
+                     GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name""",
+                  (session_date,list(aliases)))
+      rows=list(cur.fetchall())
+      # Backfill reports deposited before V23.55 from durable anonymous events.
+      # Exclude whole streams that already have a certified structured tally.
+      cur.execute("""SELECT e.county,e.constituency,e.ward,e.poll_station,e.stream,
+                            e.candidate_id,e.candidate_name,COUNT(*) AS n
+                     FROM simulation_dashboard_vote_events e
+                     JOIN simulation_terminal_locks l
+                       ON l.session_date=e.session_date AND l.poll_station=e.poll_station AND l.stream=e.stream
+                     WHERE e.session_date=%s AND LOWER(e.election)=ANY(%s) AND l.closed_at IS NOT NULL
+                       AND NOT EXISTS (
+                         SELECT 1 FROM simulation_certified_stream_tallies c
+                         WHERE c.session_date=e.session_date AND LOWER(c.election)=LOWER(e.election)
+                           AND c.county=e.county AND c.constituency=e.constituency AND c.ward=e.ward
+                           AND c.poll_station=e.poll_station AND c.stream=e.stream
+                       )
+                     GROUP BY e.county,e.constituency,e.ward,e.poll_station,e.stream,e.candidate_id,e.candidate_name""",
+                  (session_date,list(aliases)))
+      rows.extend(cur.fetchall())
+      if rows:return rows
+  except Exception as exc:
+   app.logger.warning("Certified winner tally unavailable for %s: %s",election,exc)
  aliases=dashboard_election_aliases(election); marks=','.join('?' for _ in aliases)
  c=con()
  try:
   return c.execute(f"""
-   SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-   FROM demo_votes WHERE LOWER(election) IN ({marks})
-   GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+   SELECT v.county,v.constituency,v.ward,v.poll_station,v.stream,v.candidate_id,v.candidate_name,COUNT(*) AS n
+   FROM demo_votes v JOIN stream_sessions s
+     ON s.session_date=v.session_date AND s.poll_station=v.poll_station AND s.stream=v.stream
+   WHERE LOWER(v.election) IN ({marks}) AND s.closed_at IS NOT NULL
+   GROUP BY v.county,v.constituency,v.ward,v.poll_station,v.stream,v.candidate_id,v.candidate_name
   """,aliases).fetchall()
  finally: c.close()
 
@@ -4243,7 +4341,8 @@ def winners_and_runners_up_report(filters=None):
    area={field:str(row[field] or "").strip() for field in area_fields}
    if county_filter and station_key(area.get("county"))!=station_key(county_filter): continue
    area_key=tuple(station_key(area[field]) for field in area_fields)
-   contest=contests.setdefault(area_key,{"area":area,"candidates":{}})
+   contest=contests.setdefault(area_key,{"area":area,"candidates":{},"streams":set()})
+   contest["streams"].add(tuple(station_key(row[field]) for field in ("county","constituency","ward","poll_station","stream")))
    candidate=contest["candidates"].setdefault(cid,{"candidate_id":cid,"name":str(row["candidate_name"] or cid).strip(),"votes":0})
    candidate["votes"]+=int(row["n"] or 0)
    if str(row["candidate_name"] or "").strip(): candidate["name"]=str(row["candidate_name"]).strip()
@@ -4254,15 +4353,15 @@ def winners_and_runners_up_report(filters=None):
    if area_fields and any(not area[field] for field in area_fields): continue
    if county_filter and station_key(area.get("county"))!=station_key(county_filter): continue
    area_key=tuple(station_key(area[field]) for field in area_fields)
-   contest=contests.setdefault(area_key,{"area":area,"candidates":{}})
+   contest=contests.setdefault(area_key,{"area":area,"candidates":{},"streams":set()})
    contest["candidates"].setdefault(cid,{"candidate_id":cid,"name":str(candidate.get("name") or cid).strip(),"votes":0})
   results=[]
   for contest in contests.values():
    candidates=sorted(contest["candidates"].values(),key=lambda item:(-item["votes"],station_key(item["name"]),item["candidate_id"]))
    total=sum(item["votes"] for item in candidates)
    if total==0:
-    leaders=[{**item,"rank":0,"result":"No result","share":0.0} for item in candidates[:2]]
-    results.append({"area":contest["area"],"area_label":_winner_area_label(area_fields,contest["area"]),"total_votes":0,"leaders":leaders})
+    leaders=[{**item,"rank":0,"result":"No result","share":0.0} for item in candidates]
+    results.append({"area":contest["area"],"area_label":_winner_area_label(area_fields,contest["area"]),"total_votes":0,"stream_count":len(contest["streams"]),"leaders":leaders})
     continue
    distinct_votes=sorted({item["votes"] for item in candidates},reverse=True)
    rank_for_votes={votes:index+1 for index,votes in enumerate(distinct_votes)}
@@ -4270,10 +4369,10 @@ def winners_and_runners_up_report(filters=None):
    leaders=[]
    for item in candidates:
     rank=rank_for_votes[item["votes"]]
-    if rank>2: continue
-    result=("Joint winner" if rank_counts.get(1,0)>1 else "Winner") if rank==1 else ("Joint runner-up" if rank_counts.get(2,0)>1 else "Runner-up")
+    result=(("Joint winner" if rank_counts.get(1,0)>1 else "Winner") if rank==1 else
+            (("Joint runner-up" if rank_counts.get(2,0)>1 else "Runner-up") if rank==2 else f"Rank {rank}"))
     leaders.append({**item,"rank":rank,"result":result,"share":round((item["votes"]*100/total),2) if total else 0.0})
-   results.append({"area":contest["area"],"area_label":_winner_area_label(area_fields,contest["area"]),"total_votes":total,"leaders":leaders})
+   results.append({"area":contest["area"],"area_label":_winner_area_label(area_fields,contest["area"]),"total_votes":total,"stream_count":len(contest["streams"]),"leaders":leaders})
   results.sort(key=lambda item:tuple(station_key(item["area"].get(field)) for field in area_fields))
   sections.append({"election":election,"title":title,"contests":results,"contest_count":len(results),"county_filter":county_filter})
  return sections
