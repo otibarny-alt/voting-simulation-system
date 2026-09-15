@@ -1,4 +1,4 @@
-# V23.55: persist certified stream tallies for correct geographic consolidation.
+# V23.56: atomically persist six ballot selections with the already-voted marker.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -2307,7 +2307,8 @@ def review():
   elections=cfg(),
   choices=review_choices,
   geo=geo,
-  voter_id=session.get("voter_id","")
+  voter_id=session.get("voter_id",""),
+  error=session.pop("cast_error",None)
  )
 
 @app.post("/cast")
@@ -2321,25 +2322,59 @@ def cast():
   c.close()
   session.clear()
   return render_template("verify.html",error=already_voted_message(voter,existing["poll_station"],existing["stream"]))
- for e in cfg():
-  picked=choices.get(e["key"])
-  if not isinstance(picked,dict) or not picked.get("candidate_id"):
-   c.close()
-   return redirect(url_for("review"))
-  c.execute("""INSERT INTO demo_votes(
-   voter_session,election,candidate,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,session_date
-  ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-   (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
-    geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"],geo.get("session_date") or today_iso()))
- c.commit(); c.close()
+ prepared=[]; session_date=geo.get("session_date") or today_iso(); recorded_at=kenya_now().isoformat(timespec="seconds")
  try:
-  mark_shared_voter_voted(voter,geo.get("poll_station",""))
+  for e in cfg():
+   picked=choices.get(e["key"])
+   if not isinstance(picked,dict) or not picked.get("candidate_id"):
+    raise ValueError("All six ballot categories must be completed before saving.")
+   event_id=secrets.token_hex(24)
+   row=(event_id,session_date,e["key"],picked.get("candidate_id",""),picked.get("candidate_name",""),
+        geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"],recorded_at)
+   prepared.append(row)
+   c.execute("""INSERT INTO demo_votes(
+    voter_session,election,candidate,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,
+    dashboard_event_id,dashboard_mirrored,session_date
+   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+    (voter,e["key"],picked.get("slot",0),picked.get("candidate_id",""),picked.get("candidate_name",""),
+     geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"],event_id,0,session_date))
+
+  # The anonymous result events and identifiable already-voted marker commit in
+  # one PostgreSQL transaction. A failure rolls back both and leaves Review open.
+  init_dashboard_db(); init_voter_access_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""INSERT INTO voter_status(election_id,national_id)
+                   VALUES(%s,%s) ON CONFLICT(election_id,national_id) DO NOTHING""",
+                (ELECTION_ID,voter))
+    cur.execute("""SELECT voted_at,voted_at_station FROM voter_status
+                   WHERE election_id=%s AND national_id=%s FOR UPDATE""",
+                (ELECTION_ID,voter))
+    status=cur.fetchone()
+    if status and status.get("voted_at"):
+     raise ValueError(already_voted_message(voter,status.get("voted_at_station") or geo.get("poll_station"),geo.get("stream")))
+    for row in prepared:
+     cur.execute("""INSERT INTO simulation_dashboard_vote_events(
+                     event_id,session_date,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,recorded_at)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT(event_id) DO NOTHING""",row)
+    cur.execute("""UPDATE voter_status SET voted_at=NOW(),voted_at_station=%s,verified_by=%s
+                   WHERE election_id=%s AND national_id=%s""",
+                (geo.get("poll_station",""),"simulation_ballot",ELECTION_ID,voter))
+   conn.commit()
+  c.execute("UPDATE demo_votes SET dashboard_mirrored=1 WHERE voter_session=?",(voter,))
+  c.commit()
  except Exception as exc:
-  app.logger.error("Could not update shared voter-status record after ballot cast: %s",exc)
+  try:c.rollback()
+  except Exception:pass
+  app.logger.error("Ballot transaction rejected for %s: %s",voter,exc)
+  session["cast_error"]="BALLOT NOT SAVED: the central tally database did not confirm all six selections together. No partial ballot was accepted by this attempt. Please retry Save Simulated Ballot Set. " + str(exc)
+  return redirect(url_for("review"))
+ finally:
+  c.close()
  for cache in (_GOV_DASHBOARD_CACHE,_SEN_DASHBOARD_CACHE,_PRES_DASHBOARD_CACHE,
                _WOMAN_REP_DASHBOARD_CACHE,_MNA_DASHBOARD_CACHE,_MCA_DASHBOARD_CACHE):
   cache["payload"]=None
- defer_dashboard_sync()
  session["completed"]=True
  return redirect(url_for("complete"))
 

@@ -5,6 +5,7 @@
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
 <div class=card><h2>Review</h2>
+{% if error %}<div class="error"><b>{{ error }}</b></div>{% endif %}
 <div class="voter-confirm">
   <div class="muted">Voter ID making these selections</div>
   <div class="voter-id">{{ voter_id }}</div>
