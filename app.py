@@ -1,4 +1,4 @@
-# V23.53: preserve stream state and remove repeated dashboard database waits.
+# V23.54: isolate live dashboard reads from heavy repository/schema initialization.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -184,6 +184,8 @@ _VOTER_ACCESS_DB_READY = False
 _VOTER_ACCESS_DB_INIT_LOCK = threading.Lock()
 _REPOSITORY_DB_READY = False
 _REPOSITORY_DB_INIT_LOCK = threading.Lock()
+_DASHBOARD_DB_READY = False
+_DASHBOARD_DB_INIT_LOCK = threading.Lock()
 _DASHBOARD_SYNC_RUNNING = False
 _DASHBOARD_SYNC_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
@@ -413,6 +415,38 @@ def init_repository_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
    conn.commit()
   _REPOSITORY_DB_READY=True
+
+def init_dashboard_db():
+ """Initialize only the two lightweight tables used by live result feeds.
+
+ Dashboard requests must never wait while PDF repository, membership and voter
+ administration tables or their indexes are initialized.
+ """
+ global _DASHBOARD_DB_READY
+ if not DATABASE_URL or _DASHBOARD_DB_READY:
+  return
+ with _DASHBOARD_DB_INIT_LOCK:
+  if _DASHBOARD_DB_READY:
+   return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
+       session_date TEXT NOT NULL,poll_station TEXT NOT NULL,stream TEXT NOT NULL,
+       county TEXT,constituency TEXT,ward TEXT,owner_token_hash TEXT NOT NULL,
+       locked_at TEXT NOT NULL,released_at TEXT,closed_at TEXT,poll_station_code TEXT,
+       PRIMARY KEY(session_date,poll_station,stream)
+     )
+    """)
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_dashboard_vote_events(
+       event_id TEXT PRIMARY KEY,session_date TEXT NOT NULL,election TEXT NOT NULL,
+       candidate_id TEXT NOT NULL,candidate_name TEXT,county TEXT,constituency TEXT,
+       ward TEXT,poll_station TEXT NOT NULL,stream TEXT NOT NULL,recorded_at TEXT NOT NULL
+     )
+    """)
+   conn.commit()
+  _DASHBOARD_DB_READY=True
 
 def init_terminal_lock_db():
  """Create only the small lock table needed to open/reset a terminal.
@@ -2304,7 +2338,7 @@ def sync_unmirrored_votes_to_dashboard():
  """
  if not DATABASE_URL:
   return 0
- init_global_lock_db()
+ init_dashboard_db()
  c=con()
  rows=c.execute("""
   SELECT id,election,candidate_id,candidate_name,county,constituency,ward,poll_station,stream,dashboard_event_id,session_date
@@ -2389,7 +2423,7 @@ def _persistent_dashboard_snapshot(election):
  """
  if not DATABASE_URL:
   return None
- init_global_lock_db()
+ init_dashboard_db()
  try:
   c=con()
   aliases=dashboard_election_aliases(election)
@@ -2412,7 +2446,6 @@ def _persistent_dashboard_snapshot(election):
      FROM simulation_dashboard_vote_events
      WHERE session_date=%s AND LOWER(election) = ANY(%s)
      GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-     ORDER BY county,constituency,ward,poll_station,stream,candidate_name
     """,(session_date,list(aliases)))
     rows=cur.fetchall()
 
@@ -2433,7 +2466,6 @@ def _persistent_dashboard_snapshot(election):
        FROM simulation_dashboard_vote_events
        WHERE session_date=%s AND LOWER(election) = ANY(%s)
        GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-       ORDER BY county,constituency,ward,poll_station,stream,candidate_name
       """,(session_date,list(aliases)))
       rows=cur.fetchall()
 
