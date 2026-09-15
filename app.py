@@ -1,4 +1,4 @@
-# V23.56: atomically persist six ballot selections with the already-voted marker.
+# V23.57: isolate membership approvals from unrelated database initialization.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -186,6 +186,8 @@ _REPOSITORY_DB_READY = False
 _REPOSITORY_DB_INIT_LOCK = threading.Lock()
 _DASHBOARD_DB_READY = False
 _DASHBOARD_DB_INIT_LOCK = threading.Lock()
+_MEMBERSHIP_REQUEST_DB_READY = False
+_MEMBERSHIP_REQUEST_DB_INIT_LOCK = threading.Lock()
 _DASHBOARD_SYNC_RUNNING = False
 _DASHBOARD_SYNC_LOCK = threading.Lock()
 _REPO_COUNTS_CACHE = {"at": 0.0, "value": {}}
@@ -462,6 +464,31 @@ def init_dashboard_db():
     """)
    conn.commit()
   _DASHBOARD_DB_READY=True
+
+def init_membership_request_db():
+ """Initialize only the membership self-service approval table."""
+ global _MEMBERSHIP_REQUEST_DB_READY
+ if not DATABASE_URL or _MEMBERSHIP_REQUEST_DB_READY:
+  return
+ with _MEMBERSHIP_REQUEST_DB_INIT_LOCK:
+  if _MEMBERSHIP_REQUEST_DB_READY:
+   return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS membership_change_requests(
+       id BIGSERIAL PRIMARY KEY,national_id TEXT NOT NULL,
+       request_type TEXT NOT NULL CHECK(request_type IN ('new','edit')),
+       request_data JSONB NOT NULL,original_data JSONB,
+       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),reviewed_at TIMESTAMPTZ,
+       reviewed_by TEXT,rejection_reason TEXT
+     )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_status_date ON membership_change_requests(status,submitted_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_national_id ON membership_change_requests(national_id,submitted_at DESC)")
+   conn.commit()
+  _MEMBERSHIP_REQUEST_DB_READY=True
 
 def init_terminal_lock_db():
  """Create only the small lock table needed to open/reset a terminal.
@@ -3943,7 +3970,7 @@ def membership_request_row(row):
  return item
 
 def latest_membership_request(national_id):
- init_global_lock_db()
+ init_membership_request_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT * FROM membership_change_requests
@@ -3973,7 +4000,7 @@ def membership_csv_source_bytes():
 
 def approve_membership_request(request_id,reviewer):
  """Apply one pending request to the authoritative CSV and mark it approved."""
- init_global_lock_db()
+ init_membership_request_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
    cur.execute("SELECT pg_advisory_xact_lock(hashtext('membership-registration-csv-update'))")
@@ -4700,7 +4727,7 @@ def membership_application():
       if upload and upload.filename:
        submitted[key]=upload_membership_image(upload,national_id,form_name)
      request_type="edit" if current else "new"
-     init_global_lock_db()
+     init_membership_request_db()
      with lock_db() as conn:
       with conn.cursor() as cur:
        cur.execute("""INSERT INTO membership_change_requests
@@ -4743,7 +4770,7 @@ def admin_membership_requests():
    elif decision=="reject":
     reason=(request.form.get("rejection_reason") or "").strip()
     if not reason:raise ValueError("Enter a reason for rejection.")
-    init_global_lock_db()
+    init_membership_request_db()
     with lock_db() as conn:
      with conn.cursor() as cur:
       cur.execute("""UPDATE membership_change_requests SET status='rejected',reviewed_at=NOW(),
@@ -4759,7 +4786,7 @@ def admin_membership_requests():
   return redirect(url_for("admin_membership_requests",status=request.args.get("status","pending")))
  status=(request.args.get("status") or "pending").strip().lower()
  if status not in ("pending","approved","rejected","all"):status="pending"
- init_global_lock_db()
+ init_membership_request_db()
  with lock_db() as conn:
   with conn.cursor() as cur:
    if status=="all":
