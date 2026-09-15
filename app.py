@@ -1,4 +1,4 @@
-# V23.57: isolate membership approvals from unrelated database initialization.
+# V23.58: retry membership submissions independently of transient lookup failures.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -387,6 +387,16 @@ def repository_db():
   pg_url(),row_factory=dict_row,
   connect_timeout=max(2,int(os.getenv("PG_REPOSITORY_CONNECT_TIMEOUT_SECONDS","5") or 5)),
   options="-c statement_timeout=30000"
+ )
+
+def membership_request_db():
+ """Dedicated connection so membership requests cannot be starved by the shared pool."""
+ if not DATABASE_URL:
+  raise RuntimeError("DATABASE_URL is not configured on the voting service.")
+ return psycopg.connect(
+  pg_url(),row_factory=dict_row,
+  connect_timeout=max(3,int(os.getenv("PG_MEMBERSHIP_CONNECT_TIMEOUT_SECONDS","8") or 8)),
+  options="-c statement_timeout=15000"
  )
 
 def init_repository_db():
@@ -3971,7 +3981,7 @@ def membership_request_row(row):
 
 def latest_membership_request(national_id):
  init_membership_request_db()
- with lock_db() as conn:
+ with membership_request_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT * FROM membership_change_requests
                   WHERE national_id=%s ORDER BY submitted_at DESC,id DESC LIMIT 1""",
@@ -4001,7 +4011,7 @@ def membership_csv_source_bytes():
 def approve_membership_request(request_id,reviewer):
  """Apply one pending request to the authoritative CSV and mark it approved."""
  init_membership_request_db()
- with lock_db() as conn:
+ with membership_request_db() as conn:
   with conn.cursor() as cur:
    cur.execute("SELECT pg_advisory_xact_lock(hashtext('membership-registration-csv-update'))")
    cur.execute("SELECT * FROM membership_change_requests WHERE id=%s FOR UPDATE",(request_id,))
@@ -4691,9 +4701,7 @@ def membership_application():
   values["odm_membership_no"]="ODM"+national_id
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
-  if approval_db_error:
-   error="Your membership details can be viewed, but corrections cannot be submitted until the Render approval database reconnects. Please retry shortly."
-  elif not supplied or not hmac.compare_digest(supplied,token):
+  if not supplied or not hmac.compare_digest(supplied,token):
    error="Security token expired. Reload the page and try again."
   elif pending:
    error="Your previous request is still pending administrator review."
@@ -4728,7 +4736,7 @@ def membership_application():
        submitted[key]=upload_membership_image(upload,national_id,form_name)
      request_type="edit" if current else "new"
      init_membership_request_db()
-     with lock_db() as conn:
+     with membership_request_db() as conn:
       with conn.cursor() as cur:
        cur.execute("""INSERT INTO membership_change_requests
         (national_id,request_type,request_data,original_data,status)
@@ -4737,8 +4745,9 @@ def membership_application():
       conn.commit()
      session["membership_message"]="Your membership request, ID photo and passport photo were submitted and are pending administrator approval."
      return redirect(url_for("membership_application"))
-    except (ValueError,RuntimeError) as exc:
-     error=str(exc)
+    except Exception as exc:
+     app.logger.exception("Membership request submission failed")
+     error="Membership request was not saved. The approval database returned: "+str(exc)
  return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message)
 
 
@@ -4771,7 +4780,7 @@ def admin_membership_requests():
     reason=(request.form.get("rejection_reason") or "").strip()
     if not reason:raise ValueError("Enter a reason for rejection.")
     init_membership_request_db()
-    with lock_db() as conn:
+    with membership_request_db() as conn:
      with conn.cursor() as cur:
       cur.execute("""UPDATE membership_change_requests SET status='rejected',reviewed_at=NOW(),
                      reviewed_by=%s,rejection_reason=%s WHERE id=%s AND status='pending'""",
@@ -4787,7 +4796,7 @@ def admin_membership_requests():
  status=(request.args.get("status") or "pending").strip().lower()
  if status not in ("pending","approved","rejected","all"):status="pending"
  init_membership_request_db()
- with lock_db() as conn:
+ with membership_request_db() as conn:
   with conn.cursor() as cur:
    if status=="all":
     cur.execute("SELECT * FROM membership_change_requests ORDER BY submitted_at DESC,id DESC LIMIT 500")
