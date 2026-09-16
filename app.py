@@ -1,4 +1,4 @@
-# V23.64: resolve legacy reopened streams by either station or unique stream key.
+# V23.65: direct ReportLab fallback for repository and emailed tally PDFs.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -6,6 +6,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
 from email.message import EmailMessage
+from html import unescape
 from io import BytesIO, StringIO
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
@@ -3805,6 +3806,50 @@ def tallies():
  return render_template("tallies.html",sections=tally_sections)
 
 
+def render_tally_pdf_reportlab(report_html, ref=None):
+ ref=ref or {}
+ cleaned=str(report_html or "")
+ cleaned=re.sub(r"<script\b[^>]*>.*?</script>","",cleaned,flags=re.I|re.S)
+ cleaned=re.sub(r"<style\b[^>]*>.*?</style>","",cleaned,flags=re.I|re.S)
+ cleaned=re.sub(r"<button\b[^>]*>.*?</button>","",cleaned,flags=re.I|re.S)
+ cleaned=re.sub(r"<img\b[^>]*>","",cleaned,flags=re.I|re.S)
+ cleaned=re.sub(r"</(?:h[1-6]|p|div|tr|table|section|article|li)>","\n",cleaned,flags=re.I)
+ cleaned=re.sub(r"</?(?:td|th)\b[^>]*>"," | ",cleaned,flags=re.I)
+ cleaned=re.sub(r"<br\s*/?>","\n",cleaned,flags=re.I)
+ cleaned=re.sub(r"<[^>]+>","",cleaned)
+ lines=[re.sub(r"\s+"," ",unescape(line)).strip(" |") for line in cleaned.splitlines()]
+ lines=[line for line in lines if line]
+ output=BytesIO()
+ document=SimpleDocTemplate(output,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,topMargin=14*mm,bottomMargin=14*mm)
+ styles=getSampleStyleSheet()
+ title_style=ParagraphStyle("FallbackTitle",parent=styles["Title"],alignment=TA_CENTER,fontSize=18,leading=22,spaceAfter=8*mm)
+ notice_style=ParagraphStyle("FallbackNotice",parent=styles["BodyText"],alignment=TA_CENTER,fontSize=9,textColor=colors.HexColor("#8a4b00"),spaceAfter=5*mm)
+ body_style=ParagraphStyle("FallbackBody",parent=styles["BodyText"],fontSize=9,leading=12,spaceAfter=2*mm)
+ story=[
+  Paragraph(str(escape(str(ref.get("contest") or "Voting").title()))+" Closing Tally Report",title_style),
+  Paragraph("TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS",notice_style),
+ ]
+ rows=[
+  ["Polling station",str(ref.get("poll_station") or ref.get("polling_station") or ref.get("station") or "Not recorded")],
+  ["Stream",str(ref.get("stream") or "Not recorded")],
+  ["Closed",str(ref.get("closed_at") or ref.get("generated_at") or "Not recorded")],
+ ]
+ location=Table(rows,colWidths=[38*mm,138*mm],hAlign="LEFT")
+ location.setStyle(TableStyle([
+  ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),
+  ("VALIGN",(0,0),(-1,-1),"TOP"),("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#aaaaaa")),
+  ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff0d9")),
+  ("BOTTOMPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),5),
+ ]))
+ story.extend([location,Spacer(1,6*mm)])
+ for line in lines: story.append(Paragraph(str(escape(line)),body_style))
+ document.build(story)
+ pdf=output.getvalue()
+ output.close()
+ if not pdf.startswith(b"%PDF"):raise RuntimeError("ReportLab did not produce a valid PDF")
+ return pdf
+
+
 def render_tally_pdf(report_html, ref=None):
  ref=ref or {}
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
@@ -3843,7 +3888,12 @@ def render_tally_pdf(report_html, ref=None):
  try:
   result=pisa.CreatePDF(html,dest=buf,encoding="utf-8",path=request.host_url)
   if result.err: raise RuntimeError("PDF rendering failed")
-  return buf.getvalue()
+  pdf=buf.getvalue()
+  if not pdf.startswith(b"%PDF"):raise RuntimeError("HTML renderer did not produce a valid PDF")
+  return pdf
+ except Exception:
+  app.logger.exception("HTML tally PDF renderer failed; using ReportLab fallback")
+  return render_tally_pdf_reportlab(report_html,ref)
  finally:
   buf.close()
   # xhtml2pdf builds a large temporary document tree. Release it before the
