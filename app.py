@@ -1,4 +1,4 @@
-# V23.61: reopened streams recover preserved votes from the central event store.
+# V23.62: restore protected closed-stream reopening on Admin Data Files.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1719,10 +1719,11 @@ def admin_reopen_stream():
 
  ps=(request.form.get("poll_station") or "").strip()
  st=(request.form.get("stream") or "").strip()
+ requested_session_date=(request.form.get("session_date") or "").strip()
  if not ps or not st:
   return redirect(url_for("stream_control"))
 
- row=stream_session(ps,st)
+ row=stream_session(ps,st,requested_session_date or None)
  session_date=str(row["session_date"] or today_iso()) if row else today_iso()
  central=global_lock_row(session_date,ps,st) if DATABASE_URL else None
  if not row or not row["closed_at"] or not central or not central.get("closed_at"):
@@ -4672,11 +4673,27 @@ def admin_data_files():
    "filename":MEMBERSHIP_CSV_FILENAME,"size":0,
    "modified":"Unable to read Kobo media: "+str(exc),"remote":True,
   })
+ closed_streams=[]
+ closed_streams_error=""
+ try:
+  c=con()
+  try:
+   closed_streams=c.execute("""SELECT session_date,county,constituency,ward,
+                                      poll_station,stream,closed_at
+                               FROM stream_sessions
+                               WHERE closed_at IS NOT NULL
+                               ORDER BY closed_at DESC,poll_station,stream""").fetchall()
+  finally:
+   c.close()
+ except Exception as exc:
+  app.logger.exception("Admin closed-stream list could not be loaded")
+  closed_streams_error="Closed voting streams could not be loaded: "+str(exc)
  return render_template(
  "admin_data_files.html",files=files,csrf_token=token,
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
   persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL,
-  candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL
+  candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL,
+  closed_streams=closed_streams,closed_streams_error=closed_streams_error
  )
 
 
