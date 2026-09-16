@@ -1,4 +1,4 @@
-# V23.60: remove repository and administrator links from public tallies.
+# V23.61: reopened streams recover preserved votes from the central event store.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1543,15 +1543,68 @@ def stream_distinct_voter_count(ref):
  stream=str(ref.get("stream","") or "")
  if not station or not stream:
   return 0
+ local_count=0
  c=con()
  try:
   row=c.execute(
    "SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",
    (station,stream)
   ).fetchone()
-  return int(row["n"] or 0) if row else 0
+  local_count=int(row["n"] or 0) if row else 0
  finally:
   c.close()
+ # Reopened streams can outlive a Render worker or its ephemeral SQLite file.
+ # Every completed ballot is also stored atomically in PostgreSQL as one event
+ # per election category. The largest category count is therefore the number
+ # of completed voter sessions, including SKIP selections.
+ central_count=0
+ if DATABASE_URL:
+  try:
+   init_dashboard_db()
+   with central_control_db() as conn:
+    with conn.cursor() as cur:
+     cur.execute("""SELECT COALESCE(MAX(category_votes),0) AS n FROM (
+                    SELECT election,COUNT(*) AS category_votes
+                    FROM simulation_dashboard_vote_events
+                    WHERE session_date=%s AND poll_station=%s AND stream=%s
+                    GROUP BY election
+                   ) preserved""",
+                 (ref.get("session_date") or today_iso(),station,stream))
+     row=cur.fetchone()
+     central_count=int(row.get("n") or 0) if row else 0
+  except Exception as exc:
+   app.logger.warning("Could not read preserved central votes for %s / %s: %s",station,stream,exc)
+ return max(local_count,central_count)
+
+def central_stream_tally_rows(ref):
+ """Return preserved anonymous tally and participation rows for one stream."""
+ if not DATABASE_URL or not ref:
+  return [],[]
+ session_date=ref.get("session_date") or today_iso()
+ station=str(ref.get("poll_station") or "")
+ stream=str(ref.get("stream") or "")
+ if not station or not stream:
+  return [],[]
+ init_dashboard_db()
+ with central_control_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT election,0 AS candidate,candidate_id,candidate_name,COUNT(*) AS votes
+                  FROM simulation_dashboard_vote_events
+                  WHERE session_date=%s AND poll_station=%s AND stream=%s
+                  GROUP BY election,candidate_id,candidate_name
+                  ORDER BY election,candidate_name,candidate_id""",
+               (session_date,station,stream))
+   vote_rows=cur.fetchall()
+   cur.execute("""SELECT election,poll_station,stream,
+                         COUNT(*) AS participation,
+                         COUNT(*) FILTER (WHERE candidate_id='__SKIP__') AS skipped
+                  FROM simulation_dashboard_vote_events
+                  WHERE session_date=%s AND poll_station=%s AND stream=%s
+                  GROUP BY election,poll_station,stream
+                  ORDER BY election,poll_station,stream""",
+               (session_date,station,stream))
+   geo_rows=cur.fetchall()
+ return vote_rows,geo_rows
 
 @app.post("/terminal/reset")
 def terminal_reset():
@@ -3530,6 +3583,17 @@ def tallies():
  ORDER BY election,poll_station,stream""",(report_poll_station,report_stream)).fetchall()
  c.close()
 
+ # PostgreSQL is authoritative for completed ballots. This recovers every
+ # preserved vote after an administrator reopens a stream even if Render has
+ # restarted and the terminal's local SQLite copy contains no fresh votes.
+ try:
+  central_vote_rows,central_geo_rows=central_stream_tally_rows(report_ref)
+  if central_vote_rows:
+   vote_rows=central_vote_rows
+   geo_rows=central_geo_rows
+ except Exception as exc:
+  app.logger.warning("Central tally recovery failed; using local stream rows: %s",exc)
+
  vote_map={}
  legacy_vote_map={}
  vote_name_map={}
@@ -3784,19 +3848,35 @@ def certify_stream_tally(ref,election):
  """Persist the anonymous machine-readable tally represented by a stream PDF."""
  session_date=ref.get("session_date") or today_iso()
  aliases=dashboard_election_aliases(election)
- marks=','.join('?' for _ in aliases)
- c=con()
- try:
-  rows=c.execute(f"""
-   SELECT candidate_id,candidate_name,COUNT(*) AS n
-   FROM demo_votes
-   WHERE session_date=? AND LOWER(election) IN ({marks})
-     AND county=? AND constituency=? AND ward=? AND poll_station=? AND stream=?
-   GROUP BY candidate_id,candidate_name
-  """,(session_date,*aliases,ref.get('county',''),ref.get('constituency',''),
-       ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''))).fetchall()
- finally:
-  c.close()
+ rows=[]
+ if DATABASE_URL:
+  try:
+   init_dashboard_db()
+   with central_control_db() as conn:
+    with conn.cursor() as cur:
+     cur.execute("""SELECT candidate_id,candidate_name,COUNT(*) AS n
+                    FROM simulation_dashboard_vote_events
+                    WHERE session_date=%s AND LOWER(election)=ANY(%s)
+                      AND poll_station=%s AND stream=%s
+                    GROUP BY candidate_id,candidate_name""",
+                 (session_date,list(aliases),ref.get('poll_station',''),ref.get('stream','')))
+     rows=cur.fetchall()
+  except Exception as exc:
+   app.logger.warning("Central stream certification lookup failed; using local votes: %s",exc)
+ if not rows:
+  marks=','.join('?' for _ in aliases)
+  c=con()
+  try:
+   rows=c.execute(f"""
+    SELECT candidate_id,candidate_name,COUNT(*) AS n
+    FROM demo_votes
+    WHERE session_date=? AND LOWER(election) IN ({marks})
+      AND county=? AND constituency=? AND ward=? AND poll_station=? AND stream=?
+    GROUP BY candidate_id,candidate_name
+   """,(session_date,*aliases,ref.get('county',''),ref.get('constituency',''),
+        ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''))).fetchall()
+  finally:
+   c.close()
  if not rows:
   raise RuntimeError("No structured votes were found for this closed stream report.")
  now=kenya_now().isoformat(timespec='seconds')
