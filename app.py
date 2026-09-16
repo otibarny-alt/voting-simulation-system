@@ -1,4 +1,4 @@
-# V23.58: retry membership submissions independently of transient lookup failures.
+# V23.59: email closed-stream tallies from the stored memory-safe PDF.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -5024,61 +5024,51 @@ def email_tally():
   return jsonify({"ok":False,"error":"The report content is empty."}),400
  if not SMTP_HOST or not SMTP_FROM_EMAIL:
   return jsonify({"ok":False,"error":"Email is not configured on the server. Set the SMTP environment variables in Render."}),503
- report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
- # Make relative image URLs absolute so the PDF renderer can fetch report branding/photos.
- report_html=re.sub(
-  r'(src=["\'])(/[^"\']+)(["\'])',
-  lambda m: m.group(1)+urljoin(request.host_url,m.group(2))+m.group(3),
-  report_html, flags=re.I
- )
  safe_title=allowed[election]
  station=ref.get("poll_station","")
  stream=ref.get("stream","")
- subject=f"{safe_title} Tally Report - {station} - {stream}"
- css="""
- @page { size: A4; margin: 7mm; }
- body{font-family:Helvetica,Arial,sans-serif;color:#111;font-size:9pt;line-height:1.12}
- h1,h2,h3,h4,p{margin-top:0} h2{font-size:15pt;margin:0 0 5px 0} h3{font-size:11pt;margin:4px 0} h4{font-size:9.5pt;margin:3px 0}
- table{width:100%;border-collapse:collapse;margin:4px 0} th,td{border:1px solid #aaa;padding:3px 4px;text-align:left;vertical-align:middle;line-height:1.08}
- img{max-width:76px;height:auto}.print-report-header img{max-width:100%;width:100%;height:auto}
- .tally-candidate-photo,.cert-candidate-photo{max-width:56px;max-height:64px}
- .tally-actions,.no-print,.gps-help{display:none}.report-generation-meta,.summary-box{border:1px solid #bbb;padding:4px;margin:3px 0}
- .report-meta-grid,.summary-grid{display:block}.report-meta-grid div,.summary-box{margin:1px 0}.signature-space{height:26px}
- .participation,.agent-certification,.officer-certification,.signature-section{margin-top:6px!important;padding-top:4px!important}
- .signature-table th,.signature-table td,.agent-sign-table th,.agent-sign-table td{padding:2px 3px!important}
- """
- # The browser tally page has a global ODM report header outside each individual tally section.
- # report_html contains only the selected section, so explicitly add the bundled ODM header to the PDF.
- pdf_header_html=""
+ # Email the exact archived report produced when the stream was closed. This
+ # avoids a second xhtml2pdf pass and prevents remote candidate-photo fetching
+ # from exhausting a small Render worker. If the repository is unavailable or
+ # the report has not yet been deposited, use the same memory-safe renderer as
+ # repository deposit (it removes candidate images before rendering).
+ pdf_bytes=None
+ pdf_filename=""
  try:
-  header_path=os.path.join(app.root_path,"static","odm_report_header.png")
-  if os.path.isfile(header_path):
-   import base64
-   with open(header_path,"rb") as header_file:
-    header_b64=base64.b64encode(header_file.read()).decode("ascii")
-   pdf_header_html='<div class="pdf-odm-header"><img src="data:image/png;base64,'+header_b64+'" alt="ODM Report Header"></div>'
-  elif REPORT_HEADER_IMAGE_URL:
-   header_url=REPORT_HEADER_IMAGE_URL
-   if header_url.startswith("/"):
-    header_url=urljoin(request.host_url,header_url)
-   pdf_header_html='<div class="pdf-odm-header"><img src="'+header_url+'" alt="ODM Report Header"></div>'
+  if DATABASE_URL:
+   init_repository_db()
+   with repository_db() as conn:
+    with conn.cursor() as cur:
+     cur.execute("""SELECT filename,pdf_data FROM simulation_pdf_reports
+                    WHERE session_date=%s AND election=%s AND county=%s AND constituency=%s
+                      AND ward=%s AND poll_station=%s AND stream=%s
+                    ORDER BY deposited_at DESC,id DESC LIMIT 1""",
+                 (ref.get('session_date',today_iso()),election,ref.get('county',''),ref.get('constituency',''),
+                  ref.get('ward',''),station,stream))
+     stored=cur.fetchone()
+   if stored and stored.get("pdf_data"):
+    pdf_bytes=bytes(stored["pdf_data"])
+    pdf_filename=str(stored.get("filename") or "")
  except Exception as exc:
-  app.logger.warning("Could not prepare ODM PDF header: %s",exc)
+  app.logger.warning("Stored tally PDF lookup failed; using safe renderer: %s",exc)
 
- geo_ident='<table border="1" cellspacing="0" cellpadding="3" width="100%" style="border:1px solid #777;margin:0 0 5px 0;font-size:9pt;line-height:1.05"><tr><td colspan="2" align="center" style="background:#f2f2f2;font-weight:bold;font-size:9.5pt;padding:3px"><b>REPORT LOCATION IDENTIFICATION</b></td></tr><tr><td width="50%"><b>County:</b> '+str(escape(ref.get('county','') or '—'))+'</td><td width="50%"><b>Constituency:</b> '+str(escape(ref.get('constituency','') or '—'))+'</td></tr><tr><td><b>Ward:</b> '+str(escape(ref.get('ward','') or '—'))+'</td><td><b>Polling Station Stream:</b> '+str(escape(ref.get('poll_station','') or '—'))+' — '+str(escape(ref.get('stream','') or '—'))+'</td></tr></table>'
- html='<!doctype html><html><head><meta charset="utf-8"><style>'+css+' .pdf-odm-header{text-align:center;margin:0 0 4px 0}.pdf-odm-header img{width:100%;max-width:100%;height:auto}.pdf-stream-ident{border:1px solid #9a9a9a;background:#f7f7f7;padding:7px 9px;margin:0 0 10px;font-size:10.5pt;line-height:1.35}.pdf-stream-ident .pdf-ident-title{text-align:center;font-weight:700;font-size:11pt;margin:0 0 5px}.pdf-stream-ident table{width:100%;border-collapse:collapse;margin:0}.pdf-stream-ident td{width:50%;border:1px solid #c5c5c5;padding:5px 7px;vertical-align:top}</style></head><body>'+pdf_header_html+geo_ident+'<div style="font-weight:700;color:#9b0000;margin-bottom:5px;font-size:9pt">TRAINING / SIMULATION ONLY — no official vote was cast.</div>'+report_html+'</body></html>' 
-
- # Create an A4 PDF attachment from this specific tally report.
- pdf_buffer=BytesIO()
- pdf_result=pisa.CreatePDF(html, dest=pdf_buffer, encoding="utf-8", path=request.host_url)
- if pdf_result.err:
-  app.logger.error("Tally PDF generation failed with %s rendering errors", pdf_result.err)
-  return jsonify({"ok":False,"error":"The tally report could not be converted to PDF. Check the Render logs for PDF rendering details."}),500
- pdf_bytes=pdf_buffer.getvalue()
  safe_station=re.sub(r'[^A-Za-z0-9_-]+','_',station or 'polling_station').strip('_')
  safe_stream=re.sub(r'[^A-Za-z0-9_-]+','_',stream or 'stream').strip('_')
  safe_report=re.sub(r'[^A-Za-z0-9_-]+','_',safe_title).strip('_')
- pdf_filename=f"{safe_report}_Tally_{safe_station}_{safe_stream}.pdf"
+ if not pdf_filename:
+  pdf_filename=f"{safe_report}_Tally_{safe_station}_{safe_stream}.pdf"
+ if pdf_bytes is None:
+  try:
+   pdf_bytes=render_tally_pdf(report_html,ref)
+  except Exception as exc:
+   app.logger.exception("Memory-safe tally PDF generation failed")
+   return jsonify({"ok":False,"error":f"The tally PDF could not be prepared ({exc.__class__.__name__}). Retry after the closed-stream report has been saved to the repository."}),500
+ if not pdf_bytes:
+  return jsonify({"ok":False,"error":"The saved tally PDF is empty. Reopen the tally page and retry saving the closed-stream report."}),500
+
+ clean_station=re.sub(r'[\r\n]+',' ',str(station))
+ clean_stream=re.sub(r'[\r\n]+',' ',str(stream))
+ subject=f"{safe_title} Tally Report - {clean_station} - {clean_stream}"
 
  msg=EmailMessage()
  msg["Subject"]=subject

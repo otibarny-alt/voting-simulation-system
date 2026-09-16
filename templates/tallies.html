@@ -262,7 +262,15 @@ async function emailTally(sectionId,election,title,button){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({email:email,election:election,title:title,report_html:clone.outerHTML})
     });
-    const result=await response.json();
+    const contentType=response.headers.get('content-type')||'';
+    let result;
+    if(contentType.includes('application/json')){
+      result=await response.json();
+    }else{
+      const body=await response.text();
+      console.error('Non-JSON tally email response',response.status,body.slice(0,500));
+      throw new Error('The email service returned a server error ('+response.status+'). Please retry, then check the Render logs if it continues.');
+    }
     if(!response.ok || !result.ok) throw new Error(result.error || 'Email could not be sent.');
     alert(result.message);
   }catch(err){
