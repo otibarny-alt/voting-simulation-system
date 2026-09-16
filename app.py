@@ -1,4 +1,4 @@
-# V23.59: email closed-stream tallies from the stored memory-safe PDF.
+# V23.60: remove repository and administrator links from public tallies.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg

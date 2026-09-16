@@ -1,5 +1,5 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content="width=device-width,initial-scale=1">
-<header><b>Simulated Tally Dashboard</b><a id="repository-link" href=/report-repository>Central PDF Repository</a><a href=/>Training ballot</a></header>
+<header><b>Simulated Tally Dashboard</b><a href=/>Training ballot</a></header>
 <div class=demo>TRAINING / SIMULATION ONLY — these are demo counts.</div>
 <div class=wrap>
 <div class="odm-screen-header project-screen-brand">
@@ -11,27 +11,7 @@
  <p id="repository-sync-message">Preparing all six category reports for the Central PDF Repository. Keep this page open until saving is complete.</p>
  <div id="repository-sync-progress" role="status" aria-live="polite"><b>Starting…</b></div>
  <button id="repository-sync-retry" type="button" style="display:none" onclick="depositAllClosedReports()">Retry Failed Reports</button>
- <a id="repository-sync-open" class="print-tally" href="/report-repository" style="display:none">Open Central PDF Repository</a>
 </div>
-
-{% if closed_stream_row %}
-<div class="admin-reopen-panel no-print">
- <h2 style="margin-top:0">Closed Voting Stream Administration</h2>
- <p><b>{{closed_stream_row['poll_station']|replace('_',' ')|title}} — {{closed_stream_row['stream']|replace('_',' ')|title}}</b></p>
- {% if stream_admin_logged_in %}
- <form method="post" action="{{ url_for('admin_reopen_stream') }}"
-       onsubmit="return confirm('ADMIN OVERRIDE: Reopen this closed training stream? Existing votes will be preserved and repository PDFs will be regenerated after it is closed again.');">
-  <input type="hidden" name="poll_station" value="{{closed_stream_row['poll_station']}}">
-  <input type="hidden" name="stream" value="{{closed_stream_row['stream']}}">
-  <button type="submit" class="admin-reopen-btn">Admin Reopen Voting Stream</button>
- </form>
- {% else %}
- <a class="admin-reopen-btn" href="{{ url_for('repository_admin_login', next=url_for('stream_control', poll_station=closed_stream_row['poll_station'], stream=closed_stream_row['stream'])) }}">Admin Login to Reopen Stream</a>
- {% endif %}
- <a class="closed-tally-btn" style="margin-left:10px;min-width:0;padding:11px 18px;font-size:1rem" href="{{ url_for('stream_control', poll_station=closed_stream_row['poll_station'], stream=closed_stream_row['stream']) }}">Manage Closed Stream</a>
- <p class="admin-reopen-help">Reopening preserves existing votes. Previously generated PDFs are removed because they become outdated; closing again creates updated reports.</p>
-</div>
-{% endif %}
 
 {% for s in sections %}
 <div class="card tally-section" id="tally-{{s.key}}">
@@ -344,9 +324,8 @@ async function depositAllClosedReports(){
   const progress=document.getElementById('repository-sync-progress');
   const message=document.getElementById('repository-sync-message');
   const retry=document.getElementById('repository-sync-retry');
-  const open=document.getElementById('repository-sync-open');
   const headerLink=document.getElementById('repository-link');
-  retry.style.display='none'; open.style.display='none';
+  retry.style.display='none';
   if(headerLink){
     headerLink.setAttribute('aria-disabled','true');
     headerLink.title='Wait until all closed-stream reports are saved';
@@ -373,7 +352,6 @@ async function depositAllClosedReports(){
   }
   progress.innerHTML='<b style="color:#086b2c">✓ All '+results.length+' category reports are saved in the repository.</b>';
   message.textContent='Repository counts and geographic filters are now ready.';
-  open.style.display='inline-block';
   if(headerLink){
     headerLink.removeAttribute('aria-disabled');
     headerLink.title='';
