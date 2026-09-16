@@ -1,4 +1,4 @@
-# V23.62: restore protected closed-stream reopening on Admin Data Files.
+# V23.63: recover reopened tallies across legacy stream keys and session dates.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1560,51 +1560,100 @@ def stream_distinct_voter_count(ref):
  central_count=0
  if DATABASE_URL:
   try:
-   init_dashboard_db()
-   with central_control_db() as conn:
-    with conn.cursor() as cur:
-     cur.execute("""SELECT COALESCE(MAX(category_votes),0) AS n FROM (
-                    SELECT election,COUNT(*) AS category_votes
-                    FROM simulation_dashboard_vote_events
-                    WHERE session_date=%s AND poll_station=%s AND stream=%s
-                    GROUP BY election
-                   ) preserved""",
-                 (ref.get("session_date") or today_iso(),station,stream))
-     row=cur.fetchone()
-     central_count=int(row.get("n") or 0) if row else 0
+   _votes,participation_rows=central_stream_tally_rows(ref)
+   central_count=max((int(r.get("participation") or 0) for r in participation_rows),default=0)
   except Exception as exc:
    app.logger.warning("Could not read preserved central votes for %s / %s: %s",station,stream,exc)
  return max(local_count,central_count)
 
 def central_stream_tally_rows(ref):
- """Return preserved anonymous tally and participation rows for one stream."""
+ """Recover a stream tally from central events or its last certified close."""
  if not DATABASE_URL or not ref:
   return [],[]
- session_date=ref.get("session_date") or today_iso()
+ requested_date=str(ref.get("session_date") or today_iso())
  station=str(ref.get("poll_station") or "")
  stream=str(ref.get("stream") or "")
  if not station or not stream:
   return [],[]
+ station_key=re.sub(r'[^a-z0-9]+','',station.lower())
+ stream_key=re.sub(r'[^a-z0-9]+','',stream.lower())
+ normalized_match="""regexp_replace(lower(poll_station),'[^a-z0-9]+','','g')=%s
+                     AND regexp_replace(lower(stream),'[^a-z0-9]+','','g')=%s"""
  init_dashboard_db()
  with central_control_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT election,0 AS candidate,candidate_id,candidate_name,COUNT(*) AS votes
-                  FROM simulation_dashboard_vote_events
-                  WHERE session_date=%s AND poll_station=%s AND stream=%s
-                  GROUP BY election,candidate_id,candidate_name
-                  ORDER BY election,candidate_name,candidate_id""",
-               (session_date,station,stream))
-   vote_rows=cur.fetchall()
-   cur.execute("""SELECT election,poll_station,stream,
-                         COUNT(*) AS participation,
-                         COUNT(*) FILTER (WHERE candidate_id='__SKIP__') AS skipped
-                  FROM simulation_dashboard_vote_events
-                  WHERE session_date=%s AND poll_station=%s AND stream=%s
-                  GROUP BY election,poll_station,stream
-                  ORDER BY election,poll_station,stream""",
-               (session_date,station,stream))
-   geo_rows=cur.fetchall()
- return vote_rows,geo_rows
+   cur.execute(f"""SELECT session_date FROM simulation_dashboard_vote_events
+                   WHERE session_date=%s AND {normalized_match}
+                   LIMIT 1""",(requested_date,station_key,stream_key))
+   match=cur.fetchone()
+   selected_date=match.get("session_date") if match else None
+   if not selected_date:
+    cur.execute(f"""SELECT session_date FROM simulation_dashboard_vote_events
+                    WHERE {normalized_match}
+                    ORDER BY session_date DESC LIMIT 1""",(station_key,stream_key))
+    match=cur.fetchone()
+    selected_date=match.get("session_date") if match else None
+    if selected_date:
+     app.logger.warning("Recovered legacy stream events for %s / %s from session %s instead of %s",station,stream,selected_date,requested_date)
+   if not selected_date:
+    vote_rows=[]; geo_rows=[]
+   else:
+    cur.execute(f"""SELECT election,0 AS candidate,candidate_id,candidate_name,COUNT(*) AS votes
+                    FROM simulation_dashboard_vote_events
+                    WHERE session_date=%s AND {normalized_match}
+                    GROUP BY election,candidate_id,candidate_name
+                    ORDER BY election,candidate_name,candidate_id""",
+                 (selected_date,station_key,stream_key))
+    vote_rows=cur.fetchall()
+    cur.execute(f"""SELECT election,MIN(poll_station) AS poll_station,MIN(stream) AS stream,
+                           COUNT(*) AS participation,
+                           COUNT(*) FILTER (WHERE candidate_id='__SKIP__') AS skipped
+                    FROM simulation_dashboard_vote_events
+                    WHERE session_date=%s AND {normalized_match}
+                    GROUP BY election ORDER BY election""",
+                 (selected_date,station_key,stream_key))
+    geo_rows=cur.fetchall()
+
+ # Reports closed by older builds may already have certified machine-readable
+ # tallies even when their raw dashboard events used a legacy or missing key.
+ if vote_rows:
+  return vote_rows,geo_rows
+ try:
+  init_repository_db()
+  with repository_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute(f"""SELECT session_date FROM simulation_certified_stream_tallies
+                    WHERE session_date=%s AND {normalized_match}
+                    LIMIT 1""",(requested_date,station_key,stream_key))
+    match=cur.fetchone()
+    selected_date=match.get("session_date") if match else None
+    if not selected_date:
+     cur.execute(f"""SELECT session_date FROM simulation_certified_stream_tallies
+                     WHERE {normalized_match}
+                     ORDER BY session_date DESC LIMIT 1""",(station_key,stream_key))
+     match=cur.fetchone()
+     selected_date=match.get("session_date") if match else None
+    if not selected_date:
+     return [],[]
+    cur.execute(f"""SELECT election,0 AS candidate,candidate_id,MAX(candidate_name) AS candidate_name,
+                           SUM(votes) AS votes
+                    FROM simulation_certified_stream_tallies
+                    WHERE session_date=%s AND {normalized_match}
+                    GROUP BY election,candidate_id ORDER BY election,candidate_name,candidate_id""",
+                (selected_date,station_key,stream_key))
+    vote_rows=cur.fetchall()
+    cur.execute(f"""SELECT election,MIN(poll_station) AS poll_station,MIN(stream) AS stream,
+                           SUM(votes) AS participation,
+                           SUM(CASE WHEN candidate_id='__SKIP__' THEN votes ELSE 0 END) AS skipped
+                    FROM simulation_certified_stream_tallies
+                    WHERE session_date=%s AND {normalized_match}
+                    GROUP BY election ORDER BY election""",
+                (selected_date,station_key,stream_key))
+    geo_rows=cur.fetchall()
+  return vote_rows,geo_rows
+ except Exception as exc:
+  app.logger.warning("Certified stream tally recovery failed for %s / %s: %s",station,stream,exc)
+  return [],[]
 
 @app.post("/terminal/reset")
 def terminal_reset():
@@ -3852,16 +3901,12 @@ def certify_stream_tally(ref,election):
  rows=[]
  if DATABASE_URL:
   try:
-   init_dashboard_db()
-   with central_control_db() as conn:
-    with conn.cursor() as cur:
-     cur.execute("""SELECT candidate_id,candidate_name,COUNT(*) AS n
-                    FROM simulation_dashboard_vote_events
-                    WHERE session_date=%s AND LOWER(election)=ANY(%s)
-                      AND poll_station=%s AND stream=%s
-                    GROUP BY candidate_id,candidate_name""",
-                 (session_date,list(aliases),ref.get('poll_station',''),ref.get('stream','')))
-     rows=cur.fetchall()
+   recovered,_participation=central_stream_tally_rows(ref)
+   rows=[{
+    "candidate_id":r.get("candidate_id") or "",
+    "candidate_name":r.get("candidate_name") or "",
+    "n":int(r.get("votes") or 0)
+   } for r in recovered if str(r.get("election") or "").lower() in aliases]
   except Exception as exc:
    app.logger.warning("Central stream certification lookup failed; using local votes: %s",exc)
  if not rows:
