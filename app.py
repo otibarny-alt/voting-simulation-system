@@ -1,4 +1,4 @@
-# V23.63: recover reopened tallies across legacy stream keys and session dates.
+# V23.64: resolve legacy reopened streams by either station or unique stream key.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1596,6 +1596,23 @@ def central_stream_tally_rows(ref):
     if selected_date:
      app.logger.warning("Recovered legacy stream events for %s / %s from session %s instead of %s",station,stream,selected_date,requested_date)
    if not selected_date:
+    # Older deployments sometimes stored a station label beside a stream key,
+    # or vice versa. A stream key is unique within the training hierarchy, so
+    # resolve the actual stored pair when either normalized identifier agrees.
+    cur.execute("""SELECT session_date,poll_station,stream,COUNT(*) AS event_count
+                   FROM simulation_dashboard_vote_events
+                   WHERE regexp_replace(lower(poll_station),'[^a-z0-9]+','','g')=%s
+                      OR regexp_replace(lower(stream),'[^a-z0-9]+','','g')=%s
+                   GROUP BY session_date,poll_station,stream
+                   ORDER BY (session_date=%s) DESC,event_count DESC,session_date DESC
+                   LIMIT 1""",(station_key,stream_key,requested_date))
+    legacy=cur.fetchone()
+    if legacy:
+     selected_date=legacy.get("session_date")
+     station_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("poll_station") or "").lower())
+     stream_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("stream") or "").lower())
+     app.logger.warning("Resolved reopened stream %s / %s to stored keys %s / %s",station,stream,legacy.get("poll_station"),legacy.get("stream"))
+   if not selected_date:
     vote_rows=[]; geo_rows=[]
    else:
     cur.execute(f"""SELECT election,0 AS candidate,candidate_id,candidate_name,COUNT(*) AS votes
@@ -1633,6 +1650,19 @@ def central_stream_tally_rows(ref):
                      ORDER BY session_date DESC LIMIT 1""",(station_key,stream_key))
      match=cur.fetchone()
      selected_date=match.get("session_date") if match else None
+    if not selected_date:
+     cur.execute("""SELECT session_date,poll_station,stream,SUM(votes) AS vote_count
+                    FROM simulation_certified_stream_tallies
+                    WHERE regexp_replace(lower(poll_station),'[^a-z0-9]+','','g')=%s
+                       OR regexp_replace(lower(stream),'[^a-z0-9]+','','g')=%s
+                    GROUP BY session_date,poll_station,stream
+                    ORDER BY (session_date=%s) DESC,vote_count DESC,session_date DESC
+                    LIMIT 1""",(station_key,stream_key,requested_date))
+     legacy=cur.fetchone()
+     if legacy:
+      selected_date=legacy.get("session_date")
+      station_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("poll_station") or "").lower())
+      stream_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("stream") or "").lower())
     if not selected_date:
      return [],[]
     cur.execute(f"""SELECT election,0 AS candidate,candidate_id,MAX(candidate_name) AS candidate_name,
