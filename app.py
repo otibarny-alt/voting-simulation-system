@@ -1,4 +1,4 @@
-# V23.66: branded, image-aware ReportLab tally PDFs with bounded memory use.
+# V23.67: validated report images; damaged branding can never block PDF saving.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -3812,7 +3812,7 @@ def _pdf_plain_html(value):
  value=re.sub(r"<[^>]+>","",value)
  return re.sub(r"\s+"," ",unescape(value)).strip()
 
-def _pdf_photo(src):
+def _pdf_photo(src,deadline=None):
  """Return a small in-memory candidate image without letting photos exhaust RAM."""
  src=unescape(str(src or "")).strip()
  if not src:return None
@@ -3823,7 +3823,9 @@ def _pdf_photo(src):
    if os.path.isfile(path):
     with open(path,"rb") as f:raw=f.read(3*1024*1024+1)
   elif src.startswith("http://") or src.startswith("https://"):
-   response=requests.get(src,timeout=(3,8),stream=True)
+   if deadline is not None and time.monotonic()>=deadline:return None
+   remaining=max(0.5,(deadline-time.monotonic()) if deadline is not None else 2.0)
+   response=requests.get(src,timeout=(min(1.0,remaining),min(1.5,remaining)),stream=True)
    response.raise_for_status()
    chunks=[];total=0
    for chunk in response.iter_content(65536):
@@ -3832,7 +3834,7 @@ def _pdf_photo(src):
     chunks.append(chunk)
    raw=b"".join(chunks)
   if not raw:return None
-  source=BytesIO(raw);picture=PILImage.open(source);picture.thumbnail((260,300))
+  source=BytesIO(raw);picture=PILImage.open(source);picture.load();picture.thumbnail((260,300))
   if picture.mode not in ("RGB","L"):picture=picture.convert("RGB")
   compact=BytesIO();picture.save(compact,format="JPEG",quality=78,optimize=True);compact.seek(0)
   image=RLImage(compact,width=18*mm,height=21*mm,kind="proportional")
@@ -3865,8 +3867,15 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  body_style=ParagraphStyle("FallbackBody",parent=styles["BodyText"],fontSize=8.2,leading=10)
  small_style=ParagraphStyle("FallbackSmall",parent=body_style,fontSize=7.4,leading=9)
  story=[]
- header_path=os.path.join(app.root_path,"static","odm_report_header.png")
- if os.path.isfile(header_path):story.extend([RLImage(header_path,width=190*mm,height=29*mm,kind="proportional"),Spacer(1,2*mm)])
+ # odm_report_header.png in an older build was truncated. Use the validated
+ # screen header and verify it before ReportLab receives it; branding must
+ # never be allowed to abort all six report deposits.
+ header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+ try:
+  with PILImage.open(header_path) as header_check:header_check.verify()
+  story.extend([RLImage(header_path,width=190*mm,height=31*mm,kind="proportional"),Spacer(1,2*mm)])
+ except Exception as exc:
+  app.logger.warning("PDF report header omitted because it is invalid: %s",exc)
  story.extend([
   Paragraph(str(escape(contest))+" Closing Tally Report",title_style),
   Paragraph("TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS",notice_style),
@@ -3904,6 +3913,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
 
  candidate_match=re.search(r'<table class="candidate-tally-table"[^>]*>(.*?)</table>',source,flags=re.I|re.S)
  candidate_rows=[];candidate_names=[]
+ photo_deadline=time.monotonic()+4.0
  if candidate_match:
   parsed=_pdf_table_rows(candidate_match.group(1))
   for row_index,row in enumerate(parsed):
@@ -3913,7 +3923,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
    values=[x[0] for x in row]
    if len(values)<5:continue
    photo_match=re.search(r'<img\b[^>]*src=["\']([^"\']+)',row[1][1],flags=re.I)
-   photo=_pdf_photo(photo_match.group(1)) if photo_match else None
+   photo=_pdf_photo(photo_match.group(1),photo_deadline) if photo_match else None
    name=values[2];candidate_names.append(name)
    candidate_rows.append([Paragraph(str(escape(values[0])),body_style),photo or Paragraph("No photo",small_style),Paragraph(str(escape(name)),body_style),Paragraph(str(escape(values[3])),body_style),Paragraph(str(escape(values[4])),body_style)])
  if candidate_rows:
@@ -3952,6 +3962,13 @@ def render_tally_pdf_reportlab(report_html, ref=None):
 
 def render_tally_pdf(report_html, ref=None):
  ref=ref or {}
+ fallback_report_html=report_html
+ try:
+  return render_tally_pdf_reportlab(fallback_report_html,ref)
+ except Exception:
+  # A malformed or unreachable decorative asset must never prevent the
+  # archival report. The image-free HTML renderer remains the final fallback.
+  app.logger.exception("Formatted tally PDF failed; using image-free HTML fallback")
  report_html=re.sub(r'<button\b[^>]*>.*?</button>','',report_html,flags=re.I|re.S)
  # Repository PDFs are archival tally documents, not photo-verification pages.
  # Loading every remote candidate image (twice per candidate) caused xhtml2pdf
@@ -3972,7 +3989,7 @@ def render_tally_pdf(report_html, ref=None):
  """
  pdf_header_html=""
  try:
-  header_path=os.path.join(app.root_path,"static","odm_report_header.png")
+  header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
   if os.path.isfile(header_path):
    import base64
    with open(header_path,"rb") as f: header_b64=base64.b64encode(f.read()).decode("ascii")
@@ -3992,15 +4009,15 @@ def render_tally_pdf(report_html, ref=None):
   if not pdf.startswith(b"%PDF"):raise RuntimeError("HTML renderer did not produce a valid PDF")
   return pdf
  except Exception:
-  app.logger.exception("HTML tally PDF renderer failed; using ReportLab fallback")
-  return render_tally_pdf_reportlab(report_html,ref)
+  app.logger.exception("Image-free HTML tally PDF renderer also failed")
+  raise
  finally:
   buf.close()
   # xhtml2pdf builds a large temporary document tree. Release it before the
   # next category request reaches this long-lived Gunicorn worker.
   try: del result
   except Exception: pass
-  del html,report_html,pdf_header_html
+  del html,report_html,fallback_report_html,pdf_header_html
   gc.collect()
 
 def repository_counts(force=False):
