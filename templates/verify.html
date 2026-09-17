@@ -40,7 +40,7 @@
    <form method=post action=/start id=voter_form>
     <div id=voter_panel>
      <h3 class="next-voter-title">Next voter</h3>
-     <input name=voter_id id=voter_id class=voter-id-input placeholder='Enter voter ID' required autocomplete=off autofocus>
+     <input name=serial_no id=serial_no class=voter-id-input placeholder='Enter membership serial number' required autocomplete=off autofocus>
      <div class="approval-check-action-row"><button id="start_btn" class="approval-check-btn" type="submit">Check Approval &amp; Verify Voter Photos</button></div>
      {% if error %}<div class="vote-error approval-result-error" role="alert">{{error}}</div>{% endif %}
     </div>
@@ -56,14 +56,14 @@
      {% if reset_required %}
      A previous terminal assignment exists. Reset the terminal first, then select and open the new voting stream and generate the pre-opening report.
      {% else %}
-     Open and assign a voting stream first. Voter ID entry will remain disabled until the voting stream has been locked and the pre-opening report has been generated.
+     Open and assign a voting stream first. Serial-number entry will remain disabled until the voting stream has been locked and the pre-opening report has been generated.
      {% endif %}
     </div>
    </div>
 
    <div class="blocked-voter-panel">
     <h3 class="next-voter-title">Next voter</h3>
-    <input class="voter-id-input" placeholder="Enter voter ID" disabled aria-disabled="true">
+    <input class="voter-id-input" placeholder="Enter membership serial number" disabled aria-disabled="true">
     <div class=actions><span></span><button type=button disabled aria-disabled="true">Verify voter photos</button></div>
     <div class="voter-entry-blocked">
      Voter verification is unavailable until the pre-opening process is complete.

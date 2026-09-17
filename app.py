@@ -1,4 +1,4 @@
-# V23.67: validated report images; damaged branding can never block PDF saving.
+# V23.68: membership serial-number lookup for entrance and voting workflows.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -107,7 +107,9 @@ MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_registration.csv").strip()
 MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
-_MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "media": {}}
+_MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "serial_rows": {}, "media": {}}
+
+MEMBERSHIP_SERIAL_FIELD=os.getenv("MEMBERSHIP_SERIAL_FIELD","basics/serial_no").strip()
 AGENTS_ASSET_UID = os.getenv("AGENTS_ASSET_UID", "a4VAzs8X6u5bq6eYWVP4o6").strip()
 AGENTS_FORM_CACHE_SECONDS = int(os.getenv("AGENTS_FORM_CACHE_SECONDS", "600") or 600)
 KOBO_OPENROSA_SUBMISSION_URL = os.getenv("KOBO_OPENROSA_SUBMISSION_URL", "").strip()
@@ -1339,6 +1341,18 @@ def _lookup_member_kobo(national_id):
  rows=sorted(rows,key=lambda x:x.get("_id",0),reverse=True)
  return rows[0]
 
+def _lookup_member_kobo_by_serial(serial_no):
+ if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
+  raise RuntimeError("ODM membership connection is not configured.")
+ url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/data/"
+ q={MEMBERSHIP_SERIAL_FIELD:str(serial_no).strip()}
+ r=requests.get(url,headers=kobo_headers(),params={"query":json.dumps(q)},timeout=25)
+ r.raise_for_status()
+ data=r.json();rows=data.get("results",data if isinstance(data,list) else [])
+ if not rows:return None
+ rows=sorted(rows,key=lambda x:x.get("_id",0),reverse=True)
+ return rows[0]
+
 def _kobo_media_files():
  results=[]
  url=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files/"
@@ -1379,13 +1393,15 @@ def _load_membership_csv():
    raise RuntimeError(f"Unable to load {MEMBERSHIP_CSV_FILENAME} from Kobo media: {media_error}")
   else:
    return {}
- rows={}
+ rows={};serial_rows={}
  for raw in csv.DictReader(StringIO(content.decode("utf-8-sig",errors="replace"))):
   row={str(k or "").strip():("" if v is None else str(v).strip()) for k,v in raw.items()}
   national_id=re.sub(r"\D","",row.get("national_id_no",""))
   if national_id:
    rows[national_id]=row
- _MEMBERSHIP_CSV_CACHE.update(loaded_at=now,rows=rows,media=media)
+  serial_no=str(row.get("serial_no") or row.get("serial_number") or row.get("serial") or "").strip()
+  if serial_no:serial_rows[serial_no.casefold()]=row
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=now,rows=rows,serial_rows=serial_rows,media=media)
  return rows
 
 def _membership_csv_row(national_id):
@@ -1395,7 +1411,8 @@ def _membership_csv_row(national_id):
  return {
   "_id":"membership-csv:"+row.get("national_id_no",""),
   "_membership_source":MEMBERSHIP_CSV_FILENAME,
-  "basics/national_id_no":row.get("national_id_no",""),
+ "basics/national_id_no":row.get("national_id_no",""),
+  MEMBERSHIP_SERIAL_FIELD:row.get("serial_no") or row.get("serial_number") or row.get("serial",""),
   "members_particulars/first_name":row.get("first_name",""),
   "members_particulars/other_names":row.get("middle_name",""),
   "members_particulars/surname":row.get("surname",""),
@@ -1422,6 +1439,20 @@ def lookup_member(national_id):
   raise live_error
  return None
 
+def lookup_member_by_serial(serial_no):
+ """Resolve a public serial number while keeping National ID as the audit key."""
+ live_error=None
+ try:
+  row=_lookup_member_kobo_by_serial(serial_no)
+  if row:return row
+ except Exception as exc:live_error=exc
+ _load_membership_csv()
+ csv_row=_MEMBERSHIP_CSV_CACHE.get("serial_rows",{}).get(str(serial_no or "").strip().casefold())
+ if csv_row:
+  return _membership_csv_row(csv_row.get("national_id_no",""))
+ if live_error:raise live_error
+ return None
+
 def member_view(row):
  first=field(row,"members_particulars/first_name","members_particulars/first_name1")
  other=field(row,"members_particulars/other_names","members_particulars/other_names1")
@@ -1430,6 +1461,7 @@ def member_view(row):
  return {
   "submission_id":row.get("_id"),
   "national_id":field(row,"basics/national_id_no"),
+  "serial_no":field(row,MEMBERSHIP_SERIAL_FIELD,"serial_no","serial_number","serial"),
   "full_name":full or field(row,"stored_particulars_confirmed/full_name"),
   "membership_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed"),
   "polling_station_key":field(
@@ -2212,7 +2244,7 @@ def home():
 def next_voter():
  """Remove the completed voter's private state without touching stream cookies."""
  for key in (
-  "pending_voter_id","membership_submission_id","membership_verified",
+  "pending_voter_id","membership_serial_no","membership_submission_id","membership_verified",
   "membership_station_match","membership_station","entrance_approval_checked",
   "entrance_approval","entrance_approval_consumed","geo","voter_id","choices",
   "completed"
@@ -2230,18 +2262,29 @@ def start():
    "verify.html",
    stream_ready=False,
    stream_row=ss,
-   error="Voter ID entry is blocked until this computer has been assigned to an opened voting stream and the pre-opening report has been generated."
+   error="Serial-number entry is blocked until this computer has been assigned to an opened voting stream and the pre-opening report has been generated."
   )
 
- voter=request.form.get("voter_id","").strip()
+ serial_no=request.form.get("serial_no","").strip()
+ if not serial_no:
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error="Enter the voter's membership serial number.")
+ geo={k:lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")}
+
+ try:
+  row=lookup_member_by_serial(serial_no)
+ except Exception as e:
+  return render_template("verify.html",error=f"Unable to verify voter from the membership lookup sources: {e}")
+ if not row:
+  return render_template("verify.html",error=f"Serial number {serial_no} was not found in Kobo submissions or membership_registration.csv.")
+
+ member=member_view(row)
+ voter=clean_national_id(member.get("national_id"))
  if not voter:
-  return render_template("verify.html",stream_ready=True,stream_row=ss,error="Enter a demo voter ID.")
+  return render_template("verify.html",error="The matched membership record has no valid National ID and cannot proceed to voting.")
 
  previous=previous_vote(voter)
  if previous:
   return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
-
- geo={k:lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")}
 
  try:
   entrance_ok,entrance_message,entrance_approval=entrance_approval_status(voter,geo.get("poll_station",""))
@@ -2250,22 +2293,13 @@ def start():
  if not entrance_ok:
   return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"VOTING NOT ALLOWED: {entrance_message}")
 
- try:
-  row=lookup_member(voter)
- except Exception as e:
-  return render_template("verify.html",error=f"Unable to verify voter from the membership lookup sources: {e}")
-
- if not row:
-  return render_template("verify.html",error=f"National ID {voter} was not found in Kobo submissions or membership_registration.csv.")
-
- member=member_view(row)
-
  membership_station = member.get("polling_station_key") or member.get("polling_station_label") or ""
  locked_station = geo.get("poll_station","")
  station_match = bool(membership_station and locked_station and station_key(membership_station)==station_key(locked_station))
 
  session.clear()
  session["pending_voter_id"]=voter
+ session["membership_serial_no"]=serial_no
  session["membership_submission_id"]=member["submission_id"]
  session["membership_verified"]=True
  session["membership_station_match"]=station_match
@@ -4276,7 +4310,7 @@ def upload_membership_image(upload,national_id,kind):
  if not response.ok:
   detail=re.sub(r"\s+"," ",(response.text or "").strip())[:500]
   raise RuntimeError(f"Kobo rejected the {kind.replace('_',' ')} upload (HTTP {response.status_code}): {detail}")
- _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
  return filename
 
 def clean_national_id(value):
@@ -4388,7 +4422,7 @@ def approve_membership_request(request_id,reviewer):
                   SET status='approved',reviewed_at=NOW(),reviewed_by=%s,rejection_reason=NULL
                   WHERE id=%s""",(reviewer,request_id))
   conn.commit()
- _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
 
 def kobo_membership_media_files():
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
@@ -4526,7 +4560,7 @@ def replace_kobo_membership_csv(path):
    rollback_note=" The previous Kobo file was restored." if restore_response.ok else " WARNING: Kobo also rejected restoration of the previous file: "+error_detail(restore_response)
   raise RuntimeError("Kobo rejected the replacement upload at "+upload_endpoint+": "+str(upload_exc)+rollback_note) from upload_exc
 
- _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},media={})
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
  return []
 
 def _all_kobo_membership_submissions():

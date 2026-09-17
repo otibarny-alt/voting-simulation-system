@@ -26,6 +26,7 @@
   {% endif %}
 
   <div class="member-details">
+   <div><b>Serial No.:</b> {{member.serial_no or session.get('membership_serial_no','—')}}</div>
    <div><b>National ID:</b> {{member.national_id}}</div>
    <div><b>Name:</b> {{member.full_name or "Not available"}}</div>
    <div><b>ODM Membership No:</b> {{member.membership_no or "Not available"}}</div>
