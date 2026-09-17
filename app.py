@@ -1,4 +1,4 @@
-# V23.65: direct ReportLab fallback for repository and emailed tally PDFs.
+# V23.66: branded, image-aware ReportLab tally PDFs with bounded memory use.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -24,7 +24,8 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
+from PIL import Image as PILImage
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -3806,43 +3807,142 @@ def tallies():
  return render_template("tallies.html",sections=tally_sections)
 
 
+def _pdf_plain_html(value):
+ value=re.sub(r"<br\s*/?>","\n",str(value or ""),flags=re.I)
+ value=re.sub(r"<[^>]+>","",value)
+ return re.sub(r"\s+"," ",unescape(value)).strip()
+
+def _pdf_photo(src):
+ """Return a small in-memory candidate image without letting photos exhaust RAM."""
+ src=unescape(str(src or "")).strip()
+ if not src:return None
+ raw=None
+ try:
+  if src.startswith("/static/"):
+   path=os.path.join(app.root_path,src.lstrip("/"))
+   if os.path.isfile(path):
+    with open(path,"rb") as f:raw=f.read(3*1024*1024+1)
+  elif src.startswith("http://") or src.startswith("https://"):
+   response=requests.get(src,timeout=(3,8),stream=True)
+   response.raise_for_status()
+   chunks=[];total=0
+   for chunk in response.iter_content(65536):
+    total+=len(chunk)
+    if total>3*1024*1024:raise ValueError("candidate photo is larger than 3 MB")
+    chunks.append(chunk)
+   raw=b"".join(chunks)
+  if not raw:return None
+  source=BytesIO(raw);picture=PILImage.open(source);picture.thumbnail((260,300))
+  if picture.mode not in ("RGB","L"):picture=picture.convert("RGB")
+  compact=BytesIO();picture.save(compact,format="JPEG",quality=78,optimize=True);compact.seek(0)
+  image=RLImage(compact,width=18*mm,height=21*mm,kind="proportional")
+  image._source_buffer=compact
+  return image
+ except Exception as exc:
+  app.logger.warning("Candidate photo omitted from fallback PDF: %s",exc)
+  return None
+
+def _pdf_table_rows(table_html):
+ rows=[]
+ for row_html in re.findall(r"<tr\b[^>]*>(.*?)</tr>",table_html,flags=re.I|re.S):
+  cells=[]
+  for cell_html in re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>",row_html,flags=re.I|re.S):
+   cells.append((_pdf_plain_html(cell_html),cell_html))
+  if cells:rows.append(cells)
+ return rows
+
 def render_tally_pdf_reportlab(report_html, ref=None):
  ref=ref or {}
- cleaned=str(report_html or "")
- cleaned=re.sub(r"<script\b[^>]*>.*?</script>","",cleaned,flags=re.I|re.S)
- cleaned=re.sub(r"<style\b[^>]*>.*?</style>","",cleaned,flags=re.I|re.S)
- cleaned=re.sub(r"<button\b[^>]*>.*?</button>","",cleaned,flags=re.I|re.S)
- cleaned=re.sub(r"<img\b[^>]*>","",cleaned,flags=re.I|re.S)
- cleaned=re.sub(r"</(?:h[1-6]|p|div|tr|table|section|article|li)>","\n",cleaned,flags=re.I)
- cleaned=re.sub(r"</?(?:td|th)\b[^>]*>"," | ",cleaned,flags=re.I)
- cleaned=re.sub(r"<br\s*/?>","\n",cleaned,flags=re.I)
- cleaned=re.sub(r"<[^>]+>","",cleaned)
- lines=[re.sub(r"\s+"," ",unescape(line)).strip(" |") for line in cleaned.splitlines()]
- lines=[line for line in lines if line]
+ source=str(report_html or "")
  output=BytesIO()
- document=SimpleDocTemplate(output,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,topMargin=14*mm,bottomMargin=14*mm)
+ document=SimpleDocTemplate(output,pagesize=A4,rightMargin=10*mm,leftMargin=10*mm,topMargin=8*mm,bottomMargin=9*mm)
  styles=getSampleStyleSheet()
- title_style=ParagraphStyle("FallbackTitle",parent=styles["Title"],alignment=TA_CENTER,fontSize=18,leading=22,spaceAfter=8*mm)
- notice_style=ParagraphStyle("FallbackNotice",parent=styles["BodyText"],alignment=TA_CENTER,fontSize=9,textColor=colors.HexColor("#8a4b00"),spaceAfter=5*mm)
- body_style=ParagraphStyle("FallbackBody",parent=styles["BodyText"],fontSize=9,leading=12,spaceAfter=2*mm)
- story=[
-  Paragraph(str(escape(str(ref.get("contest") or "Voting").title()))+" Closing Tally Report",title_style),
+ title_match=re.search(r'<div class="tally-heading".*?<h2[^>]*>(.*?)</h2>',source,flags=re.I|re.S)
+ contest=_pdf_plain_html(title_match.group(1)) if title_match else str(ref.get("contest") or "Voting").replace("_"," ").title()
+ title_style=ParagraphStyle("FallbackTitle",parent=styles["Title"],alignment=TA_CENTER,fontSize=17,leading=20,textColor=colors.HexColor("#111827"),spaceAfter=3*mm)
+ section_style=ParagraphStyle("FallbackSection",parent=styles["Heading3"],fontSize=11,leading=14,textColor=colors.HexColor("#111827"),spaceBefore=4*mm,spaceAfter=2*mm)
+ notice_style=ParagraphStyle("FallbackNotice",parent=styles["BodyText"],alignment=TA_CENTER,fontSize=8.5,textColor=colors.HexColor("#9b4c00"),spaceAfter=3*mm)
+ body_style=ParagraphStyle("FallbackBody",parent=styles["BodyText"],fontSize=8.2,leading=10)
+ small_style=ParagraphStyle("FallbackSmall",parent=body_style,fontSize=7.4,leading=9)
+ story=[]
+ header_path=os.path.join(app.root_path,"static","odm_report_header.png")
+ if os.path.isfile(header_path):story.extend([RLImage(header_path,width=190*mm,height=29*mm,kind="proportional"),Spacer(1,2*mm)])
+ story.extend([
+  Paragraph(str(escape(contest))+" Closing Tally Report",title_style),
   Paragraph("TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS",notice_style),
- ]
+ ])
  rows=[
-  ["Polling station",str(ref.get("poll_station") or ref.get("polling_station") or ref.get("station") or "Not recorded")],
-  ["Stream",str(ref.get("stream") or "Not recorded")],
-  ["Closed",str(ref.get("closed_at") or ref.get("generated_at") or "Not recorded")],
+  ["County",str(ref.get("county") or "Not recorded"),"Constituency",str(ref.get("constituency") or "Not recorded")],
+  ["Ward",str(ref.get("ward") or "Not recorded"),"Polling station",str(ref.get("poll_station") or ref.get("polling_station") or ref.get("station") or "Not recorded")],
+  ["Stream",str(ref.get("stream") or "Not recorded"),"Closed",str(ref.get("closed_at") or ref.get("generated_at") or "Not recorded")],
  ]
- location=Table(rows,colWidths=[38*mm,138*mm],hAlign="LEFT")
+ location=Table(rows,colWidths=[24*mm,59*mm,25*mm,78*mm],hAlign="LEFT")
  location.setStyle(TableStyle([
-  ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),
+  ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTNAME",(2,0),(2,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),
   ("VALIGN",(0,0),(-1,-1),"TOP"),("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#aaaaaa")),
-  ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff0d9")),
-  ("BOTTOMPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),5),
+  ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff0d9")),("BACKGROUND",(2,0),(2,-1),colors.HexColor("#fff0d9")),
+  ("BOTTOMPADDING",(0,0),(-1,-1),4),("TOPPADDING",(0,0),(-1,-1),4),
  ]))
- story.extend([location,Spacer(1,6*mm)])
- for line in lines: story.append(Paragraph(str(escape(line)),body_style))
+ story.extend([location,Spacer(1,3*mm)])
+
+ meta=re.search(r'<div class="report-generation-meta"[^>]*>(.*?)</div>\s*</div>',source,flags=re.I|re.S)
+ if meta:
+  details=[]
+  for label,value in re.findall(r'<div[^>]*>\s*<b>([^<]+)</b>\s*<span[^>]*>(.*?)</span>\s*</div>',meta.group(1),flags=re.I|re.S):
+   details.append([_pdf_plain_html(label),_pdf_plain_html(value)])
+  if details:
+   meta_rows=[]
+   for i in range(0,len(details),2):
+    pair=details[i:i+2]
+    row=[]
+    for item in pair:row.extend([Paragraph(str(escape(item[0])),small_style),Paragraph(str(escape(item[1])),small_style)])
+    while len(row)<4:row.extend(["",""])
+    meta_rows.append(row)
+   meta_table=Table(meta_rows,colWidths=[25*mm,65*mm,25*mm,65*mm])
+   meta_table.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor("#c7c7c7")),("INNERGRID",(0,0),(-1,-1),0.25,colors.HexColor("#dddddd")),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#f6f6f6")),("BACKGROUND",(2,0),(2,-1),colors.HexColor("#f6f6f6")),("VALIGN",(0,0),(-1,-1),"TOP"),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+   story.extend([Paragraph("Report Generation Details",section_style),meta_table,Spacer(1,3*mm)])
+
+ candidate_match=re.search(r'<table class="candidate-tally-table"[^>]*>(.*?)</table>',source,flags=re.I|re.S)
+ candidate_rows=[];candidate_names=[]
+ if candidate_match:
+  parsed=_pdf_table_rows(candidate_match.group(1))
+  for row_index,row in enumerate(parsed):
+   if row_index==0:
+    candidate_rows.append([Paragraph("<b>Rank</b>",small_style),Paragraph("<b>Photo</b>",small_style),Paragraph("<b>Candidate</b>",small_style),Paragraph("<b>Votes</b>",small_style),Paragraph("<b>%</b>",small_style)])
+    continue
+   values=[x[0] for x in row]
+   if len(values)<5:continue
+   photo_match=re.search(r'<img\b[^>]*src=["\']([^"\']+)',row[1][1],flags=re.I)
+   photo=_pdf_photo(photo_match.group(1)) if photo_match else None
+   name=values[2];candidate_names.append(name)
+   candidate_rows.append([Paragraph(str(escape(values[0])),body_style),photo or Paragraph("No photo",small_style),Paragraph(str(escape(name)),body_style),Paragraph(str(escape(values[3])),body_style),Paragraph(str(escape(values[4])),body_style)])
+ if candidate_rows:
+  tally=Table(candidate_rows,colWidths=[13*mm,23*mm,91*mm,23*mm,28*mm],repeatRows=1)
+  tally.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#111111")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.45,colors.HexColor("#aaaaaa")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(1,-1),"CENTER"),("ALIGN",(3,1),(-1,-1),"CENTER"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#fff8ee")]),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+  story.extend([Paragraph("Candidate Tallies",section_style),tally])
+
+ summary=[]
+ for label,value,extra in re.findall(r'<div class="[^"]*summary-box[^"]*">\s*<span>(.*?)</span>\s*<strong>(.*?)</strong>\s*(?:<small>(.*?)</small>)?',source,flags=re.I|re.S):
+  summary.append([_pdf_plain_html(label),_pdf_plain_html(value)+(" ("+_pdf_plain_html(extra)+")" if _pdf_plain_html(extra) else "")])
+ if summary:
+  summary_rows=[]
+  for i in range(0,len(summary),2):
+   pair=summary[i:i+2];row=[]
+   for item in pair:row.extend([Paragraph(str(escape(item[0])),small_style),Paragraph("<b>"+str(escape(item[1]))+"</b>",body_style)])
+   while len(row)<4:row.extend(["",""])
+   summary_rows.append(row)
+  summary_table=Table(summary_rows,colWidths=[52*mm,35*mm,52*mm,35*mm])
+  summary_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#b8b8b8")),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff0d9")),("BACKGROUND",(2,0),(2,-1),colors.HexColor("#fff0d9")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+  story.extend([Paragraph("Voter Participation Summary",section_style),summary_table])
+
+ story.append(PageBreak())
+ story.append(Paragraph("Candidate Agents' Certification — Polling Station Stream",title_style))
+ story.append(Paragraph("We, the undersigned candidate agents, confirm that this is a true copy of the simulated results recorded for this polling station stream.",body_style))
+ cert_rows=[[Paragraph("<b>Candidate</b>",small_style),Paragraph("<b>Agent Name</b>",small_style),Paragraph("<b>Signature</b>",small_style),Paragraph("<b>Date / Time</b>",small_style)]]
+ for name in candidate_names:cert_rows.append([Paragraph(str(escape(name)),small_style),"","",""])
+ certification=Table(cert_rows,colWidths=[65*mm,42*mm,38*mm,35*mm],repeatRows=1,rowHeights=[8*mm]+[16*mm]*len(candidate_names))
+ certification.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#111111")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#888888")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+ story.extend([Spacer(1,3*mm),certification,Spacer(1,7*mm),Paragraph("<b>Presiding Officer</b> &nbsp;&nbsp; Name: __________________________ &nbsp;&nbsp; Signature: ____________________ &nbsp;&nbsp; Date/Time: __________________",body_style),Spacer(1,7*mm),Paragraph("<b>Returning Officer</b> &nbsp;&nbsp; Name: __________________________ &nbsp;&nbsp; Signature: ____________________ &nbsp;&nbsp; Date/Time: __________________",body_style)])
  document.build(story)
  pdf=output.getvalue()
  output.close()
