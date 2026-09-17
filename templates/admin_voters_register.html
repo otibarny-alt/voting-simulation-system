@@ -35,8 +35,8 @@
   {% for area, station_members in groups %}
   <section class="register-panel station">
    <h2>{{ area[3] or 'Polling station not specified' }} — {{ area[2] or 'Ward not specified' }}, {{ area[1] or 'Constituency not specified' }}, {{ area[0] or 'County not specified' }} ({{ station_members|length }})</h2>
-   <table><thead><tr><th>No.</th><th>Member ID</th><th>Full name</th><th>ODM registration no.</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th></tr></thead>
-   <tbody>{% for member in station_members %}<tr><td>{{ loop.index }}</td><td>{{ member.member_id }}</td><td>{{ member.full_name }}</td><td>{{ member.odm_registration_no }}</td><td>{{ member.county }}</td><td>{{ member.constituency }}</td><td>{{ member.ward }}</td><td>{{ member.polling_station }}</td></tr>{% endfor %}</tbody></table>
+   <table><thead><tr><th>No.</th><th>Member ID</th><th>Serial No.</th><th>Full name</th><th>ODM registration no.</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th></tr></thead>
+   <tbody>{% for member in station_members %}<tr><td>{{ loop.index }}</td><td>{{ member.member_id }}</td><td>{{ member.serial_no or '—' }}</td><td>{{ member.full_name }}</td><td>{{ member.odm_registration_no }}</td><td>{{ member.county }}</td><td>{{ member.constituency }}</td><td>{{ member.ward }}</td><td>{{ member.polling_station }}</td></tr>{% endfor %}</tbody></table>
   </section>
   {% endfor %}
  {% else %}<section class="register-panel empty">No members match the selected filters.</section>{% endif %}
