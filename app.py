@@ -1024,17 +1024,22 @@ def agent_rows():
 
 _REGISTERED_TOTAL_CACHE={"signature":None,"value":0,"breakdown":[]}
 def membership_registered_breakdown():
- """Count unique approved CSV members by their recorded electoral geography."""
+ """Count unique approved CSV members by compact dashboard geography.
+
+ Ward is the dashboards' finest electorate filter. Excluding polling stations
+ prevents national responses from becoming excessively large; stream closing
+ reports still count the matching polling station directly from the CSV.
+ """
  rows=_load_membership_csv()
  signature=_MEMBERSHIP_CSV_CACHE.get("loaded_at")
  if _REGISTERED_TOTAL_CACHE.get("signature")==signature:
   return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
  grouped={}
  for row in rows.values():
-  geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward","poll_station"))
+  geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward"))
   grouped[geo]=grouped.get(geo,0)+1
- breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"poll_station":g[3],"registered_voters":n} for g,n in grouped.items()]
- breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward","poll_station")))
+ breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"registered_voters":n} for g,n in grouped.items()]
+ breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
  _REGISTERED_TOTAL_CACHE.update(signature=signature,value=len(rows),breakdown=breakdown)
  return list(breakdown)
 

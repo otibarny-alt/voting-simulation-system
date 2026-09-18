@@ -1494,3 +1494,11 @@ V23.71 — KOBO MEMBERSHIP REGISTER ELECTORATE TOTALS
   its rows and agents_login.csv totals no longer determine electorate totals.
 - Closed-stream tally reports obtain their registered-voter figure from the
   matching polling station in membership_registration.csv.
+
+V23.72 — COMPACT MEMBERSHIP TOTALS FEED
+
+- Compresses the results-dashboard electorate breakdown to ward level, the
+  finest geographical filter used by the six result dashboards.
+- Avoids sending tens of thousands of polling-station records on every refresh,
+  preventing Render 502 responses and reducing memory usage and load time.
+- Polling-station counts remain internal to voting and closing reports.
