@@ -1,4 +1,4 @@
-# V23.69: serial-number column in HTML, CSV and printable voters registers.
+# V23.74: fast single-flight Presidential/MCA dashboard aggregation.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -108,6 +108,7 @@ KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
 MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_registration.csv").strip()
 MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
 _MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "serial_rows": {}, "media": {}}
+_MEMBERSHIP_CSV_LOAD_LOCK = threading.Lock()
 
 MEMBERSHIP_SERIAL_FIELD=os.getenv("MEMBERSHIP_SERIAL_FIELD","basics/serial_no").strip()
 AGENTS_ASSET_UID = os.getenv("AGENTS_ASSET_UID", "a4VAzs8X6u5bq6eYWVP4o6").strip()
@@ -220,21 +221,29 @@ def candidate_portal_catalog(geo):
  cached=_CANDIDATE_CATALOG_CACHE.get(cache_key)
  if cached and now-cached[0] < CANDIDATE_CATALOG_CACHE_SECONDS:
   return copy.deepcopy(cached[1])
- if not CANDIDATE_PORTAL_BASE_URL:
-  raise RuntimeError("Candidate Portal connection is not configured.")
- r=requests.get(
-  f"{CANDIDATE_PORTAL_BASE_URL}/api/candidates",
-  params={
-   "county":geo.get("county",""),
-   "constituency":geo.get("constituency",""),
-   "ward":geo.get("ward","")
-  },
-  timeout=(4,10)
- )
- r.raise_for_status()
- payload=r.json()
- rows=payload.get("results",[]) if isinstance(payload,dict) else []
- catalog={k:[] for k,_,_ in ELECTIONS}
+ with _CANDIDATE_CATALOG_CACHE_LOCK:
+  # Single-flight the remote catalogue request. Without this guard, concurrent
+  # Presidential and MCA refreshes can make identical calls and exhaust the
+  # small Render worker while both wait on the candidate service.
+  cached=_CANDIDATE_CATALOG_CACHE.get(cache_key)
+  now=time.monotonic()
+  if cached and now-cached[0] < CANDIDATE_CATALOG_CACHE_SECONDS:
+   return copy.deepcopy(cached[1])
+  if not CANDIDATE_PORTAL_BASE_URL:
+   raise RuntimeError("Candidate Portal connection is not configured.")
+  r=requests.get(
+   f"{CANDIDATE_PORTAL_BASE_URL}/api/candidates",
+   params={
+    "county":geo.get("county",""),
+    "constituency":geo.get("constituency",""),
+    "ward":geo.get("ward","")
+   },
+   timeout=(4,10)
+  )
+  r.raise_for_status()
+  payload=r.json()
+  rows=payload.get("results",[]) if isinstance(payload,dict) else []
+  catalog={k:[] for k,_,_ in ELECTIONS}
  position_aliases={
   "president":"president","presidential":"president",
   "governor":"governor","gubernatorial":"governor",
@@ -266,8 +275,7 @@ def candidate_portal_catalog(geo):
   catalog[key].sort(key=lambda x:(x["name"].lower(),x["candidate_id"]))
   for idx,cand in enumerate(catalog[key],start=1):
    cand["slot"]=idx
- with _CANDIDATE_CATALOG_CACHE_LOCK:
-  _CANDIDATE_CATALOG_CACHE[cache_key]=(time.monotonic(),copy.deepcopy(catalog))
+ _CANDIDATE_CATALOG_CACHE[cache_key]=(time.monotonic(),copy.deepcopy(catalog))
  return catalog
 
 def election_with_candidates(step,geo):
@@ -295,17 +303,12 @@ def dashboard_candidate_catalog(election,candidate_totals,event_names=None,event
  event_names=event_names or {}
  event_geo=event_geo or {}
  candidates_by_id={}
- # First request the complete catalogue. Also request each exact electoral area
- # present in vote events: some candidate services intentionally return local
- # positions only when their county/constituency/ward is supplied.
+ # Request the complete catalogue once. Earlier builds also called the remote
+ # candidate service once per electoral area represented in vote events. MCA
+ # could therefore perform hundreds of serial HTTPS calls and time out. The
+ # complete catalogue plus the stored event fallbacks below contains everything
+ # required by the aggregate dashboard without those per-area round trips.
  catalogue_geographies=[{}]
- seen_geo=set()
- for geo in event_geo.values():
-  scoped={k:str(geo.get(k,"") or "").strip() for k in ("county","constituency","ward")}
-  marker=tuple(scoped[k].lower() for k in ("county","constituency","ward"))
-  if any(marker) and marker not in seen_geo:
-   seen_geo.add(marker)
-   catalogue_geographies.append(scoped)
 
  catalogue_errors=[]
  for geo in catalogue_geographies:
@@ -1375,6 +1378,16 @@ def _load_membership_csv():
  now=time.time()
  if _MEMBERSHIP_CSV_CACHE["rows"] and now-_MEMBERSHIP_CSV_CACHE["loaded_at"]<MEMBERSHIP_CSV_CACHE_SECONDS:
   return _MEMBERSHIP_CSV_CACHE["rows"]
+ with _MEMBERSHIP_CSV_LOAD_LOCK:
+  # Double-check after waiting so only one dashboard request downloads and
+  # parses the Kobo CSV. Parallel cold-start loads were the principal source of
+  # memory spikes and 502 responses on Render.
+  now=time.time()
+  if _MEMBERSHIP_CSV_CACHE["rows"] and now-_MEMBERSHIP_CSV_CACHE["loaded_at"]<MEMBERSHIP_CSV_CACHE_SECONDS:
+   return _MEMBERSHIP_CSV_CACHE["rows"]
+  return _load_membership_csv_uncached(now)
+
+def _load_membership_csv_uncached(now):
  content=None
  media={}
  media_error=None
@@ -2784,27 +2797,27 @@ def dashboard_registered_metadata():
 # requests from repeating the same PostgreSQL aggregation at the same moment.
 _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _GOV_DASHBOARD_CACHE_LOCK=threading.Lock()
-GOV_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","15")))
+GOV_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("GOV_DASHBOARD_CACHE_SECONDS","120")))
 
 _PRES_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _PRES_DASHBOARD_CACHE_LOCK=threading.Lock()
-PRES_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("PRES_DASHBOARD_CACHE_SECONDS","15")))
+PRES_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("PRES_DASHBOARD_CACHE_SECONDS","120")))
 
 _SEN_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _SEN_DASHBOARD_CACHE_LOCK=threading.Lock()
-SEN_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","15")))
+SEN_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("SEN_DASHBOARD_CACHE_SECONDS","120")))
 
 _WOMAN_REP_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _WOMAN_REP_DASHBOARD_CACHE_LOCK=threading.Lock()
-WOMAN_REP_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("WOMAN_REP_DASHBOARD_CACHE_SECONDS","15")))
+WOMAN_REP_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("WOMAN_REP_DASHBOARD_CACHE_SECONDS","120")))
 
 _MNA_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _MNA_DASHBOARD_CACHE_LOCK=threading.Lock()
-MNA_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("MNA_DASHBOARD_CACHE_SECONDS","15")))
+MNA_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("MNA_DASHBOARD_CACHE_SECONDS","120")))
 
 _MCA_DASHBOARD_CACHE={"at":0.0,"payload":None}
 _MCA_DASHBOARD_CACHE_LOCK=threading.Lock()
-MCA_DASHBOARD_CACHE_SECONDS=max(5,int(os.getenv("MCA_DASHBOARD_CACHE_SECONDS","15")))
+MCA_DASHBOARD_CACHE_SECONDS=max(30,int(os.getenv("MCA_DASHBOARD_CACHE_SECONDS","120")))
 
 
 def _build_woman_rep_dashboard_payload():
