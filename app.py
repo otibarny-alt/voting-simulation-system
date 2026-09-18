@@ -1,4 +1,4 @@
-# V23.76: automatic central opening-report repository.
+# V23.77: geographically distinct opening reports and filenames.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -5562,6 +5562,9 @@ def render_opening_report_pdf(row,position_rows):
  opened_at=str(value("opened_at",""))
  opening_status=time_status(opened_at,VOTING_OPEN_TIME)
  info=[
+  ["County",str(value("county")) or "Not recorded"],
+  ["Constituency",str(value("constituency")) or "Not recorded"],
+  ["Ward",str(value("ward")) or "Not recorded"],
   ["Polling Station",str(value("poll_station"))],
   ["Stream",str(value("stream"))],
   ["Date",str(value("session_date"))],
@@ -5633,7 +5636,8 @@ def deposit_opening_report_snapshot(snapshot):
  ]
  pdf=render_opening_report_pdf(snapshot,position_rows)
  safe=lambda value:re.sub(r"[^A-Za-z0-9_-]+","_",str(value or "")).strip("_") or "unknown"
- filename=f"Opening_Report_{safe(snapshot.get('poll_station'))}_{safe(snapshot.get('stream'))}.pdf"
+ filename=(f"Opening_Report_{safe(snapshot.get('county'))}_{safe(snapshot.get('constituency'))}_"
+           f"{safe(snapshot.get('ward'))}_{safe(snapshot.get('poll_station'))}_{safe(snapshot.get('stream'))}.pdf")
  deposited_at=kenya_now().isoformat(timespec="seconds")
  init_repository_db()
  with repository_db() as conn:
@@ -5713,15 +5717,21 @@ def email_opening_report():
   return jsonify({"ok":False,"error":f"The opening report PDF could not be prepared ({exc.__class__.__name__})."}),500
  safe_station=re.sub(r"[^A-Za-z0-9_-]+","_",poll_station or "polling_station").strip("_")
  safe_stream=re.sub(r"[^A-Za-z0-9_-]+","_",stream or "stream").strip("_")
- filename=f"Opening_Report_{safe_station}_{safe_stream}.pdf"
+ safe_county=re.sub(r"[^A-Za-z0-9_-]+","_",str(row["county"] or "county")).strip("_")
+ safe_constituency=re.sub(r"[^A-Za-z0-9_-]+","_",str(row["constituency"] or "constituency")).strip("_")
+ safe_ward=re.sub(r"[^A-Za-z0-9_-]+","_",str(row["ward"] or "ward")).strip("_")
+ filename=f"Opening_Report_{safe_county}_{safe_constituency}_{safe_ward}_{safe_station}_{safe_stream}.pdf"
  clean_station=re.sub(r"[\r\n]+"," ",poll_station)
  clean_stream=re.sub(r"[\r\n]+"," ",stream)
  msg=EmailMessage()
- msg["Subject"]=f"Voting Stream Opening Report - {clean_station} - {clean_stream}"
+ clean_county=re.sub(r"[\r\n]+"," ",str(row["county"] or ""))
+ clean_constituency=re.sub(r"[\r\n]+"," ",str(row["constituency"] or ""))
+ clean_ward=re.sub(r"[\r\n]+"," ",str(row["ward"] or ""))
+ msg["Subject"]=f"Voting Stream Opening Report - {clean_county} - {clean_constituency} - {clean_ward} - {clean_station} - {clean_stream}"
  msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
  msg["To"]=recipient
- msg.set_content(f"Voting stream opening report for {poll_station} / {stream}. The printable PDF report is attached. TRAINING / SIMULATION ONLY.")
- msg.add_alternative("<p><b>Voting Stream Opening Report</b></p><p>Polling station: "+str(escape(poll_station))+"<br>Stream: "+str(escape(stream))+"</p><p>The printable PDF report is attached.</p><p><b>TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS.</b></p>",subtype="html")
+ msg.set_content(f"Voting stream opening report for {clean_county} / {clean_constituency} / {clean_ward} / {poll_station} / {stream}. The printable PDF report is attached. TRAINING / SIMULATION ONLY.")
+ msg.add_alternative("<p><b>Voting Stream Opening Report</b></p><p>County: "+str(escape(clean_county))+"<br>Constituency: "+str(escape(clean_constituency))+"<br>Ward: "+str(escape(clean_ward))+"<br>Polling station: "+str(escape(poll_station))+"<br>Stream: "+str(escape(stream))+"</p><p>The printable PDF report is attached.</p><p><b>TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS.</b></p>",subtype="html")
  msg.add_attachment(pdf_bytes,maintype="application",subtype="pdf",filename=filename)
  try:
   smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
