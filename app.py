@@ -1,4 +1,4 @@
-# V23.74: fast single-flight Presidential/MCA dashboard aggregation.
+# V23.75: email formatted voting-stream opening reports.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -5406,6 +5406,157 @@ def repository_download(report_id):
  data=bytes(r['pdf_data'])
  resp=Response(data,mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{r["filename"]}"','Content-Length':str(len(data)),'Cache-Control':'private, max-age=3600'})
  return resp
+
+def render_opening_report_pdf(row,position_rows):
+ """Create a printable A4 opening certificate without browser-side HTML."""
+ buffer=BytesIO()
+ doc=SimpleDocTemplate(buffer,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,
+                       topMargin=12*mm,bottomMargin=12*mm,
+                       title="Voting Stream Opening Report")
+ styles=getSampleStyleSheet()
+ title_style=ParagraphStyle("OpeningTitle",parent=styles["Title"],fontSize=21,
+                            leading=25,alignment=TA_CENTER,spaceAfter=8)
+ heading_style=ParagraphStyle("OpeningHeading",parent=styles["Heading2"],fontSize=13,
+                              leading=16,spaceBefore=9,spaceAfter=5)
+ small_style=ParagraphStyle("OpeningSmall",parent=styles["BodyText"],fontSize=8.5,leading=11)
+ warning_style=ParagraphStyle("OpeningWarning",parent=styles["BodyText"],fontSize=10,
+                              leading=13,alignment=TA_CENTER,textColor=colors.HexColor("#a84c00"),spaceAfter=10)
+ story=[]
+ header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+ if not os.path.isfile(header_path):
+  header_path=os.path.join(app.root_path,"static","odm_screen_header.png")
+ if os.path.isfile(header_path):
+  try:
+   story.extend([RLImage(header_path,width=181*mm,height=31*mm,kind="proportional"),Spacer(1,4*mm)])
+  except Exception as exc:
+   app.logger.warning("Opening report header image omitted: %s",exc)
+ story.append(Paragraph("Voting Stream Opening Report",title_style))
+ story.append(Paragraph("TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS",warning_style))
+
+ def value(key,default=""):
+  try:return row[key] if row[key] is not None else default
+  except Exception:return default
+ opened_at=str(value("opened_at",""))
+ opening_status=time_status(opened_at,VOTING_OPEN_TIME)
+ info=[
+  ["Polling Station",str(value("poll_station"))],
+  ["Stream",str(value("stream"))],
+  ["Date",str(value("session_date"))],
+  ["Pre-cast votes at opening","0 — VERIFIED CLEAN"],
+  ["Scheduled opening",VOTING_OPEN_TIME or "Not configured"],
+  ["Actual opening timestamp",opened_at or "Not recorded"],
+  ["Opening check","ON SCHEDULE" if opening_status is True else ("DIFFERS FROM CONFIGURED TIME" if opening_status is False else "SCHEDULE NOT CONFIGURED")],
+  ["Opening Station GPS Latitude",f'{float(value("opening_lat")):.7f}' if value("opening_lat",None) is not None else "Not captured at opening"],
+  ["Opening Station GPS Longitude",f'{float(value("opening_lon")):.7f}' if value("opening_lon",None) is not None else "Not captured at opening"],
+  ["GPS Accuracy",f'{float(value("opening_accuracy")):.1f} metres' if value("opening_accuracy",None) is not None else "Not available"],
+  ["GPS Capture Status","Captured and stored when stream opened" if value("opening_lat",None) is not None and value("opening_lon",None) is not None else "Opening GPS was not stored"],
+ ]
+ info_table=Table(info,colWidths=[57*mm,124*mm],repeatRows=0)
+ info_table.setStyle(TableStyle([
+  ("GRID",(0,0),(-1,-1),0.55,colors.HexColor("#777777")),
+  ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff0dc")),
+  ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),
+  ("FONTNAME",(1,0),(1,-1),"Helvetica"),
+  ("FONTSIZE",(0,0),(-1,-1),8.5),("LEADING",(0,0),(-1,-1),10.5),
+  ("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),5),
+  ("RIGHTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),
+  ("BOTTOMPADDING",(0,0),(-1,-1),4),
+ ]))
+ story.extend([info_table,Paragraph("Opening Certification — Candidate Agents",heading_style),
+  Paragraph("We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.",small_style)])
+ for position in position_rows:
+  story.append(Paragraph(str(escape(position.get("title") or "")),heading_style))
+  rows=[["Candidate","Agent Name","Signature","Date / Time"]]
+  candidates=position.get("candidates") or []
+  if candidates:
+   for candidate in candidates:
+    rows.append([Paragraph(str(escape(candidate.get("name") or "Unnamed candidate")),small_style),"","",""])
+  else:
+   rows.append([Paragraph("No active registered candidate found for this electoral area.",small_style),"","",""])
+  table=Table(rows,colWidths=[58*mm,43*mm,39*mm,41*mm],repeatRows=1,rowHeights=[7*mm]+[12*mm]*(len(rows)-1))
+  table.setStyle(TableStyle([
+   ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#777777")),
+   ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#efefef")),
+   ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),
+   ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),4),
+  ]))
+  story.append(table)
+ story.extend([Paragraph("Opening — Election Officials",heading_style),
+  Paragraph("Presiding Officer: Name ____________________  Signature ____________________  Date/Time ____________________",small_style),Spacer(1,4*mm),
+  Paragraph("Returning Officer: Name ____________________  Signature ____________________  Date/Time ____________________",small_style)])
+ doc.build(story)
+ return buffer.getvalue()
+
+@app.post("/email-opening-report")
+def email_opening_report():
+ data=request.get_json(silent=True) or {}
+ recipient=str(data.get("email","")).strip()
+ poll_station=str(data.get("poll_station","")).strip()
+ stream=str(data.get("stream","")).strip()
+ if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",recipient):
+  return jsonify({"ok":False,"error":"Enter a valid email address."}),400
+ active=signed_terminal_cookie_lock()
+ if not active or active.get("poll_station")!=poll_station or active.get("stream")!=stream:
+  return jsonify({"ok":False,"error":"This device is not assigned to the selected voting stream."}),403
+ row=stream_session(poll_station,stream,active.get("session_date"))
+ if not row or not row["opened_at"]:
+  return jsonify({"ok":False,"error":"The voting stream has not been opened, so an opening report is unavailable."}),409
+ if not SMTP_HOST or not SMTP_FROM_EMAIL:
+  return jsonify({"ok":False,"error":"Email is not configured on the server. Set the SMTP environment variables in Render."}),503
+ geo={key:(row[key] or "") for key in ("county","constituency","ward","poll_station","stream")}
+ try:
+  catalog=candidate_portal_catalog(geo)
+ except Exception as exc:
+  app.logger.warning("Candidate catalogue unavailable for emailed opening report: %s",exc)
+  catalog={k:[] for k,_,_ in ELECTIONS}
+ position_rows=[
+  {"key":"president","title":"President","candidates":catalog.get("president",[])},
+  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
+  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
+  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
+  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
+  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])},
+ ]
+ try:
+  pdf_bytes=render_opening_report_pdf(row,position_rows)
+ except Exception as exc:
+  app.logger.exception("Opening report PDF generation failed")
+  return jsonify({"ok":False,"error":f"The opening report PDF could not be prepared ({exc.__class__.__name__})."}),500
+ safe_station=re.sub(r"[^A-Za-z0-9_-]+","_",poll_station or "polling_station").strip("_")
+ safe_stream=re.sub(r"[^A-Za-z0-9_-]+","_",stream or "stream").strip("_")
+ filename=f"Opening_Report_{safe_station}_{safe_stream}.pdf"
+ clean_station=re.sub(r"[\r\n]+"," ",poll_station)
+ clean_stream=re.sub(r"[\r\n]+"," ",stream)
+ msg=EmailMessage()
+ msg["Subject"]=f"Voting Stream Opening Report - {clean_station} - {clean_stream}"
+ msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+ msg["To"]=recipient
+ msg.set_content(f"Voting stream opening report for {poll_station} / {stream}. The printable PDF report is attached. TRAINING / SIMULATION ONLY.")
+ msg.add_alternative("<p><b>Voting Stream Opening Report</b></p><p>Polling station: "+str(escape(poll_station))+"<br>Stream: "+str(escape(stream))+"</p><p>The printable PDF report is attached.</p><p><b>TRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS.</b></p>",subtype="html")
+ msg.add_attachment(pdf_bytes,maintype="application",subtype="pdf",filename=filename)
+ try:
+  smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+  with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
+   if not SMTP_USE_SSL and SMTP_USE_TLS:
+    server.ehlo();server.starttls();server.ehlo()
+   if SMTP_USERNAME:server.login(SMTP_USERNAME,SMTP_PASSWORD)
+   server.send_message(msg)
+ except smtplib.SMTPAuthenticationError:
+  app.logger.exception("Opening report email authentication failed")
+  return jsonify({"ok":False,"error":"SMTP authentication failed. For Gmail, use the full Gmail address as SMTP_USERNAME and a 16-character Google App Password as SMTP_PASSWORD."}),502
+ except smtplib.SMTPConnectError:
+  app.logger.exception("Opening report email connection failed")
+  return jsonify({"ok":False,"error":f"Could not connect to SMTP server {SMTP_HOST}:{SMTP_PORT}. Check SMTP_HOST, SMTP_PORT and SSL/TLS settings."}),502
+ except (TimeoutError,OSError):
+  app.logger.exception("Opening report email network/timeout failure")
+  return jsonify({"ok":False,"error":f"SMTP connection timed out or was blocked while connecting to {SMTP_HOST}:{SMTP_PORT}."}),502
+ except smtplib.SMTPException as exc:
+  app.logger.exception("Opening report email SMTP failure")
+  return jsonify({"ok":False,"error":f"SMTP server rejected the message: {exc.__class__.__name__}. Check the Render logs for details."}),502
+ except Exception as exc:
+  app.logger.exception("Opening report email failed")
+  return jsonify({"ok":False,"error":f"Email could not be sent ({exc.__class__.__name__}). Check the SMTP settings and Render logs."}),502
+ return jsonify({"ok":True,"message":f"Opening report PDF emailed to {recipient}."})
 
 @app.post("/email-tally")
 def email_tally():

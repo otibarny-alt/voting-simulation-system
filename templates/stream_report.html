@@ -3,7 +3,10 @@
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
-<div class=no-print><button onclick="window.print()">Print A4 Report</button></div>
+<div class="no-print opening-report-actions">
+ <button type="button" onclick="window.print()">Print A4 Report</button>
+ <button type="button" class="email-opening-report" onclick="emailOpeningReport(this)">Email Opening Report</button>
+</div>
 {% if report_header_image_url %}
 <div class="print-report-header"><img src="{{report_header_image_url}}" alt="Report Header"></div>
 {% endif %}
@@ -52,6 +55,32 @@
 
 </div>
 <script>
+async function emailOpeningReport(button){
+ const recipient=window.prompt('Enter the email address for the voting stream opening report:');
+ if(recipient===null)return;
+ const email=recipient.trim();
+ if(!email){window.alert('Enter a valid email address.');return;}
+ const oldText=button.textContent;
+ button.disabled=true;
+ button.textContent='Sending…';
+ try{
+  const response=await fetch('/email-opening-report',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({
+    email:email,
+    poll_station:{{ row["poll_station"]|tojson }},
+    stream:{{ row["stream"]|tojson }}
+   })
+  });
+  const body=await response.text();
+  let result={};
+  try{result=JSON.parse(body);}catch(e){throw new Error('The server returned an invalid response (HTTP '+response.status+').');}
+  if(!response.ok || !result.ok)throw new Error(result.error || 'The opening report could not be emailed.');
+  window.alert(result.message);
+ }catch(error){window.alert(error.message || String(error));}
+ finally{button.disabled=false;button.textContent=oldText;}
+}
 (function(){
  const lat=document.getElementById('opening-gps-lat');
  const lon=document.getElementById('opening-gps-lon');
