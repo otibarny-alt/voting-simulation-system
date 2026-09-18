@@ -1,4 +1,4 @@
-# V23.77: geographically distinct opening reports and filenames.
+# V23.78: precise opening-time difference reporting.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -1555,6 +1555,29 @@ def time_status(ts,expected):
  try: return datetime.fromisoformat(ts).strftime("%H:%M")==expected
  except Exception: return None
 
+def opening_time_check(ts,expected):
+ """Describe exactly how early or late a stream opened."""
+ if not ts or not expected:return "SCHEDULE NOT CONFIGURED"
+ try:
+  actual=datetime.fromisoformat(str(ts))
+  parts=[int(part) for part in str(expected).strip().split(":")]
+  hour,minute=parts[0],parts[1]
+  second=parts[2] if len(parts)>2 else 0
+  scheduled=actual.replace(hour=hour,minute=minute,second=second,microsecond=0)
+  difference=int(round((actual-scheduled).total_seconds()))
+ except Exception:
+  return "OPENING TIME DIFFERENCE UNAVAILABLE"
+ if difference==0:return "ON SCHEDULE — NO TIME DIFFERENCE"
+ remaining=abs(difference)
+ hours,remaining=divmod(remaining,3600)
+ minutes,seconds=divmod(remaining,60)
+ units=[]
+ if hours:units.append(f"{hours} HOUR"+("S" if hours!=1 else ""))
+ if minutes:units.append(f"{minutes} MINUTE"+("S" if minutes!=1 else ""))
+ if seconds or not units:units.append(f"{seconds} SECOND"+("S" if seconds!=1 else ""))
+ direction="LATE" if difference>0 else "EARLY"
+ return direction+" BY "+", ".join(units)
+
 
 def closed_stream_cookie():
  raw=request.cookies.get(TERMINAL_CLOSED_COOKIE,"")
@@ -2268,6 +2291,7 @@ def stream_report():
   open_time=VOTING_OPEN_TIME,
   report_header_image_url=REPORT_HEADER_IMAGE_URL,
   open_ok=time_status(row["opened_at"],VOTING_OPEN_TIME),
+  opening_check=opening_time_check(row["opened_at"],VOTING_OPEN_TIME),
   position_rows=position_rows,
   candidate_error=candidate_error)
 
@@ -5560,7 +5584,6 @@ def render_opening_report_pdf(row,position_rows):
   try:return row[key] if row[key] is not None else default
   except Exception:return default
  opened_at=str(value("opened_at",""))
- opening_status=time_status(opened_at,VOTING_OPEN_TIME)
  info=[
   ["County",str(value("county")) or "Not recorded"],
   ["Constituency",str(value("constituency")) or "Not recorded"],
@@ -5571,7 +5594,7 @@ def render_opening_report_pdf(row,position_rows):
   ["Pre-cast votes at opening","0 — VERIFIED CLEAN"],
   ["Scheduled opening",VOTING_OPEN_TIME or "Not configured"],
   ["Actual opening timestamp",opened_at or "Not recorded"],
-  ["Opening check","ON SCHEDULE" if opening_status is True else ("DIFFERS FROM CONFIGURED TIME" if opening_status is False else "SCHEDULE NOT CONFIGURED")],
+  ["Opening check",opening_time_check(opened_at,VOTING_OPEN_TIME)],
   ["Opening Station GPS Latitude",f'{float(value("opening_lat")):.7f}' if value("opening_lat",None) is not None else "Not captured at opening"],
   ["Opening Station GPS Longitude",f'{float(value("opening_lon")):.7f}' if value("opening_lon",None) is not None else "Not captured at opening"],
   ["GPS Accuracy",f'{float(value("opening_accuracy")):.1f} metres' if value("opening_accuracy",None) is not None else "Not available"],
