@@ -1022,17 +1022,26 @@ def agent_rows():
   return []
 
 
-_REGISTERED_TOTAL_CACHE={"signature":None,"value":0}
-def authoritative_registered_total():
- """Sum the active agents register once; dashboard feeds reuse this exact value."""
- path=managed_data_file(AGENTS_LOGIN)
- try: signature=(path,os.path.getmtime(path),os.path.getsize(path))
- except OSError: return 0
+_REGISTERED_TOTAL_CACHE={"signature":None,"value":0,"breakdown":[]}
+def membership_registered_breakdown():
+ """Count unique approved CSV members by their recorded electoral geography."""
+ rows=_load_membership_csv()
+ signature=_MEMBERSHIP_CSV_CACHE.get("loaded_at")
  if _REGISTERED_TOTAL_CACHE.get("signature")==signature:
-  return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
- total=sum(to_int(r.get("total_registered_voters",0)) for r in agent_rows())
- _REGISTERED_TOTAL_CACHE.update({"signature":signature,"value":total})
- return total
+  return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
+ grouped={}
+ for row in rows.values():
+  geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward","poll_station"))
+  grouped[geo]=grouped.get(geo,0)+1
+ breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"poll_station":g[3],"registered_voters":n} for g,n in grouped.items()]
+ breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward","poll_station")))
+ _REGISTERED_TOTAL_CACHE.update(signature=signature,value=len(rows),breakdown=breakdown)
+ return list(breakdown)
+
+def authoritative_registered_total():
+ """Return unique registered members from Kobo membership_registration.csv."""
+ membership_registered_breakdown()
+ return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
 
 def to_int(v):
  try: return int(float(str(v or "0").replace(",","").strip()))
@@ -1055,27 +1064,20 @@ def polling_register_code_key(value):
 
 
 def registered_voters_for_stream(poll_station_code, stream):
- """Return the active stream's electorate from the agents polling register."""
- stream_key=norm_key(stream)
- station_code=re.sub(r"\D+","",str(poll_station_code or ""))
- suffix_match=re.search(r"(?:stream[_\s-]*)(\d+)\s*$",str(stream or ""),re.I)
- target_code=""
- if station_code and suffix_match:
-  target_code=polling_register_code_key(station_code+f"{int(suffix_match.group(1)):02d}")
-
- name_matches=[]
- for r in agent_rows():
-  if norm_key(r.get("poll_station_name",""))!=stream_key:
-   continue
-  registered=to_int(r.get("total_registered_voters",0))
-  name_matches.append(registered)
-  if target_code and polling_register_code_key(r.get("poll_station_code",""))==target_code:
-   return registered
-
- # Legacy sessions may predate station-code capture. Use a name only when it is unique.
- if len(name_matches)==1:
-  return name_matches[0]
- return 0
+ """Return the polling station's unique membership-CSV electorate for this stream report."""
+ rows=_load_membership_csv().values()
+ target_code=polling_register_code_key(poll_station_code)
+ if target_code:
+  matched={re.sub(r"\D","",str(r.get("national_id_no") or "")) for r in rows
+           if polling_register_code_key(r.get("poll_station_code"))==target_code}
+  matched.discard("")
+  if matched:return len(matched)
+ station_name=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
+ station_key=norm_key(station_name)
+ matched={re.sub(r"\D","",str(r.get("national_id_no") or "")) for r in rows
+          if norm_key(r.get("poll_station",""))==station_key}
+ matched.discard("")
+ return len(matched)
 
 def hierarchy_rows():
  rows=[]
@@ -2765,6 +2767,12 @@ def dashboard_api_authorized():
  supplied=request.headers.get("X-Dashboard-Key","")
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
 
+def dashboard_registered_metadata():
+ return {
+  "registered_voters_source":"kobo_membership_registration_csv",
+  "registered_voter_breakdown":membership_registered_breakdown(),
+ }
+
 # Very short cache for the gubernatorial feed. This prevents several dashboard browser
 # requests from repeating the same PostgreSQL aggregation at the same moment.
 _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
@@ -2914,8 +2922,9 @@ def _build_woman_rep_dashboard_payload():
 
  return {
   "source":"training_simulation",
-  "simulation_only":True,
-  "election":"woman_rep",
+ "simulation_only":True,
+ "election":"woman_rep",
+  **dashboard_registered_metadata(),
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
@@ -3085,6 +3094,7 @@ def api_dashboard_president():
   "source":"training_simulation",
   "simulation_only":True,
   "election":"president",
+  **dashboard_registered_metadata(),
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
@@ -3241,6 +3251,7 @@ def api_dashboard_governor():
   "source":"training_simulation",
   "simulation_only":True,
   "election":"governor",
+  **dashboard_registered_metadata(),
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
@@ -3399,6 +3410,7 @@ def api_dashboard_senator():
   "source":"training_simulation",
   "simulation_only":True,
   "election":"senator",
+  **dashboard_registered_metadata(),
   "candidates":candidates,
   "streams":list(streams.values()),
   "totals":{
@@ -3512,6 +3524,7 @@ def _build_mna_dashboard_payload():
  candidates=dashboard_candidate_catalog("mna",candidate_totals,names,event_geo)
  return {
   "source":"training_simulation","simulation_only":True,"election":"mna",
+  **dashboard_registered_metadata(),
   "candidates":candidates,"streams":list(streams.values()),
   "totals":{"registered_voters":authoritative_registered_total(),"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}
  }
@@ -3614,7 +3627,7 @@ def _build_mca_dashboard_payload():
  for item in streams.values():names.update(item.get("candidate_names",{}))
  event_geo={cid:{"county":candidate_counties.get(cid,""),"constituency":candidate_constituencies.get(cid,""),"ward":candidate_wards.get(cid,"")} for cid in set(names) | set(candidate_totals)}
  candidates=dashboard_candidate_catalog("mca",candidate_totals,names,event_geo)
- return {"source":"training_simulation","simulation_only":True,"election":"mca","candidates":candidates,"streams":list(streams.values()),"totals":{"registered_voters":authoritative_registered_total(),"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}}
+ return {"source":"training_simulation","simulation_only":True,"election":"mca",**dashboard_registered_metadata(),"candidates":candidates,"streams":list(streams.values()),"totals":{"registered_voters":authoritative_registered_total(),"candidate_selections":sum(candidate_totals.values()),"skipped":skipped_total,"participants":participants_total}}
 
 
 @app.get("/api/dashboard/mca")

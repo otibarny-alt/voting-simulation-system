@@ -1483,3 +1483,14 @@ V23.70 — NEXT VOTER LAYOUT
   computer-assignment panel when a voting stream is ready.
 - Center-aligns all text, hierarchy details, status and controls inside the
   computer-assignment panel.
+
+V23.71 — KOBO MEMBERSHIP REGISTER ELECTORATE TOTALS
+
+- Uses unique National IDs in Kobo media membership_registration.csv as the
+  sole source of registered-voter totals.
+- Publishes a county, constituency, ward and polling-station membership-count
+  breakdown to every results-dashboard API feed.
+- county_main.csv remains the hierarchy and expected-stream catalogue only;
+  its rows and agents_login.csv totals no longer determine electorate totals.
+- Closed-stream tally reports obtain their registered-voter figure from the
+  matching polling station in membership_registration.csv.
