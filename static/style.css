@@ -705,6 +705,7 @@ input[type="button"]{
   border-radius:12px;
   padding:22px 26px;
   margin:16px 0 22px;
+  text-align:center;
 }
 
 .locked-station-name{

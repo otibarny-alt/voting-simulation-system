@@ -23,6 +23,15 @@
     <div class="voting-close-access"><a href="/tallies">View and Generate Closed-Stream Tallies</a></div>
    </div>
   {% elif stream_ready and terminal_lock %}
+   <form method=post action=/start id=voter_form>
+    <div id=voter_panel>
+     <h3 class="next-voter-title">Next voter</h3>
+     <input name=serial_no id=serial_no class=voter-id-input placeholder='Enter membership serial number' required autocomplete=off autofocus>
+     <div class="approval-check-action-row"><button id="start_btn" class="approval-check-btn" type="submit">Check Approval &amp; Verify Voter Photos</button></div>
+     {% if error %}<div class="vote-error approval-result-error" role="alert">{{error}}</div>{% endif %}
+    </div>
+   </form>
+
    <div class="locked-station-panel">
     <div class="locked-station-name">This computer is assigned to:
 <span class="assigned-stream-name">{{ terminal_lock.stream|replace('_',' ')|upper }}</span></div>
@@ -36,15 +45,6 @@
      <a href="/stream-control#close-stream-control">Close Voting Stream &amp; Generate Tallies</a>
     </div>
    </div>
-
-   <form method=post action=/start id=voter_form>
-    <div id=voter_panel>
-     <h3 class="next-voter-title">Next voter</h3>
-     <input name=serial_no id=serial_no class=voter-id-input placeholder='Enter membership serial number' required autocomplete=off autofocus>
-     <div class="approval-check-action-row"><button id="start_btn" class="approval-check-btn" type="submit">Check Approval &amp; Verify Voter Photos</button></div>
-     {% if error %}<div class="vote-error approval-result-error" role="alert">{{error}}</div>{% endif %}
-    </div>
-   </form>
 
   {% else %}
    <div class="open-stream-action-row">

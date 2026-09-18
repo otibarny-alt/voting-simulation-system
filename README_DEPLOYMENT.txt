@@ -1476,3 +1476,10 @@ Set KOBO_OPENROSA_SUBMISSION_URL only for a custom/self-hosted Kobo domain.
 - The Membership Portal and Admin Data Files page link to Agent Recruitment.
 - KOBO_API_TOKEN must belong to a Kobo user with permission to view the form,
   view submissions and add submissions in the Agents Recruitment project.
+
+V23.70 — NEXT VOTER LAYOUT
+
+- Places the Next Voter serial-number entry and approval button above the
+  computer-assignment panel when a voting stream is ready.
+- Center-aligns all text, hierarchy details, status and controls inside the
+  computer-assignment panel.
