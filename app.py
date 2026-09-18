@@ -2776,6 +2776,8 @@ def dashboard_registered_metadata():
  return {
   "registered_voters_source":"kobo_membership_registration_csv",
   "registered_voter_breakdown":membership_registered_breakdown(),
+  "expected_streams_source":"voting_system_county_main_csv",
+  "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
  }
 
 # Very short cache for the gubernatorial feed. This prevents several dashboard browser

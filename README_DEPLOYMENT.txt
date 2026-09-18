@@ -1502,3 +1502,11 @@ V23.72 — COMPACT MEMBERSHIP TOTALS FEED
 - Avoids sending tens of thousands of polling-station records on every refresh,
   preventing Render 502 responses and reducing memory usage and load time.
 - Polling-station counts remain internal to voting and closing reports.
+
+V23.73 — AUTHORITATIVE EXPECTED-STREAM TOTAL
+
+- Every results API now publishes one expected_streams_total calculated from
+  the voting system's active county_main.csv.
+- All six dashboards use that central value for the national expected-stream
+  count, eliminating differences caused by older local CSV copies or duplicate
+  stream-name handling.
