@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Opening Report Repository</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+</head><body>
+<header><b>Opening Report Repository</b>{% if is_admin %}<a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><a href="{{ url_for('report_repository') }}">Closing Reports</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form>{% else %}<a href="{{ url_for('repository_admin_login',next=request.full_path) }}">Admin Login</a>{% endif %}</header>
+<div class="demo">TRAINING / SIMULATION ONLY — central archive of completed voting-stream opening reports.</div>
+<div class="wrap">
+ <div class="odm-screen-header project-screen-brand"><img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
+ <div class="repository-ribbon">Central Voting-Stream Opening PDF Repository</div>
+ {% if error %}<div class="error">{{error}}</div>{% endif %}
+ <div class="repo-total">Total Opening Reports: <strong>{{total}}</strong></div>
+ <form method="get" class="repository-filters">
+  <label>County<select name="county" onchange="this.form.submit()"><option value="">All Counties</option>{% for value in counties %}<option value="{{value}}" {% if filters.county==value %}selected{% endif %}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+  <label>Constituency<select name="constituency" onchange="this.form.submit()"><option value="">All Constituencies</option>{% for value in constituencies %}<option value="{{value}}" {% if filters.constituency==value %}selected{% endif %}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+  <label>Ward<select name="ward" onchange="this.form.submit()"><option value="">All Wards</option>{% for value in wards %}<option value="{{value}}" {% if filters.ward==value %}selected{% endif %}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+  <label>Polling Station<select name="poll_station" onchange="this.form.submit()"><option value="">All Polling Stations</option>{% for value in stations %}<option value="{{value}}" {% if filters.poll_station==value %}selected{% endif %}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+  <label>Stream<select name="stream"><option value="">All Streams</option>{% for value in streams %}<option value="{{value}}" {% if filters.stream==value %}selected{% endif %}>{{value|replace('_',' ')|title}}</option>{% endfor %}</select></label>
+  <button type="submit">Apply Filters</button><a class="repo-btn" href="{{ url_for('opening_report_repository') }}">Clear Filters</a>
+ </form>
+ {% if rows %}<div class="table-scroll"><table class="repository-table"><tr><th>Date</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling Station</th><th>Stream</th><th>Opened</th><th>Deposited</th><th>PDF</th></tr>
+ {% for row in rows %}<tr><td>{{row.session_date}}</td><td>{{row.county|replace('_',' ')|title}}</td><td>{{row.constituency|replace('_',' ')|title}}</td><td>{{row.ward|replace('_',' ')|title}}</td><td>{{row.poll_station|replace('_',' ')|title}}</td><td>{{row.stream|replace('_',' ')|title}}</td><td>{{row.opened_at}}</td><td>{{row.deposited_at}}</td><td><a class="repo-btn" target="_blank" href="{{ url_for('opening_repository_pdf',report_id=row.id) }}">View</a> <a class="repo-btn download" href="{{ url_for('opening_repository_download',report_id=row.id) }}">Download</a>{% if is_admin %} <form class="repo-delete-form" method="post" action="{{ url_for('opening_repository_delete',report_id=row.id) }}" onsubmit="return confirm('Delete this opening report permanently?');"><button class="repo-btn delete" type="submit">Delete</button></form>{% endif %}</td></tr>{% endfor %}</table></div>
+ {% else %}<div class="card"><h2>No opening reports found</h2><p>Reports will appear automatically after voting streams are successfully opened.</p></div>{% endif %}
+ {% if pages>1 %}<nav class="repo-pagination">{% if page>1 %}<a href="?page={{page-1}}&county={{filters.county|urlencode}}&constituency={{filters.constituency|urlencode}}&ward={{filters.ward|urlencode}}&poll_station={{filters.poll_station|urlencode}}&stream={{filters.stream|urlencode}}">Previous</a>{% endif %}<span>Page {{page}} of {{pages}}</span>{% if page<pages %}<a href="?page={{page+1}}&county={{filters.county|urlencode}}&constituency={{filters.constituency|urlencode}}&ward={{filters.ward|urlencode}}&poll_station={{filters.poll_station|urlencode}}&stream={{filters.stream|urlencode}}">Next</a>{% endif %}</nav>{% endif %}
+</div></body></html>

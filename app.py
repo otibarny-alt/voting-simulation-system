@@ -1,4 +1,4 @@
-# V23.75: email formatted voting-stream opening reports.
+# V23.76: automatic central opening-report repository.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -436,6 +436,19 @@ def init_repository_db():
     # Replace the legacy partial geographic uniqueness rule with the full key.
     cur.execute("ALTER TABLE simulation_pdf_reports DROP CONSTRAINT IF EXISTS simulation_pdf_reports_session_date_election_poll_station_stream_key")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_pdf_full_geo ON simulation_pdf_reports(session_date,election,county,constituency,ward,poll_station,stream)")
+    cur.execute("""
+     CREATE TABLE IF NOT EXISTS simulation_opening_pdf_reports(
+       id BIGSERIAL PRIMARY KEY,
+       session_date TEXT NOT NULL,
+       county TEXT NOT NULL DEFAULT '', constituency TEXT NOT NULL DEFAULT '',
+       ward TEXT NOT NULL DEFAULT '', poll_station TEXT NOT NULL, stream TEXT NOT NULL,
+       opened_at TEXT, deposited_at TEXT NOT NULL,
+       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL
+     )
+    """)
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_opening_pdf_full_geo ON simulation_opening_pdf_reports(session_date,county,constituency,ward,poll_station,stream)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_opening_pdf_deposited ON simulation_opening_pdf_reports(deposited_at DESC,id DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_opening_pdf_geo ON simulation_opening_pdf_reports(county,constituency,ward,poll_station,stream)")
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_certified_stream_tallies(
        session_date TEXT NOT NULL,election TEXT NOT NULL,
@@ -2083,6 +2096,16 @@ def open_stream():
  else:
   session.pop("post_reset_new_stream_locked",None)
 
+ # Opening is already committed locally and centrally. Repository generation
+ # runs independently so a slow candidate image/service cannot delay the
+ # officer's transition to the opened-stream control page.
+ defer_opening_report_deposit({
+  "session_date":today_iso(),"county":f.get("county","").strip(),
+  "constituency":f.get("constituency","").strip(),"ward":f.get("ward","").strip(),
+  "poll_station":ps,"stream":st,"opened_at":now,
+  "opening_lat":opening_lat,"opening_lon":opening_lon,"opening_accuracy":opening_accuracy
+ })
+
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
  resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
                  httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
@@ -2232,6 +2255,14 @@ def stream_report():
   {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
   {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])}
  ]
+
+ # Idempotent safety retry: opening normally deposits in the background as
+ # soon as it succeeds. Viewing the certificate repairs a transient repository
+ # failure without producing a duplicate row.
+ defer_opening_report_deposit({key:row[key] for key in (
+  "session_date","county","constituency","ward","poll_station","stream",
+  "opened_at","opening_lat","opening_lon","opening_accuracy"
+ )})
 
  return render_template("stream_report.html",row=row,
   open_time=VOTING_OPEN_TIME,
@@ -5340,6 +5371,98 @@ def report_repository():
  resp.headers['Cache-Control']='private, max-age=15'
  return resp
 
+def opening_repository_data(filters,page=1,per_page=50):
+ """Return paginated opening certificates and cascading filter choices."""
+ init_repository_db()
+ where=[];params=[]
+ for key in ("county","constituency","ward","poll_station","stream"):
+  value=(filters.get(key) or "").strip()
+  if value:
+   where.append(f"{key}=%s");params.append(value)
+ base=(" WHERE "+" AND ".join(where)) if where else ""
+ offset=(page-1)*per_page
+ choices={"counties":[],"constituencies":[],"wards":[],"stations":[],"streams":[]}
+ specs=[("counties","county",()),("constituencies","constituency",("county",)),
+        ("wards","ward",("county","constituency")),
+        ("stations","poll_station",("county","constituency","ward")),
+        ("streams","stream",("county","constituency","ward","poll_station"))]
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute(f"SELECT COUNT(*) AS n FROM simulation_opening_pdf_reports{base}",params)
+   total=int(cur.fetchone()["n"] or 0)
+   cur.execute(f"""SELECT id,session_date,county,constituency,ward,poll_station,stream,
+                    opened_at,deposited_at,filename
+                   FROM simulation_opening_pdf_reports{base}
+                   ORDER BY deposited_at DESC,id DESC LIMIT %s OFFSET %s""",params+[per_page,offset])
+   rows=cur.fetchall()
+   for output,column,parents in specs:
+    choice_where=[];choice_params=[]
+    for parent in parents:
+     value=(filters.get(parent) or "").strip()
+     if value:
+      choice_where.append(f"{parent}=%s");choice_params.append(value)
+    clause=(" WHERE "+" AND ".join(choice_where)+" AND ") if choice_where else " WHERE "
+    cur.execute(f"SELECT DISTINCT {column} AS value FROM simulation_opening_pdf_reports{clause}COALESCE({column},'')<>'' ORDER BY {column}",choice_params)
+    choices[output]=[item["value"] for item in cur.fetchall()]
+ return rows,total,choices
+
+@app.get("/opening-report-repository")
+def opening_report_repository():
+ filters={key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","poll_station","stream")}
+ try:page=max(1,int(request.args.get("page","1")))
+ except Exception:page=1
+ per_page=50;rows=[];total=0;pages=1;error=""
+ choices={"counties":[],"constituencies":[],"wards":[],"stations":[],"streams":[]}
+ if not DATABASE_URL:
+  error="Central opening-report repository requires DATABASE_URL (shared PostgreSQL)."
+ else:
+  try:
+   rows,total,choices=opening_repository_data(filters,page,per_page)
+   pages=max(1,(total+per_page-1)//per_page)
+   if page>pages:
+    page=pages;rows,total,choices=opening_repository_data(filters,page,per_page)
+  except Exception:
+   app.logger.exception("Opening report repository could not be loaded")
+   error="The opening report database is temporarily unavailable. Please retry shortly."
+ response=app.make_response(render_template("opening_report_repository.html",rows=rows,total=total,
+  page=page,pages=pages,per_page=per_page,filters=filters,error=error,is_admin=repository_admin_logged_in(),
+  counties=choices["counties"],constituencies=choices["constituencies"],wards=choices["wards"],
+  stations=choices["stations"],streams=choices["streams"]))
+ response.headers["Cache-Control"]="private, max-age=10"
+ return response
+
+@app.get("/opening-report-repository/pdf/<int:report_id>")
+def opening_repository_pdf(report_id):
+ if not DATABASE_URL:return Response("Repository unavailable",status=503)
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("SELECT filename,pdf_data FROM simulation_opening_pdf_reports WHERE id=%s",(report_id,));row=cur.fetchone()
+ if not row:return Response("Opening report not found",status=404)
+ data=bytes(row["pdf_data"])
+ return Response(data,mimetype="application/pdf",headers={"Content-Disposition":f'inline; filename="{row["filename"]}"',"Content-Length":str(len(data)),"Cache-Control":"private, max-age=3600"})
+
+@app.get("/opening-report-repository/download/<int:report_id>")
+def opening_repository_download(report_id):
+ if not DATABASE_URL:return Response("Repository unavailable",status=503)
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("SELECT filename,pdf_data FROM simulation_opening_pdf_reports WHERE id=%s",(report_id,));row=cur.fetchone()
+ if not row:return Response("Opening report not found",status=404)
+ data=bytes(row["pdf_data"])
+ return Response(data,mimetype="application/pdf",headers={"Content-Disposition":f'attachment; filename="{row["filename"]}"',"Content-Length":str(len(data)),"Cache-Control":"private, max-age=3600"})
+
+@app.post("/opening-report-repository/delete/<int:report_id>")
+def opening_repository_delete(report_id):
+ if not repository_admin_logged_in():return Response("Administrator login required to delete opening reports.",status=403)
+ if not DATABASE_URL:return Response("Repository unavailable",status=503)
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:cur.execute("DELETE FROM simulation_opening_pdf_reports WHERE id=%s",(report_id,))
+  conn.commit()
+ return redirect(url_for("opening_report_repository"))
+
 @app.get("/report-repository/<election>")
 def report_repository_category(election):
  allowed={k:t for k,t,_ in ELECTIONS}
@@ -5486,6 +5609,72 @@ def render_opening_report_pdf(row,position_rows):
   Paragraph("Returning Officer: Name ____________________  Signature ____________________  Date/Time ____________________",small_style)])
  doc.build(story)
  return buffer.getvalue()
+
+_OPENING_REPORT_DEPOSITING=set()
+_OPENING_REPORT_DEPOSIT_LOCK=threading.Lock()
+
+def deposit_opening_report_snapshot(snapshot):
+ """Create/update one opening certificate in the shared PostgreSQL archive."""
+ if not DATABASE_URL:
+  raise RuntimeError("Central opening-report repository requires DATABASE_URL.")
+ geo={key:str(snapshot.get(key) or "") for key in ("county","constituency","ward","poll_station","stream")}
+ try:
+  catalog=candidate_portal_catalog(geo)
+ except Exception as exc:
+  app.logger.warning("Candidate catalogue unavailable while depositing opening report: %s",exc)
+  catalog={k:[] for k,_,_ in ELECTIONS}
+ position_rows=[
+  {"key":"president","title":"President","candidates":catalog.get("president",[])},
+  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
+  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
+  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
+  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
+  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])},
+ ]
+ pdf=render_opening_report_pdf(snapshot,position_rows)
+ safe=lambda value:re.sub(r"[^A-Za-z0-9_-]+","_",str(value or "")).strip("_") or "unknown"
+ filename=f"Opening_Report_{safe(snapshot.get('poll_station'))}_{safe(snapshot.get('stream'))}.pdf"
+ deposited_at=kenya_now().isoformat(timespec="seconds")
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""INSERT INTO simulation_opening_pdf_reports(
+                   session_date,county,constituency,ward,poll_station,stream,
+                   opened_at,deposited_at,filename,pdf_data)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT(session_date,county,constituency,ward,poll_station,stream)
+                  DO UPDATE SET opened_at=EXCLUDED.opened_at,
+                    deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,
+                    pdf_data=EXCLUDED.pdf_data""",
+               (snapshot.get("session_date") or today_iso(),geo["county"],geo["constituency"],geo["ward"],
+                geo["poll_station"],geo["stream"],snapshot.get("opened_at") or "",deposited_at,
+                filename,psycopg.Binary(pdf)))
+  conn.commit()
+ return filename
+
+def defer_opening_report_deposit(snapshot):
+ """Single-flight background deposit; safe to call again from report viewing."""
+ snapshot=dict(snapshot or {})
+ key=tuple(str(snapshot.get(name) or "") for name in (
+  "session_date","county","constituency","ward","poll_station","stream"
+ ))
+ if not snapshot.get("poll_station") or not snapshot.get("stream"):
+  return False
+ with _OPENING_REPORT_DEPOSIT_LOCK:
+  if key in _OPENING_REPORT_DEPOSITING:
+   return False
+  _OPENING_REPORT_DEPOSITING.add(key)
+ def worker():
+  try:
+   with app.app_context():
+    deposit_opening_report_snapshot(snapshot)
+  except Exception:
+   app.logger.exception("Automatic opening-report repository deposit failed for %s / %s",snapshot.get("poll_station"),snapshot.get("stream"))
+  finally:
+   with _OPENING_REPORT_DEPOSIT_LOCK:
+    _OPENING_REPORT_DEPOSITING.discard(key)
+ threading.Thread(target=worker,name="opening-report-deposit",daemon=True).start()
+ return True
 
 @app.post("/email-opening-report")
 def email_opening_report():

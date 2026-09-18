@@ -15,6 +15,14 @@
 <main class="data-admin">
  <h1>Admin Data Files</h1>
  <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
+ <section class="data-panel">
+  <h2>Opening Report Repository</h2>
+  <p>View automatically archived voting-stream opening certificates. Each successful stream opening deposits one formatted PDF containing the zero-vote check, opening time, GPS details and signature sections.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('opening_report_repository') }}">Open Opening Report Repository</a>
+   <a class="verification-admin-link" href="{{ url_for('report_repository') }}">Open Closing Tally Repository</a>
+  </div>
+ </section>
  <section class="data-panel" id="closed-stream-administration">
   <h2>Closed Voting Stream Administration</h2>
   <p>Reopen a formally closed training stream. Existing votes are preserved, previously generated PDFs are retired, and closing the stream again generates updated reports.</p>
