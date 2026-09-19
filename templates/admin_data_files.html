@@ -87,9 +87,9 @@
   </div>
  </section>
  <section class="data-panel">
-  <h2>Agent Recruitment Portal</h2>
-  <p>Members verify their National ID against the membership CSV, review locked membership details and submit directly to the Kobo Agents Recruitment project.</p>
-  <div class="verification-admin-actions"><a class="verification-admin-link" href="{{url_for('agent_recruitment_portal')}}" target="_blank" rel="noopener">Open Agent Recruitment Portal</a></div>
+ <h2>Agent Recruitment Portal</h2>
+  <p>Members submit recruitment applications publicly. Administrators can view activated agents, activate or deactivate their accounts, and reassign them to a different polling-station stream.</p>
+  <div class="verification-admin-actions"><a class="verification-admin-link" href="{{url_for('agent_recruitment_portal')}}" target="_blank" rel="noopener">Open Agent Recruitment Portal</a>{% if voter_verification_base_url %}<a class="verification-admin-link" href="{{voter_verification_base_url}}/admin/officers" target="_blank" rel="noopener">Manage Recruited Agents</a>{% endif %}</div>
  </section>
  <section class="data-panel">
   <h2>Voters Register</h2>

@@ -1,4 +1,4 @@
-# V23.78: precise opening-time difference reporting.
+# V23.79: recruited-agent activation and stream reassignment administration.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
