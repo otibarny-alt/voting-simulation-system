@@ -1,10 +1,11 @@
-# V23.79: recruited-agent activation and stream reassignment administration.
+# V23.80: authenticated recruited-agent handoff protects stream opening.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
+from functools import wraps
 from email.message import EmailMessage
 from html import unescape
 from io import BytesIO, StringIO
@@ -12,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree as ET
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
-from itsdangerous import URLSafeSerializer, BadSignature
+from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer, BadSignature
 from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g
 from markupsafe import escape
 try:
@@ -124,6 +125,44 @@ ENTRANCE_APPROVAL_MINUTES = int(os.getenv("ENTRANCE_APPROVAL_MINUTES", "30") or 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 VOTER_VERIFICATION_BASE_URL = os.getenv("VOTER_VERIFICATION_BASE_URL", "https://odm-member-photo-verifier.onrender.com").strip().rstrip("/")
+AGENT_SSO_SECRET = os.getenv("AGENT_SSO_SECRET", "").strip()
+AGENT_SSO_MAX_AGE_SECONDS = int(os.getenv("AGENT_SSO_MAX_AGE_SECONDS", "300") or 300)
+AGENT_SESSION_HOURS = int(os.getenv("AGENT_SESSION_HOURS", "12") or 12)
+
+
+def current_agent_access():
+ data=session.get("voting_agent")
+ if not isinstance(data,dict) or not data.get("agent_id") or not data.get("poll_station") or not data.get("stream"):
+  return None
+ if time.time()-float(data.get("authenticated_at") or 0) > AGENT_SESSION_HOURS*3600:
+  session.pop("voting_agent",None)
+  return None
+ return data
+
+
+def agent_access_required(fn):
+ @wraps(fn)
+ def wrapped(*args,**kwargs):
+  if not current_agent_access():
+   if request.method=="GET":
+    return redirect(f"{VOTER_VERIFICATION_BASE_URL}/voting-system/access")
+   return Response("Authenticated recruited-agent access is required for this voting-stream action.",status=403)
+  return fn(*args,**kwargs)
+ return wrapped
+
+
+def stream_control_access_required(fn):
+ @wraps(fn)
+ def wrapped(*args,**kwargs):
+  if not current_agent_access() and not repository_admin_logged_in():
+   return redirect(f"{VOTER_VERIFICATION_BASE_URL}/voting-system/access")
+  return fn(*args,**kwargs)
+ return wrapped
+
+
+@app.context_processor
+def inject_voting_agent_access():
+ return {"agent_access":current_agent_access()}
 
 
 def managed_data_file(configured_name):
@@ -140,6 +179,43 @@ def managed_data_file(configured_name):
 
 def repository_admin_logged_in():
  return bool(session.get("repository_admin"))
+
+
+@app.get("/agent-access")
+def agent_access():
+ """Consume a one-time, five-minute handoff from Voter Verification."""
+ if not AGENT_SSO_SECRET:
+  return Response("Agent access is not configured. Set the same AGENT_SSO_SECRET on both Render services.",status=503)
+ token=(request.args.get("token") or "").strip()
+ try:
+  payload=URLSafeTimedSerializer(AGENT_SSO_SECRET,salt="voting-agent-handoff-v1").loads(
+   token,max_age=AGENT_SSO_MAX_AGE_SECONDS
+  )
+ except BadSignature:
+  return Response("This agent access link is invalid or has expired. Return to Voter Verification and open the Voting System again.",status=403)
+ required=("agent_id","nonce","county","constituency","ward","poll_station","stream")
+ if not isinstance(payload,dict) or any(not str(payload.get(k) or "").strip() for k in required):
+  return Response("This agent access link is incomplete. Ask the administrator to confirm the station and stream assignment.",status=403)
+ try:
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""CREATE TABLE IF NOT EXISTS simulation_agent_handoffs(
+      nonce TEXT PRIMARY KEY,agent_id TEXT NOT NULL,used_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("INSERT INTO simulation_agent_handoffs(nonce,agent_id) VALUES(%s,%s) ON CONFLICT DO NOTHING RETURNING nonce",
+                (str(payload["nonce"]),str(payload["agent_id"])))
+    accepted=cur.fetchone()
+   conn.commit()
+ except Exception as exc:
+  app.logger.exception("Could not consume agent handoff")
+  return Response(f"Agent access is temporarily unavailable because the central database could not confirm the login. {exc}",status=503)
+ if not accepted:
+  return Response("This agent access link has already been used. Return to Voter Verification and open the Voting System again.",status=403)
+ session["voting_agent"]={k:str(payload.get(k) or "").strip() for k in (
+  "agent_id","agent_name","county","constituency","ward","poll_station","poll_station_code","stream"
+ )}
+ session["voting_agent"]["authenticated_at"]=time.time()
+ session.permanent=True
+ return redirect(url_for("stream_control"))
 
 
 # V22.56: shared PostgreSQL connection pool + one-time schema initialization.
@@ -1776,6 +1852,7 @@ def central_stream_tally_rows(ref):
   return [],[]
 
 @app.post("/terminal/reset")
+@agent_access_required
 def terminal_reset():
  # Do not call terminal_lock() here: it confirms ownership through the shared
  # PostgreSQL pool and can block reset for 30 seconds. The atomic release below
@@ -1843,6 +1920,7 @@ def terminal_reset():
  return resp
 
 @app.get("/stream-control")
+@stream_control_access_required
 def stream_control():
  current_lock=terminal_lock()
  ps=request.args.get("poll_station","").strip()
@@ -1875,6 +1953,7 @@ def stream_control():
   official_close_time=close_time_message(),
   owns_current_stream=owns_current,
   stream_admin_logged_in=repository_admin_logged_in(),
+  agent_access=current_agent_access(),
   reopened_notice=session.pop("stream_reopened_notice","") or session.pop("terminal_reset_notice","")
  )
 
@@ -1957,8 +2036,13 @@ def admin_reopen_stream():
  return resp
 
 @app.post("/stream/open")
+@agent_access_required
 def open_stream():
  f=request.form; ps=f.get("poll_station","").strip(); st=f.get("stream","").strip()
+
+ agent=current_agent_access()
+ if norm_key(ps)!=norm_key(agent.get("poll_station")) or norm_key(st)!=norm_key(agent.get("stream")):
+  return Response("OPENING BLOCKED: this agent is not assigned to the submitted polling-station stream.",status=403)
 
  if not ps or not st:
   return render_template(
@@ -2151,8 +2235,12 @@ def open_stream():
  return resp
 
 @app.post("/stream/close")
+@agent_access_required
 def close_stream():
  ps=request.form.get("poll_station","").strip(); st=request.form.get("stream","").strip()
+ agent=current_agent_access()
+ if norm_key(ps)!=norm_key(agent.get("poll_station")) or norm_key(st)!=norm_key(agent.get("stream")):
+  return Response("CLOSING BLOCKED: this agent is not assigned to this polling-station stream.",status=403)
  lock=terminal_lock()
 
  if not lock or lock.get("poll_station")!=ps or lock.get("stream")!=st:
@@ -2299,6 +2387,9 @@ def voting_stream_ready():
  lock=terminal_lock()
  if not lock:
   return False,None,None
+ agent=current_agent_access()
+ if not agent or norm_key(lock.get("poll_station"))!=norm_key(agent.get("poll_station")) or norm_key(lock.get("stream"))!=norm_key(agent.get("stream")):
+  return False,lock,None
  row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
  if not row or not row["opened_at"] or row["closed_at"]:
   return False,lock,row
@@ -2310,12 +2401,14 @@ def voting_stream_ready():
  return True,lock,row
 
 @app.get("/")
+@agent_access_required
 def home():
  session.pop("post_reset_new_stream_locked",None)
  ready,lock,row=voting_stream_ready()
  return render_template("verify.html",stream_ready=ready,stream_row=row)
 
 @app.get("/next-voter")
+@agent_access_required
 def next_voter():
  """Remove the completed voter's private state without touching stream cookies."""
  for key in (
@@ -2330,6 +2423,7 @@ def next_voter():
  return response
 
 @app.post("/start")
+@agent_access_required
 def start():
  ready,lock,ss=voting_stream_ready()
  if not ready:
@@ -2385,6 +2479,7 @@ def start():
  return render_template("member_verify.html",member=member,geo=geo,station_match=station_match,entrance_approval_confirmed=True,entrance_approval=entrance_approval)
 
 @app.post("/membership/confirm")
+@agent_access_required
 def confirm_member():
  if not session.get("membership_verified") or not session.get("pending_voter_id"):
   return redirect(url_for("home"))
@@ -2434,6 +2529,7 @@ def confirm_member():
  return redirect(url_for("ballot",step=0))
 
 @app.post("/membership/cancel")
+@agent_access_required
 def cancel_member():
  keep_geo=session.get("geo")
  session.clear()
@@ -2494,6 +2590,7 @@ def membership_self_photo(kind):
   return Response(status=404)
 
 @app.route("/ballot/<int:step>",methods=["GET","POST"])
+@agent_access_required
 def ballot(step):
  if "voter_id" not in session:return redirect(url_for("home"))
  structure=cfg()
@@ -2553,6 +2650,7 @@ def ballot(step):
                         previously_skipped=bool(isinstance(saved,dict) and saved.get("skipped")))
 
 @app.get("/review")
+@agent_access_required
 def review():
  if "voter_id" not in session:return redirect(url_for("home"))
  choices=session.get("choices",{})
@@ -2593,6 +2691,7 @@ def review():
  )
 
 @app.post("/cast")
+@agent_access_required
 def cast():
  if "voter_id" not in session:return redirect(url_for("home"))
  choices=session.get("choices",{})
@@ -3719,6 +3818,7 @@ def api_dashboard_mca():
 
 
 @app.get("/complete")
+@agent_access_required
 def complete():
  if not session.get("completed"):return redirect(url_for("home"))
  geo=session.get("geo",{})

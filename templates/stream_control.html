@@ -40,6 +40,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if reopened_notice %}<div class="vote-success admin-reopen-success">{{reopened_notice}}</div>{% endif %}
 {% if not row and not terminal_lock %}
+{% if agent_access %}<div class="terminal-lock-banner"><b>AUTHENTICATED ELECTION AGENT</b><br>{{agent_access.agent_name or agent_access.agent_id}} ({{agent_access.agent_id}}) is authorized only for <b>{{agent_access.poll_station}} — {{agent_access.stream}}</b>.</div>{% endif %}
 <p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
 <form method=post action=/stream/open id=streamOpenForm>
 <input type="hidden" name="opening_lat" id="opening_lat">
@@ -47,6 +48,21 @@ The polling-station stream is centrally reserved to this device. Another device 
 <input type="hidden" name="opening_accuracy" id="opening_accuracy">
 <input type="hidden" name="poll_station_code" id="poll_station_code">
 <div id="opening_gps_status" class="gps-open-status">GPS not yet captured.</div>
+{% if agent_access %}
+<input type="hidden" name="county" value="{{agent_access.county}}">
+<input type="hidden" name="constituency" value="{{agent_access.constituency}}">
+<input type="hidden" name="ward" value="{{agent_access.ward}}">
+<input type="hidden" name="poll_station" value="{{agent_access.poll_station}}">
+<input type="hidden" name="stream" value="{{agent_access.stream}}">
+<script>document.getElementById('poll_station_code').value={{agent_access.poll_station_code|tojson}};</script>
+<div class=control-grid>
+ <div><label>County</label><b>{{agent_access.county}}</b></div>
+ <div><label>Constituency</label><b>{{agent_access.constituency}}</b></div>
+ <div><label>Ward</label><b>{{agent_access.ward}}</b></div>
+ <div><label>Polling Station</label><b>{{agent_access.poll_station}}</b></div>
+ <div><label>Stream</label><b>{{agent_access.stream}}</b></div>
+</div>
+{% else %}
 <div class=control-grid>
  <div><label>County</label><select id=sc_county name=county required><option value="">Select County</option></select></div>
  <div><label>Constituency</label><select id=sc_constituency name=constituency required disabled><option value="">Select Constituency</option></select></div>
@@ -54,6 +70,7 @@ The polling-station stream is centrally reserved to this device. Another device 
  <div><label>Polling Station</label><select id=sc_station name=poll_station required disabled><option value="">Select Polling Station</option></select></div>
  <div><label>Stream</label><select id=sc_stream name=stream required disabled><option value="">Select Stream</option></select></div>
 </div>
+{% endif %}
 <p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Official closing: <b>08:00 (8:00 AM) — TESTING</b></p>
 <div class="open-stream-submit-row"><button type="button" id="open_stream_btn" class="open-stream-submit-btn">Capture GPS, Verify 0 Pre-Cast Votes & Open Stream</button></div></form>
 <script>
@@ -72,6 +89,7 @@ async function loadLevel(level,parent=''){
  return d.rows||[];
 }
 
+{% if not agent_access %}
 // Load only 47 counties first instead of downloading the entire national
 // hierarchy. Each lower level is fetched only after its parent is selected.
 loadLevel('counties').then(rows=>fill($('sc_county'),rows,'Select County')).catch(()=>{
@@ -103,6 +121,7 @@ $('sc_station').onchange=async function(){
  try{ fill($('sc_stream'),await loadLevel('streams',this.value),'Select Stream'); }
  catch(e){ resetSelect($('sc_stream'),'Unable to load streams'); }
 };
+{% endif %}
 
 const openBtn=document.getElementById('open_stream_btn');
 if(openBtn){

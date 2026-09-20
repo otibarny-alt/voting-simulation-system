@@ -4,3 +4,8 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt && python -m whitenoise.compress static
     startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120 --keep-alive 5 --max-requests 30 --max-requests-jitter 5
+    envVars:
+      - key: AGENT_SSO_SECRET
+        sync: false
+      - key: VOTER_VERIFICATION_BASE_URL
+        value: https://odm-member-photo-verifier.onrender.com
