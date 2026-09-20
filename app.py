@@ -1,4 +1,4 @@
-# V23.80: authenticated recruited-agent handoff protects stream opening.
+# V23.81: dedicated Voting Terminal login separated from verification devices.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -145,7 +145,7 @@ def agent_access_required(fn):
  def wrapped(*args,**kwargs):
   if not current_agent_access():
    if request.method=="GET":
-    return redirect(f"{VOTER_VERIFICATION_BASE_URL}/voting-system/access")
+    return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
    return Response("Authenticated recruited-agent access is required for this voting-stream action.",status=403)
   return fn(*args,**kwargs)
  return wrapped
@@ -155,7 +155,7 @@ def stream_control_access_required(fn):
  @wraps(fn)
  def wrapped(*args,**kwargs):
   if not current_agent_access() and not repository_admin_logged_in():
-   return redirect(f"{VOTER_VERIFICATION_BASE_URL}/voting-system/access")
+   return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
   return fn(*args,**kwargs)
  return wrapped
 
