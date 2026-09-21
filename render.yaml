@@ -5,6 +5,10 @@ services:
     buildCommand: pip install -r requirements.txt && python -m whitenoise.compress static
     startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120 --keep-alive 5 --max-requests 30 --max-requests-jitter 5
     envVars:
+      - key: MASTER_REGISTER_DATABASE_URL
+        sync: false
+      - key: MASTER_REGISTER_STRICT
+        value: "false"
       - key: AGENT_SSO_SECRET
         sync: false
       - key: VOTER_VERIFICATION_BASE_URL

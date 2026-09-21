@@ -1,4 +1,4 @@
-# V23.81: dedicated Voting Terminal login separated from verification devices.
+# V23.86: PostgreSQL master voters register rollout, with staged large-CSV import.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -27,6 +27,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
 from PIL import Image as PILImage
+import master_register as master_register
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
@@ -120,6 +121,7 @@ CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+MASTER_REGISTER_STRICT = os.getenv("MASTER_REGISTER_STRICT", "false").strip().lower() in {"1","true","yes","on"}
 ELECTION_ID = os.getenv("ELECTION_ID", "ODM_INTERNAL_NOMINATIONS").strip()
 ENTRANCE_APPROVAL_MINUTES = int(os.getenv("ENTRANCE_APPROVAL_MINUTES", "30") or 30)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
@@ -1122,6 +1124,9 @@ def membership_registered_breakdown():
  prevents national responses from becoming excessively large; stream closing
  reports still count the matching polling station directly from the CSV.
  """
+ if master_register.configured():
+  master_rows=[dict(row) for row in master_register.registered_breakdown()]
+  if master_rows or MASTER_REGISTER_STRICT:return master_rows
  rows=_load_membership_csv()
  signature=_MEMBERSHIP_CSV_CACHE.get("loaded_at")
  if _REGISTERED_TOTAL_CACHE.get("signature")==signature:
@@ -1136,7 +1141,10 @@ def membership_registered_breakdown():
  return list(breakdown)
 
 def authoritative_registered_total():
- """Return unique registered members from Kobo membership_registration.csv."""
+ """Return the authoritative active master-register electorate."""
+ if master_register.configured():
+  master_total=master_register.registered_total()
+  if master_total or MASTER_REGISTER_STRICT:return master_total
  membership_registered_breakdown()
  return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
 
@@ -1162,6 +1170,10 @@ def polling_register_code_key(value):
 
 def registered_voters_for_stream(poll_station_code, stream):
  """Return the polling station's unique membership-CSV electorate for this stream report."""
+ if master_register.configured():
+  station_name=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
+  master_total=master_register.registered_for_station(poll_station_code,station_name)
+  if master_total or MASTER_REGISTER_STRICT:return master_total
  rows=_load_membership_csv().values()
  target_code=polling_register_code_key(poll_station_code)
  if target_code:
@@ -1532,8 +1544,56 @@ def _membership_csv_row(national_id):
   "basics/passport_photo":row.get("member_passport_photo",""),
  }
 
+def _master_member_submission(row):
+ if not row:return None
+ return {
+  "_id":"master-register:"+str(row.get("national_id") or ""),
+  "_membership_source":"PostgreSQL master register",
+  "basics/national_id_no":row.get("national_id") or "",
+  MEMBERSHIP_SERIAL_FIELD:row.get("serial_no") or "",
+  "members_particulars/first_name":row.get("first_name") or "",
+  "members_particulars/other_names":row.get("middle_name") or "",
+  "members_particulars/surname":row.get("surname") or "",
+  "stored_particulars_confirmed/full_name":row.get("full_name") or "",
+  "members_particulars/odm_membership_no":row.get("party_membership_number") or "",
+  "basics/phone_no":row.get("phone") or "",
+  "basics/gender":row.get("gender") or "",
+  "basics/dob":row.get("date_of_birth") or "",
+  "electorals_units/county":row.get("county") or "",
+  "electorals_units/constituency":row.get("constituency") or "",
+  "electorals_units/ward":row.get("ward") or "",
+  "electorals_units/selected_poll_station1":row.get("polling_station") or "",
+  "electorals_units/poll_station_label":row.get("polling_station") or "",
+  "electorals_units/selected_poll_station1_code":row.get("polling_station_code") or "",
+  "basics/id_photo":row.get("id_photo_ref") or "",
+  "basics/passport_photo":row.get("passport_photo_ref") or "",
+ }
+
+def _master_member_csv_shape(row):
+ if not row:return None
+ return {
+  "national_id_no":row.get("national_id") or "","serial_no":row.get("serial_no") or "",
+  "odm_membership_no":row.get("party_membership_number") or "",
+  "first_name":row.get("first_name") or "","middle_name":row.get("middle_name") or "",
+  "surname":row.get("surname") or "","full_name":row.get("full_name") or "",
+  "phone_no":row.get("phone") or "","gender":row.get("gender") or "","dob":row.get("date_of_birth") or "",
+  "county":row.get("county") or "","constituency":row.get("constituency") or "","ward":row.get("ward") or "",
+  "poll_station":row.get("polling_station") or "","poll_station_code":row.get("polling_station_code") or "",
+  "member_id_photo":row.get("id_photo_ref") or "","member_passport_photo":row.get("passport_photo_ref") or "",
+ }
+
+def membership_source_row(national_id):
+ if master_register.configured():
+  row=_master_member_csv_shape(master_register.lookup_by_national_id(national_id))
+  if row or MASTER_REGISTER_STRICT:return row
+ return _load_membership_csv().get(clean_national_id(national_id))
+
 def lookup_member(national_id):
- """Prefer live Kobo and use membership_registration.csv as the fallback."""
+ """Prefer the PostgreSQL master register, with rollout fallbacks."""
+ if master_register.configured():
+  row=master_register.lookup_by_national_id(national_id)
+  if row:return _master_member_submission(row)
+  if MASTER_REGISTER_STRICT:return None
  live_error=None
  try:
   row=_lookup_member_kobo(national_id)
@@ -1550,6 +1610,10 @@ def lookup_member(national_id):
 
 def lookup_member_by_serial(serial_no):
  """Resolve a public serial number while keeping National ID as the audit key."""
+ if master_register.configured():
+  row=master_register.lookup_by_serial(serial_no)
+  if row:return _master_member_submission(row)
+  if MASTER_REGISTER_STRICT:return None
  live_error=None
  try:
   row=_lookup_member_kobo_by_serial(serial_no)
@@ -2569,15 +2633,19 @@ def membership_self_photo(kind):
  if not national_id:
   return Response(status=403)
  try:
-  current=_load_membership_csv().get(national_id) or {}
+  current=membership_source_row(national_id) or {}
   latest=latest_membership_request(national_id)
   values=dict(current)
   if not current and latest and latest.get("request_data"):
    values.update(latest["request_data"])
   key="member_id_photo" if kind=="id" else "member_passport_photo"
-  filename=str(values.get(key) or "").replace("\\","/").split("/")[-1]
-  item=_MEMBERSHIP_CSV_CACHE["media"].get(filename.lower()) if filename else None
-  media=item.get("content") if item else None
+  photo_ref=str(values.get(key) or "").strip()
+  if photo_ref.lower().startswith(("https://","http://")):
+   media=photo_ref
+  else:
+   filename=photo_ref.replace("\\","/").split("/")[-1]
+   item=_MEMBERSHIP_CSV_CACHE["media"].get(filename.lower()) if filename else None
+   media=item.get("content") if item else None
   if not media:
    return Response(status=404)
   response=requests.get(media,headers=kobo_headers(),timeout=25,stream=True)
@@ -2941,7 +3009,7 @@ def dashboard_api_authorized():
 
 def dashboard_registered_metadata():
  return {
-  "registered_voters_source":"kobo_membership_registration_csv",
+  "registered_voters_source":"postgresql_master_register" if master_register.configured() else "kobo_membership_registration_csv",
   "registered_voter_breakdown":membership_registered_breakdown(),
   "expected_streams_source":"voting_system_county_main_csv",
   "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
@@ -5173,7 +5241,7 @@ def membership_portal():
    error="Enter a valid 7- or 8-digit National ID number."
   else:
    try:
-    csv_row=_load_membership_csv().get(national_id)
+    csv_row=membership_source_row(national_id)
     latest,approval_db_error=optional_latest_membership_request(national_id)
     session["membership_member_id"]=national_id
     session["membership_member_phone"]=clean_phone(
@@ -5196,7 +5264,7 @@ def agent_recruitment_portal():
   if not re.fullmatch(r"\d{7,8}",national_id):error="Enter a valid 7- or 8-digit National ID number."
   else:
    try:
-    row=_load_membership_csv().get(national_id)
+    row=membership_source_row(national_id)
     if not row:error="This National ID was not found in membership registration. Complete membership registration before applying as an agent."
     else:
      field_map=agent_form_field_map()
@@ -5214,7 +5282,7 @@ def agent_recruitment_application():
  if not national_id:return redirect(url_for("agent_recruitment_portal"))
  token=session.get("agent_csrf") or secrets.token_urlsafe(32);session["agent_csrf"]=token
  try:
-  row=_load_membership_csv().get(national_id)
+  row=membership_source_row(national_id)
   if not row:raise RuntimeError("The verified membership record is no longer available.")
   values=agent_member_values(row)
  except Exception as exc:return render_template("agent_recruitment_application.html",values={},csrf_token=token,error=str(exc)),502
@@ -5248,7 +5316,7 @@ def membership_application():
  if not national_id:
   return redirect(url_for("membership_portal"))
  try:
-  current=_load_membership_csv().get(national_id)
+  current=membership_source_row(national_id)
  except Exception as exc:
   return render_template("membership_application.html",national_id=national_id,current={},values={},latest=None,csrf_token=session.get("membership_csrf",""),error=str(exc),message=None),502
  latest,approval_db_error=optional_latest_membership_request(national_id)
