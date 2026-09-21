@@ -5,7 +5,7 @@
  <style>.agent-wrap{max-width:680px;margin:50px auto;padding:0 18px}.agent-card{background:#fff;border:2px solid #198754;border-radius:16px;padding:32px}.success{font-size:1.2rem;color:#086b2c;font-weight:850}.agent-card a{display:inline-block;margin-top:18px;background:#111;color:#fff;padding:12px 18px;border:3px solid #ef7d00;border-radius:9px;text-decoration:none;font-weight:800}</style>
 </head><body><header><b>ODM Agent Recruitment Portal</b></header>
 <main class="agent-wrap"><section class="agent-card">
- <h1>Application Submitted</h1><p class="success">✓ Your agent application has been saved in Kobo successfully.</p>
- <p><b>Applicant:</b> {{values.full_name}}<br><b>National ID:</b> {{values.national_id}}<br><b>ODM membership number:</b> {{values.membership_no}}{% if submission_id %}<br><b>Kobo submission ID:</b> {{submission_id}}{% endif %}</p>
+ <h1>Application Submitted</h1><p class="success">✓ Your agent application has been submitted successfully.</p>
+ <p><b>Applicant:</b> {{values.full_name}}<br><b>National ID:</b> {{values.national_id}}<br><b>Party membership number:</b> {{values.membership_no}}{% if submission_id %}<br><b>Submission ID:</b> {{submission_id}}{% endif %}</p>
  <p>Do not submit another application using the same National ID.</p><a href="{{url_for('agent_recruitment_portal')}}">Return to Agent Recruitment</a>
 </section></main></body></html>
