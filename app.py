@@ -5200,7 +5200,7 @@ def agent_recruitment_portal():
     if not row:error="This National ID was not found in membership registration. Complete membership registration before applying as an agent."
     else:
      field_map=agent_form_field_map()
-     if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID in Kobo. Duplicate applications are not allowed."
+     if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID. Duplicate applications are not allowed."
      else:
       session["agent_member_id"]=national_id;session["agent_csrf"]=secrets.token_urlsafe(32)
       return redirect(url_for("agent_recruitment_application"))
@@ -5227,7 +5227,7 @@ def agent_recruitment_application():
   else:
    try:
     field_map=agent_form_field_map(force=True)
-    if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID in Kobo."
+    if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID. Duplicate applications are not allowed."
     else:
      result=submit_agent_to_kobo(values,field_map);session.pop("agent_member_id",None);session.pop("agent_csrf",None)
      submission_id=(result.get("_id") or result.get("id") or "") if isinstance(result,dict) else ""
