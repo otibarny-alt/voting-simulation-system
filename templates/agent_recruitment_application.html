@@ -7,7 +7,7 @@
 <header><b>ODM Agent Recruitment Portal</b></header>
 <main class="agent-wrap"><section class="agent-card">
  <h1>Confirm Membership Details</h1>
- <div class="agent-note">These details were pulled from <b>membership_registration.csv</b> and are locked. To correct them, use the Membership Registration Portal before submitting an agent application.</div>
+ <div class="agent-note"><b>Elections Official Application</b></div>
  {% if error %}<div class="agent-error">{{error}}</div>{% endif %}
  <form method="post" id="agent-submit-form">
   <input type="hidden" name="csrf_token" value="{{csrf_token}}">
@@ -16,7 +16,7 @@
    <label>{{label}}<input value="{{values.get(key,'')}}" readonly tabindex="-1"></label>
   {% endfor %}
   </div>
-  <label class="confirm"><input type="checkbox" name="confirm_membership" value="yes" required><span>I confirm that these membership details belong to me and I want to submit my agent application to the ODM Kobo Agents Recruitment project.</span></label>
+  <label class="confirm"><input type="checkbox" name="confirm_membership" value="yes" required><span>I confirm that these membership details belong to me and I want to submit my Election Official application to {{ values.get('poll_station', '') }} Polling Station.</span></label>
   <div class="agent-actions"><button type="submit" onclick="this.disabled=true;this.textContent='Submitting to Kobo…';this.form.submit()">Submit Agent Application</button></div>
  </form>
  <form method="post" action="{{url_for('agent_recruitment_cancel')}}" style="margin-top:12px"><button type="submit" class="secondary">Cancel / Use Another ID</button></form>
