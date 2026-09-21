@@ -7,8 +7,8 @@
 <header><b>ODM Agent Recruitment Portal</b><a href="{{ url_for('membership_portal') }}">Membership Registration</a></header>
 <main class="agent-wrap"><section class="agent-card">
  <h1>Agent Sign-up</h1>
- <p>Enter your National ID. Your approved membership details will be retrieved from the ODM membership registration CSV.</p>
- <div class="agent-note"><b>Eligibility:</b> Only a National ID found in <code>membership_registration.csv</code> can proceed. One agent application is permitted per National ID.</div>
+ <p>Enter your National ID.</p>
+ <div class="agent-note"><b>Eligibility:</b> Only a National ID found in Membership Registration can proceed. One agent application is permitted per National ID.</div>
  {% if error %}<div class="agent-error">{{error}}</div>{% endif %}
  <form method="post">
   <label for="national_id">National ID number</label>

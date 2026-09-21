@@ -5197,7 +5197,7 @@ def agent_recruitment_portal():
   else:
    try:
     row=_load_membership_csv().get(national_id)
-    if not row:error="This National ID was not found in membership_registration.csv. Complete membership registration before applying as an agent."
+    if not row:error="This National ID was not found in membership registration. Complete membership registration before applying as an agent."
     else:
      field_map=agent_form_field_map()
      if existing_agent_submission(national_id,field_map):error="An agent application already exists for this National ID in Kobo. Duplicate applications are not allowed."
