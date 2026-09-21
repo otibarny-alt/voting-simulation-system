@@ -28,11 +28,17 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
 from PIL import Image as PILImage
 import master_register as master_register
+import import_master_register as master_register_import
 
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 app.config["MAX_CONTENT_LENGTH"]=int(os.getenv("DATA_UPLOAD_MAX_MB","30") or 30)*1024*1024
 app.config["SEND_FILE_MAX_AGE_DEFAULT"]=3600
+
+# Large imports run outside the initiating HTTP request so Render's proxy does
+# not terminate them. Durable progress remains in the PostgreSQL batch table.
+_MASTER_REGISTER_IMPORT_LOCK=threading.Lock()
+_MASTER_REGISTER_IMPORT_STATE={"running":False,"message":"","error":"","started_at":""}
 if WhiteNoise is not None:
  app.wsgi_app=WhiteNoise(
   app.wsgi_app,root=os.path.join(os.path.dirname(os.path.abspath(__file__)),"static"),
@@ -5112,6 +5118,112 @@ def validate_admin_csv(path,file_type):
  return rows
 
 
+def master_register_batches(limit=12):
+ """Return recent durable import batches for the protected admin page."""
+ if not master_register.configured():
+  return []
+ master_register.ensure_schema()
+ with master_register.connect() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT batch_id,filename,mode,status,staged_rows,valid_rows,
+                         rejected_rows,promoted_rows,started_at,staged_at,promoted_at,notes
+                  FROM voter_register_import_batches
+                  ORDER BY started_at DESC LIMIT %s""",(int(limit),))
+   return list(cur.fetchall())
+
+
+def import_current_kobo_register_worker():
+ """Download Kobo media to disk and stage it without holding an HTTP request."""
+ temp_path=""
+ try:
+  _MASTER_REGISTER_IMPORT_STATE.update(
+   running=True,error="",message="Downloading the current Kobo membership register…",
+   started_at=kenya_now().isoformat(timespec="seconds"))
+  media=current_membership_csv_media()
+  if not media or not media.get("content"):
+   raise RuntimeError(f"{MEMBERSHIP_CSV_FILENAME} is missing from Kobo media.")
+  temp_root=DATA_UPLOAD_DIR or tempfile.gettempdir()
+  os.makedirs(temp_root,exist_ok=True)
+  fd,temp_path=tempfile.mkstemp(prefix="master-register-import-",suffix="-"+os.path.basename(MEMBERSHIP_CSV_FILENAME),dir=temp_root)
+  os.close(fd)
+  with requests.get(media["content"],headers=kobo_headers(),timeout=(30,300),stream=True) as upstream:
+   upstream.raise_for_status()
+   with open(temp_path,"wb") as target:
+    for chunk in upstream.iter_content(chunk_size=1024*1024):
+     if chunk:target.write(chunk)
+  _MASTER_REGISTER_IMPORT_STATE["message"]="Validating and staging the register in PostgreSQL…"
+  batch_id=master_register_import.stage(temp_path,"replace","utf-8-sig")
+  _MASTER_REGISTER_IMPORT_STATE["message"]=f"Batch {batch_id} staged successfully. Review the counts below, then activate it."
+ except Exception as exc:
+  app.logger.exception("Master register background import failed")
+  _MASTER_REGISTER_IMPORT_STATE["error"]=str(exc)
+  _MASTER_REGISTER_IMPORT_STATE["message"]=""
+ finally:
+  if temp_path and os.path.exists(temp_path):
+   try:os.unlink(temp_path)
+   except OSError:pass
+  _MASTER_REGISTER_IMPORT_STATE["running"]=False
+  _MASTER_REGISTER_IMPORT_LOCK.release()
+
+
+def validate_master_register_admin_post():
+ supplied=request.form.get("csrf_token","")
+ token=session.get("data_files_csrf","")
+ return bool(supplied and token and hmac.compare_digest(supplied,token))
+
+
+@app.post("/admin/data-files/master-register/schema")
+def admin_master_register_schema():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+ if not validate_master_register_admin_post():
+  session["data_files_error"]="Security token expired. Reload the page and try again."
+ elif not master_register.configured():
+  session["data_files_error"]="MASTER_REGISTER_DATABASE_URL is not configured on this Render service."
+ else:
+  try:
+   master_register.ensure_schema()
+   session["data_files_message"]="Master voters register schema migration completed successfully."
+  except Exception as exc:
+   app.logger.exception("Master register schema migration failed")
+   session["data_files_error"]="Schema migration failed: "+str(exc)
+ return redirect(url_for("admin_data_files")+"#master-register-database")
+
+
+@app.post("/admin/data-files/master-register/import")
+def admin_master_register_import():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+ if not validate_master_register_admin_post():
+  session["data_files_error"]="Security token expired. Reload the page and try again."
+ elif not master_register.configured():
+  session["data_files_error"]="MASTER_REGISTER_DATABASE_URL is not configured on this Render service."
+ elif not _MASTER_REGISTER_IMPORT_LOCK.acquire(blocking=False):
+  session["data_files_error"]="A master-register import is already running on this service."
+ else:
+  _MASTER_REGISTER_IMPORT_STATE.update(running=True,message="Import queued…",error="",started_at=kenya_now().isoformat(timespec="seconds"))
+  threading.Thread(target=import_current_kobo_register_worker,name="master-register-import",daemon=True).start()
+  session["data_files_message"]="The Kobo register import has started. Reload this page to see its progress and validation counts."
+ return redirect(url_for("admin_data_files")+"#master-register-database")
+
+
+@app.post("/admin/data-files/master-register/promote/<batch_id>")
+def admin_master_register_promote(batch_id):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+ if not validate_master_register_admin_post():
+  session["data_files_error"]="Security token expired. Reload the page and try again."
+ else:
+  try:
+   parsed=uuid.UUID(batch_id)
+   master_register_import.promote(parsed,allow_rejections=False)
+   session["data_files_message"]=f"Import batch {parsed} is now the active master voters register."
+  except Exception as exc:
+   app.logger.exception("Master register activation failed")
+   session["data_files_error"]="Register activation blocked: "+str(exc)
+ return redirect(url_for("admin_data_files")+"#master-register-database")
+
+
 @app.route("/admin/data-files",methods=["GET","POST"])
 def admin_data_files():
  global _HIERARCHY_CACHE,_REGISTER_GEO_INDEX
@@ -5222,12 +5334,21 @@ def admin_data_files():
  except Exception as exc:
   app.logger.exception("Admin closed-stream list could not be loaded")
   closed_streams_error="Closed voting streams could not be loaded: "+str(exc)
+ master_batches=[]
+ master_register_error=""
+ if master_register.configured():
+  try:master_batches=master_register_batches()
+  except Exception as exc:
+   app.logger.exception("Master register status could not be loaded")
+   master_register_error=str(exc)
  return render_template(
  "admin_data_files.html",files=files,csrf_token=token,
   message=session.pop("data_files_message",None),error=session.pop("data_files_error",None),
   persistent=bool(DATA_UPLOAD_DIR),voter_verification_base_url=VOTER_VERIFICATION_BASE_URL,
   candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL,
-  closed_streams=closed_streams,closed_streams_error=closed_streams_error
+  closed_streams=closed_streams,closed_streams_error=closed_streams_error,
+  master_register_configured=master_register.configured(),master_batches=master_batches,
+  master_register_error=master_register_error,master_import_state=dict(_MASTER_REGISTER_IMPORT_STATE)
  )
 
 
