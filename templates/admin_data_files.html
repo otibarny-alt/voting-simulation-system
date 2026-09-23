@@ -9,6 +9,7 @@
  .verification-admin-actions{display:flex;gap:14px;flex-wrap:wrap}.verification-admin-link{display:inline-block;background:#111;color:#fff!important;text-decoration:none;border:3px solid #ef7d00;border-radius:9px;padding:12px 18px;font-weight:850}.verification-admin-link:hover,.verification-admin-link:focus{background:#ef7d00;color:#111!important}
  .closed-stream-table{width:100%;border-collapse:collapse;margin-top:14px}.closed-stream-table th,.closed-stream-table td{border-bottom:1px solid #ddd;padding:10px 8px;text-align:left;vertical-align:middle}.closed-stream-table th{background:#f6f6f6}.reopen-stream-btn{background:#111;color:#fff;border:3px solid #ef7d00;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer;white-space:nowrap}.closed-stream-empty{background:#f7f7f7;border:1px solid #ddd;border-radius:8px;padding:13px}
  .master-action{background:#111;color:#fff;border:3px solid #ef7d00;border-radius:9px;padding:11px 16px;font-weight:850;cursor:pointer}.master-action:disabled{opacity:.55;cursor:not-allowed}.master-table{width:100%;border-collapse:collapse;margin-top:16px;font-size:.92rem}.master-table th,.master-table td{padding:9px 7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:middle}.master-table th{background:#f3f4f6}.status-pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eee;font-weight:800}.status-PROMOTED{background:#dff3e4;color:#176b2c}.status-STAGED{background:#fff0c7;color:#815900}.status-STAGING{background:#dfeeff;color:#174e85}
+ .reset-danger{border:3px solid #b00020;background:#fff3f3}.reset-danger input{display:block;width:100%;max-width:360px;padding:11px;margin:10px 0;border:2px solid #b00020;border-radius:7px}.reset-danger button{background:#b00020;color:#fff;border:0;border-radius:8px;padding:12px 18px;font-weight:900;cursor:pointer}
  </style>
 </head>
 <body>
@@ -16,6 +17,17 @@
 <main class="data-admin">
  <h1>Admin Data Files</h1>
  <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
+ <section class="data-panel reset-danger" id="clean-test-reset">
+  <h2>Clean Testing Reset</h2>
+  <p><b>This permanently deletes all test candidates, votes, voter voting status, stream locks, certified tallies, and opening/closing reports.</b></p>
+  <p>It preserves the membership register, election officials, polling locations, master-register batches, uploaded CSV files, and configuration.</p>
+  <form method="post" action="{{ url_for('admin_reset_test_data') }}" onsubmit="return confirm('FINAL WARNING: Permanently clear all candidates, votes, locks, tallies and reports for clean testing?');">
+   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+   <label for="reset_confirmation"><b>Type CLEAR TEST DATA to confirm</b></label>
+   <input id="reset_confirmation" name="confirmation" autocomplete="off" required>
+   <button type="submit">Clear All Test Election Data</button>
+  </form>
+ </section>
  <section class="data-panel" id="master-register-database">
   <h2>PostgreSQL Master Voters Register</h2>
   <p>Initialize the dedicated database, then copy the current <b>membership_registration.csv</b> from Kobo into a validated staging batch. A staged batch does not affect voter searches or dashboard totals until an administrator activates it.</p>

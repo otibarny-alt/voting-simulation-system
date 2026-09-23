@@ -1,4 +1,4 @@
-# V23.86: PostgreSQL master voters register rollout, with staged large-CSV import.
+# V23.93: protected full clean-test reset across voting and candidate services.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
 import requests
 import psycopg
@@ -124,6 +124,7 @@ AGENTS_FORM_CACHE_SECONDS = int(os.getenv("AGENTS_FORM_CACHE_SECONDS", "600") or
 KOBO_OPENROSA_SUBMISSION_URL = os.getenv("KOBO_OPENROSA_SUBMISSION_URL", "").strip()
 _AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{},"deployment":{}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
+SYSTEM_RESET_TOKEN = os.getenv("SYSTEM_RESET_TOKEN", "").strip()
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -559,7 +560,12 @@ def init_dashboard_db():
  with _DASHBOARD_DB_INIT_LOCK:
   if _DASHBOARD_DB_READY:
    return
-  with central_control_db() as conn:
+  # A repository can contain many PDF blobs, so use a dedicated reset
+  # connection with enough time to complete the transaction atomically.
+  with psycopg.connect(
+   pg_url(),row_factory=dict_row,connect_timeout=10,
+   options="-c statement_timeout=120000"
+  ) as conn:
    with conn.cursor() as cur:
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_terminal_locks(
@@ -5204,6 +5210,85 @@ def validate_master_register_admin_post():
  supplied=request.form.get("csrf_token","")
  token=session.get("data_files_csrf","")
  return bool(supplied and token and hmac.compare_digest(supplied,token))
+
+
+@app.post("/admin/data-files/reset-test-data")
+def admin_reset_test_data():
+ """Remove simulation data while preserving registers, officials and configuration."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+ if not validate_master_register_admin_post():
+  session["data_files_error"]="Security token expired. Reload the page and try again."
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+ if request.form.get("confirmation","").strip()!="CLEAR TEST DATA":
+  session["data_files_error"]="Reset cancelled. Type CLEAR TEST DATA exactly to confirm."
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+ if not SYSTEM_RESET_TOKEN:
+  session["data_files_error"]="SYSTEM_RESET_TOKEN is not configured. No test data was removed."
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+ if not CANDIDATE_PORTAL_BASE_URL:
+  session["data_files_error"]="CANDIDATE_PORTAL_BASE_URL is not configured. No test data was removed."
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+
+ # Clear candidates first. If the separate service refuses or cannot complete
+ # its reset, leave all voting data untouched so the administrator can retry.
+ try:
+  candidate_response=requests.post(
+   CANDIDATE_PORTAL_BASE_URL+"/api/admin/reset-test-data",
+   headers={"Authorization":"Bearer "+SYSTEM_RESET_TOKEN},timeout=30
+  )
+  if candidate_response.status_code!=200:
+   detail=candidate_response.text.strip()[:300]
+   raise RuntimeError(f"candidate service returned HTTP {candidate_response.status_code}: {detail}")
+ except Exception as exc:
+  app.logger.exception("Candidate clean-test reset failed")
+  session["data_files_error"]="Nothing was cleared because the Candidate Registration service could not be reset: "+str(exc)
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+
+ try:
+  if not DATABASE_URL:
+   raise RuntimeError("DATABASE_URL is not configured")
+  central_tables=(
+   "simulation_pdf_reports","simulation_opening_pdf_reports",
+   "simulation_certified_stream_tallies","simulation_dashboard_vote_events",
+   "simulation_terminal_locks","voter_admission_approvals","voter_status",
+   "simulation_agent_handoffs",
+  )
+  # A repository can contain many PDF blobs, so allow the atomic cleanup
+  # transaction up to two minutes to finish.
+  with psycopg.connect(
+   pg_url(),row_factory=dict_row,connect_timeout=10,
+   options="-c statement_timeout=120000"
+  ) as conn:
+   with conn.cursor() as cur:
+    for table in central_tables:
+     cur.execute("SELECT to_regclass(%s) AS table_name",(table,))
+     if cur.fetchone()["table_name"]:
+      cur.execute(f'DELETE FROM "{table}"')
+   conn.commit()
+  local=con()
+  try:
+   local.execute("BEGIN IMMEDIATE")
+   local.execute("DELETE FROM demo_votes")
+   local.execute("DELETE FROM stream_sessions")
+   local.execute("DELETE FROM sqlite_sequence WHERE name IN ('demo_votes','stream_sessions')")
+   local.commit()
+  finally:
+   local.close()
+ except Exception as exc:
+  app.logger.exception("Voting clean-test reset failed after candidate reset")
+  session["data_files_error"]="Candidates were cleared, but voting data cleanup failed. Retry this reset before testing: "+str(exc)
+  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+
+ for key in list(session.keys()):
+  if key not in {"repository_admin","data_files_csrf"}:
+   session.pop(key,None)
+ session["data_files_message"]=(
+  "Clean testing reset completed. Candidates, votes, voter voting status, "
+  "stream locks, certified tallies, and opening/closing reports were cleared. "
+  "Membership, officials, polling locations, and configuration were preserved."
+ )
+ return redirect(url_for("admin_data_files")+"#clean-test-reset")
 
 
 @app.post("/admin/data-files/master-register/schema")
