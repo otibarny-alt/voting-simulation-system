@@ -130,6 +130,26 @@ def lookup_by_serial(serial_no):
             return cur.fetchone()
 
 
+def serial_exists(serial_no):
+    """Return True when a serial is already active or present in a valid staged row."""
+    value = str(serial_no or "").strip()
+    if not configured() or not value:
+        return False
+    ensure_schema()
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS(
+                    SELECT 1 FROM master_voters
+                    WHERE LOWER(serial_no)=LOWER(%s)
+                    UNION ALL
+                    SELECT 1 FROM voter_register_stage
+                    WHERE validation_error IS NULL AND LOWER(serial_no)=LOWER(%s)
+                ) AS found
+            """, (value, value))
+            return bool(cur.fetchone()["found"])
+
+
 def lookup_by_national_id(national_id):
     value = _digits(national_id)
     if not configured() or not value:

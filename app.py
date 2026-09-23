@@ -601,6 +601,9 @@ def init_membership_request_db():
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_status_date ON membership_change_requests(status,submitted_at DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_membership_requests_national_id ON membership_change_requests(national_id,submitted_at DESC)")
+    cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_requests_serial_ci
+                   ON membership_change_requests ((LOWER(request_data->>'serial_no')))
+                   WHERE NULLIF(request_data->>'serial_no','') IS NOT NULL""")
    conn.commit()
   _MEMBERSHIP_REQUEST_DB_READY=True
 
@@ -4538,6 +4541,11 @@ MEMBERSHIP_SELF_SERVICE_FIELDS=(
  "member_id_photo","member_passport_photo",
 )
 
+try:
+ MEMBERSHIP_SERIAL_DIGITS=min(18,max(8,int(os.getenv("MEMBERSHIP_SERIAL_DIGITS","12"))))
+except ValueError:
+ MEMBERSHIP_SERIAL_DIGITS=12
+
 MEMBERSHIP_IMAGE_FIELDS={
  "member_id_photo":("id_photo","ID photo"),
  "member_passport_photo":("passport_photo","Passport photo"),
@@ -4587,6 +4595,27 @@ def clean_phone(value):
  elif len(digits)==9:
   digits="0"+digits
  return digits
+
+def generate_unique_membership_serial(cur):
+ """Generate a numeric serial unused by requests, the CSV, or either register table."""
+ lower=10**(MEMBERSHIP_SERIAL_DIGITS-1)
+ span=9*lower
+ # The advisory transaction lock makes the check-and-insert sequence safe
+ # when several applicants submit at the same time.
+ cur.execute("SELECT pg_advisory_xact_lock(hashtext('membership-serial-generation'))")
+ csv_serials=_load_membership_csv()
+ del csv_serials  # Loading refreshes _MEMBERSHIP_CSV_CACHE['serial_rows'].
+ for _ in range(100):
+  candidate=str(lower+secrets.randbelow(span))
+  if candidate.casefold() in _MEMBERSHIP_CSV_CACHE.get("serial_rows",{}):
+   continue
+  if master_register.configured() and master_register.serial_exists(candidate):
+   continue
+  cur.execute("""SELECT 1 FROM membership_change_requests
+                 WHERE LOWER(request_data->>'serial_no')=LOWER(%s) LIMIT 1""",(candidate,))
+  if not cur.fetchone():
+   return candidate
+ raise RuntimeError("A unique membership serial number could not be generated. Please try again.")
 
 def membership_request_row(row):
  if not row:
@@ -4648,10 +4677,14 @@ def approve_membership_request(request_id,reviewer):
    missing=MEMBERSHIP_CSV_REQUIRED-set(headers)
    if missing:
     raise ValueError("Current membership CSV is missing required columns: "+", ".join(sorted(missing)))
+   if "serial_no" not in headers:
+    headers.append("serial_no")
    rows=[]; matched=False; national_id=request_row["national_id"]
    updates=request_row.get("request_data") or {}
    if request_row["request_type"]=="new":
     updates["odm_membership_no"]="ODM"+national_id
+    if not str(updates.get("serial_no") or "").strip():
+     raise ValueError("This new membership request has no generated serial number.")
    for source_row in reader:
     row={key:("" if value is None else str(value)) for key,value in source_row.items()}
     if clean_national_id(row.get("national_id_no"))==national_id:
@@ -4669,6 +4702,7 @@ def approve_membership_request(request_id,reviewer):
     new_row["national_id_no"]=national_id
     for key in MEMBERSHIP_SELF_SERVICE_FIELDS:
      new_row[key]=str(updates.get(key,"")).strip()
+    new_row["serial_no"]=str(updates.get("serial_no","")).strip()
     rows.append(new_row)
    output=StringIO(newline="")
    writer=csv.DictWriter(output,fieldnames=headers,extrasaction="ignore")
@@ -5489,12 +5523,15 @@ def membership_application():
      init_membership_request_db()
      with membership_request_db() as conn:
       with conn.cursor() as cur:
+       if request_type=="new":
+        submitted["serial_no"]=generate_unique_membership_serial(cur)
        cur.execute("""INSERT INTO membership_change_requests
         (national_id,request_type,request_data,original_data,status)
         VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending')""",
         (national_id,request_type,json.dumps(submitted),json.dumps(current or {})))
       conn.commit()
-     session["membership_message"]="Your membership request, ID photo and passport photo were submitted and are pending administrator approval."
+     serial_note=(" Your membership serial number is "+submitted["serial_no"]+".") if request_type=="new" else ""
+     session["membership_message"]="Your membership request, ID photo and passport photo were submitted and are pending administrator approval."+serial_note
      return redirect(url_for("membership_application"))
     except Exception as exc:
      app.logger.exception("Membership request submission failed")

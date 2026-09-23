@@ -18,6 +18,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="poll_station_code" id="poll_station_code" value="{{ values.get('poll_station_code','') }}">
   <div class="member-grid">
    <div class="member-field"><label>National ID</label><input class="readonly-id" value="{{ national_id }}" readonly></div>
+   <div class="member-field"><label>Membership serial number</label><input class="readonly-id" value="{{ values.get('serial_no','Generated automatically when submitted') }}" readonly><div class="help">Generated securely by the system and cannot be entered or changed manually.</div></div>
    <div class="member-field"><label for="phone_no">Phone number</label><input data-member-editable id="phone_no" name="phone_no" value="{{ values.get('phone_no','') }}" inputmode="tel" required {% if current %}disabled{% endif %}></div>
    <div class="member-field"><label for="odm_membership_no">ODM registration number</label><input data-member-editable id="odm_membership_no" name="odm_membership_no" value="{{ values.get('odm_membership_no','') }}" required {% if current %}disabled{% else %}readonly class="readonly-id"{% endif %}><div class="help">{% if current %}Saved membership number.{% else %}Generated automatically from your National ID and cannot be changed.{% endif %}</div></div>
    <div class="member-field"><label for="first_name">First name</label><input data-member-editable id="first_name" name="first_name" value="{{ values.get('first_name','') }}" required {% if current %}disabled{% endif %}></div>
