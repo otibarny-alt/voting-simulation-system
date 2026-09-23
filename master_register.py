@@ -16,7 +16,15 @@ def configured():
 def connect():
     if not MASTER_REGISTER_DATABASE_URL:
         raise RuntimeError("MASTER_REGISTER_DATABASE_URL is not configured.")
-    return psycopg.connect(MASTER_REGISTER_DATABASE_URL, row_factory=dict_row)
+    # Never let a temporary Render PostgreSQL outage hold an entire web page
+    # open indefinitely. Administrative pages catch this bounded failure and
+    # remain usable while showing the database warning.
+    return psycopg.connect(
+        MASTER_REGISTER_DATABASE_URL,
+        row_factory=dict_row,
+        connect_timeout=5,
+        options="-c statement_timeout=8000 -c lock_timeout=3000",
+    )
 
 
 def ensure_schema():

@@ -5122,7 +5122,8 @@ def master_register_batches(limit=12):
  """Return recent durable import batches for the protected admin page."""
  if not master_register.configured():
   return []
- master_register.ensure_schema()
+ # Schema creation is an explicit admin action. A read-only page load must not
+ # run DDL or wait for a schema lock when PostgreSQL is recovering.
  with master_register.connect() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT batch_id,filename,mode,status,staged_rows,valid_rows,
