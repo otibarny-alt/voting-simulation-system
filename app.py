@@ -4541,10 +4541,7 @@ MEMBERSHIP_SELF_SERVICE_FIELDS=(
  "member_id_photo","member_passport_photo",
 )
 
-try:
- MEMBERSHIP_SERIAL_DIGITS=min(18,max(8,int(os.getenv("MEMBERSHIP_SERIAL_DIGITS","12"))))
-except ValueError:
- MEMBERSHIP_SERIAL_DIGITS=12
+MEMBERSHIP_SERIAL_DIGITS=8
 
 MEMBERSHIP_IMAGE_FIELDS={
  "member_id_photo":("id_photo","ID photo"),
