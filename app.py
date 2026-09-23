@@ -1359,8 +1359,10 @@ def agent_form_field_map(force=False):
 
 def agent_member_values(row):
  first=str(row.get("first_name") or "").strip();middle=str(row.get("middle_name") or "").strip();surname=str(row.get("surname") or "").strip()
+ full_name=" ".join(x for x in (first,middle,surname) if x).strip() or str(
+  row.get("full_name") or row.get("name_in_full") or row.get("member_name") or "").strip()
  return {"national_id":clean_national_id(row.get("national_id_no")),"phone":clean_phone(row.get("phone_no")),
-  "full_name":" ".join(x for x in (first,middle,surname) if x),"gender":str(row.get("gender") or "").strip(),
+  "full_name":full_name,"gender":str(row.get("gender") or "").strip(),
   "dob":str(row.get("dob") or "").strip(),"membership_no":str(row.get("odm_membership_no") or "").strip(),
   "county":str(row.get("county") or "").strip(),"constituency":str(row.get("constituency") or "").strip(),
   "ward":str(row.get("ward") or "").strip(),"poll_station":str(row.get("poll_station") or "").strip(),
