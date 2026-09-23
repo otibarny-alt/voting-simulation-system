@@ -149,7 +149,7 @@
  {% for file in files %}
  <section class="data-panel">
   <h2>{{ file.label }}</h2>
-  <div class="data-current"><b>Current file:</b> {{ file.filename }}<small>Size: {{ "%.2f"|format(file.size / 1048576) }} MB &nbsp;·&nbsp; Last modified: {{ file.modified }}</small></div>
+  <div class="data-current"><b>Current file:</b> {{ file.filename }}<small>{% if file.remote %}Location: Kobo project media &nbsp;·&nbsp; {{ file.modified }}{% else %}Size: {{ "%.2f"|format(file.size / 1048576) }} MB &nbsp;·&nbsp; Last modified: {{ file.modified }}{% endif %}</small></div>
   <form class="data-upload" method="post" enctype="multipart/form-data" onsubmit="return confirm('Replace {{ file.filename|e }} with the selected validated CSV?{% if file.remote %} This updates the Membership Registration project in Kobo.{% endif %}');">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
    <input type="hidden" name="file_type" value="{{ file.key }}">

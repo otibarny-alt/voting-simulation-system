@@ -22,8 +22,8 @@ def connect():
     return psycopg.connect(
         MASTER_REGISTER_DATABASE_URL,
         row_factory=dict_row,
-        connect_timeout=5,
-        options="-c statement_timeout=8000 -c lock_timeout=3000",
+        connect_timeout=2,
+        options="-c statement_timeout=4000 -c lock_timeout=2000",
     )
 
 

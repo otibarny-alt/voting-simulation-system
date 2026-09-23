@@ -5304,26 +5304,22 @@ def admin_data_files():
    "size":os.path.getsize(path) if os.path.isfile(path) else 0,
    "modified":datetime.fromtimestamp(os.path.getmtime(path),KENYA_TZ).isoformat(timespec="seconds") if os.path.isfile(path) else "Missing"
   })
- try:
-  membership_media=current_membership_csv_media()
-  metadata=(membership_media or {}).get("metadata") or {}
-  files.append({
-   "key":"membership_registration","label":"Membership Registration (Kobo media)",
-   "filename":metadata.get("filename") or MEMBERSHIP_CSV_FILENAME,
-   "size":int(metadata.get("size") or 0),
-   "modified":membership_media.get("date_created") if membership_media else "Missing from Kobo media",
-   "remote":True,
-  })
- except Exception as exc:
-  files.append({
-   "key":"membership_registration","label":"Membership Registration (Kobo media)",
-   "filename":MEMBERSHIP_CSV_FILENAME,"size":0,
-   "modified":"Unable to read Kobo media: "+str(exc),"remote":True,
-  })
+ # Do not call Kobo while rendering this page. A slow or paginated Kobo media
+ # response previously held the whole admin page until Render returned 502.
+ # The explicit download/upload/import actions still resolve the live Kobo file.
+ files.append({
+  "key":"membership_registration","label":"Membership Registration (Kobo media)",
+  "filename":MEMBERSHIP_CSV_FILENAME,"size":0,
+  "modified":"Live details are checked only when an action is requested", "remote":True,
+ })
  closed_streams=[]
  closed_streams_error=""
  try:
-  c=con()
+  # This is a display-only query. Do not run con() schema maintenance or wait
+  # 30 seconds behind an active vote/report transaction while loading admin.
+  c=sqlite3.connect(DB,timeout=1)
+  c.row_factory=sqlite3.Row
+  c.execute("PRAGMA busy_timeout=1000")
   try:
    closed_streams=c.execute("""SELECT session_date,county,constituency,ward,
                                       poll_station,stream,closed_at
