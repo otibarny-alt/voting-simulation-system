@@ -315,6 +315,47 @@ def terminal_heartbeat():
  return jsonify({"ok":False,"temporary":True}),503
 
 
+@app.get("/api/stream-finalization-status")
+def stream_finalization_status():
+ """Server-to-server status used to stop entrance verification after closure."""
+ supplied=request.headers.get("X-Terminal-Bridge-Secret","")
+ if not AGENT_SSO_SECRET or not hmac.compare_digest(supplied,AGENT_SSO_SECRET):
+  return jsonify({"ok":False,"error":"Unauthorized"}),403
+ poll_station=str(request.args.get("poll_station") or "").strip()
+ stream=str(request.args.get("stream") or "").strip()
+ if not poll_station or not stream:
+  return jsonify({"ok":False,"error":"Polling station and stream are required."}),400
+ try:
+  init_terminal_lock_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT session_date,closed_at FROM simulation_terminal_locks
+                   WHERE poll_station=%s AND stream=%s
+                   ORDER BY session_date DESC,locked_at DESC LIMIT 1""",
+                (poll_station,stream))
+    row=cur.fetchone()
+   conn.commit()
+  closed=bool(row and row.get("closed_at"))
+  reports_generated=0
+  if closed:
+   init_repository_db()
+   with repository_db() as conn:
+    with conn.cursor() as cur:
+     cur.execute("""SELECT COUNT(DISTINCT election) AS n FROM simulation_pdf_reports
+                    WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+                 (row.get("session_date"),poll_station,stream))
+     report_row=cur.fetchone()
+     reports_generated=int((report_row or {}).get("n") or 0)
+  return jsonify({
+   "ok":True,"poll_station":poll_station,"stream":stream,
+   "closed":closed,"finalized":closed,"closed_at":str(row.get("closed_at") or "") if row else "",
+   "reports_generated":reports_generated
+  })
+ except Exception as exc:
+  app.logger.exception("Stream finalization status check failed")
+  return jsonify({"ok":False,"error":f"Stream status is temporarily unavailable ({exc.__class__.__name__})."}),503
+
+
 # V22.56: shared PostgreSQL connection pool + one-time schema initialization.
 # Opening a fresh TLS connection to Render PostgreSQL for every repository query
 # is expensive. Reusing a small pool makes repository navigation much faster.
