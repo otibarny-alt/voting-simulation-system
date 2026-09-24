@@ -1,4 +1,4 @@
-<!doctype html><link rel=stylesheet href=/static/style.css><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training ballot complete</b>{% if stream_row and stream_row["closed_at"] %}
+<!doctype html><link rel=stylesheet href=/static/style.css><script src="/static/terminal_lease.js" defer></script><meta name=viewport content='width=device-width,initial-scale=1'><header><b>Training ballot complete</b>{% if stream_row and stream_row["closed_at"] %}
 <a href=/tallies>View Closing Tallies</a>
 {% elif terminal_lock %}
 <a href="{{ url_for('stream_control',poll_station=terminal_lock.poll_station,stream=terminal_lock.stream) }}">Close Voting Stream</a>

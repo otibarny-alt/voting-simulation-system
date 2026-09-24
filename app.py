@@ -277,6 +277,22 @@ def terminal_logout():
  return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
 
 
+@app.post("/terminal-heartbeat")
+def terminal_heartbeat():
+ if not current_agent_access():
+  return jsonify({"ok":False}),401
+ lease_ok=pulse_terminal_lease("active")
+ if lease_ok is True:
+  session["terminal_lease_checked_at"]=time.time()
+  return jsonify({"ok":True})
+ if lease_ok is False:
+  session.pop("voting_agent",None)
+  session.pop("terminal_lease_checked_at",None)
+  return jsonify({"ok":False}),409
+ # A temporary network failure must not interrupt voting already in progress.
+ return jsonify({"ok":False,"temporary":True}),503
+
+
 # V22.56: shared PostgreSQL connection pool + one-time schema initialization.
 # Opening a fresh TLS connection to Render PostgreSQL for every repository query
 # is expensive. Reusing a small pool makes repository navigation much faster.
