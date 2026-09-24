@@ -6006,6 +6006,63 @@ def opening_repository_download(report_id):
  data=bytes(row["pdf_data"])
  return Response(data,mimetype="application/pdf",headers={"Content-Disposition":f'attachment; filename="{row["filename"]}"',"Content-Length":str(len(data)),"Cache-Control":"private, max-age=3600"})
 
+
+def send_stored_repository_pdf(recipient,subject,body,filename,pdf_data):
+ """Email an already archived PDF without regenerating the report."""
+ if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",recipient):
+  return jsonify({"ok":False,"error":"Enter a valid recipient email address."}),400
+ if not SMTP_HOST or not SMTP_FROM_EMAIL:
+  return jsonify({"ok":False,"error":"Email is not configured on the server. Set the SMTP environment variables in Render."}),503
+ clean_subject=re.sub(r"[\r\n]+"," ",str(subject or "Voting Report"))
+ safe_filename=os.path.basename(str(filename or "Voting_Report.pdf"))
+ msg=EmailMessage()
+ msg["Subject"]=clean_subject
+ msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+ msg["To"]=recipient
+ msg.set_content(str(body or "The requested voting report is attached.")+"\n\nTRAINING / SIMULATION ONLY — NOT OFFICIAL ELECTION RESULTS.")
+ msg.add_attachment(bytes(pdf_data),maintype="application",subtype="pdf",filename=safe_filename)
+ try:
+  smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+  with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
+   if not SMTP_USE_SSL and SMTP_USE_TLS:
+    server.ehlo();server.starttls();server.ehlo()
+   if SMTP_USERNAME:server.login(SMTP_USERNAME,SMTP_PASSWORD)
+   server.send_message(msg)
+ except smtplib.SMTPAuthenticationError:
+  app.logger.exception("Repository report email authentication failed")
+  return jsonify({"ok":False,"error":"SMTP authentication failed. Check SMTP_USERNAME and SMTP_PASSWORD."}),502
+ except smtplib.SMTPConnectError:
+  app.logger.exception("Repository report email connection failed")
+  return jsonify({"ok":False,"error":f"Could not connect to SMTP server {SMTP_HOST}:{SMTP_PORT}."}),502
+ except (TimeoutError,OSError):
+  app.logger.exception("Repository report email network failure")
+  return jsonify({"ok":False,"error":"The email connection timed out or was blocked. Check the Render SMTP settings."}),502
+ except smtplib.SMTPException as exc:
+  app.logger.exception("Repository report SMTP failure")
+  return jsonify({"ok":False,"error":f"The SMTP server rejected the message ({exc.__class__.__name__})."}),502
+ except Exception as exc:
+  app.logger.exception("Repository report email failed")
+  return jsonify({"ok":False,"error":f"The report could not be emailed ({exc.__class__.__name__})."}),502
+ return jsonify({"ok":True,"message":f"Report emailed successfully to {recipient}."})
+
+
+@app.post("/opening-report-repository/email/<int:report_id>")
+def opening_repository_email(report_id):
+ if not repository_admin_logged_in():
+  return jsonify({"ok":False,"error":"Administrator login is required to email repository reports."}),403
+ recipient=str((request.get_json(silent=True) or {}).get("email") or "").strip()
+ if not DATABASE_URL:return jsonify({"ok":False,"error":"Repository unavailable."}),503
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT filename,pdf_data,county,constituency,ward,poll_station,stream
+                  FROM simulation_opening_pdf_reports WHERE id=%s""",(report_id,))
+   row=cur.fetchone()
+ if not row:return jsonify({"ok":False,"error":"Opening report not found."}),404
+ area=" / ".join(str(row.get(key) or "") for key in ("county","constituency","ward","poll_station","stream"))
+ return send_stored_repository_pdf(recipient,f"Voting Stream Opening Report - {area}",
+  f"The archived voting-stream opening report for {area} is attached.",row["filename"],row["pdf_data"])
+
 @app.post("/opening-report-repository/delete/<int:report_id>")
 def opening_repository_delete(report_id):
  if not repository_admin_logged_in():return Response("Administrator login required to delete opening reports.",status=403)
@@ -6082,6 +6139,25 @@ def repository_download(report_id):
  data=bytes(r['pdf_data'])
  resp=Response(data,mimetype='application/pdf',headers={'Content-Disposition':f'attachment; filename="{r["filename"]}"','Content-Length':str(len(data)),'Cache-Control':'private, max-age=3600'})
  return resp
+
+
+@app.post("/report-repository/email/<int:report_id>")
+def repository_email(report_id):
+ if not repository_admin_logged_in():
+  return jsonify({"ok":False,"error":"Administrator login is required to email repository reports."}),403
+ recipient=str((request.get_json(silent=True) or {}).get("email") or "").strip()
+ if not DATABASE_URL:return jsonify({"ok":False,"error":"Repository unavailable."}),503
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT filename,pdf_data,election,election_title,county,constituency,ward,poll_station,stream
+                  FROM simulation_pdf_reports WHERE id=%s""",(report_id,))
+   row=cur.fetchone()
+ if not row:return jsonify({"ok":False,"error":"Report not found."}),404
+ area=" / ".join(str(row.get(key) or "") for key in ("county","constituency","ward","poll_station","stream"))
+ title=str(row.get("election_title") or row.get("election") or "Voting").strip()
+ return send_stored_repository_pdf(recipient,f"{title} Tally Report - {area}",
+  f"The archived {title} tally report for {area} is attached.",row["filename"],row["pdf_data"])
 
 def render_opening_report_pdf(row,position_rows):
  """Create a printable A4 opening certificate without browser-side HTML."""
