@@ -149,6 +149,27 @@ def current_agent_access():
  return data
 
 
+def pulse_terminal_lease(action="active"):
+ """Refresh or release the verifier-side voting-terminal reservation."""
+ data=session.get("voting_agent")
+ if not isinstance(data,dict):
+  return False
+ terminal_id=str(data.get("agent_id") or "").strip()
+ terminal_token=str(data.get("terminal_session_token") or "").strip()
+ if not terminal_id or not terminal_token or not AGENT_SSO_SECRET:
+  return False
+ try:
+  response=requests.post(
+   f"{VOTER_VERIFICATION_BASE_URL}/api/terminal-session/pulse",
+   json={"terminal_id":terminal_id,"session_token":terminal_token,"action":action},
+   headers={"X-Terminal-Bridge-Secret":AGENT_SSO_SECRET},timeout=(3,5)
+  )
+  return response.status_code==200
+ except requests.RequestException:
+  app.logger.warning("Voting terminal lease pulse failed",exc_info=True)
+  return None
+
+
 def agent_access_required(fn):
  @wraps(fn)
  def wrapped(*args,**kwargs):
@@ -156,6 +177,16 @@ def agent_access_required(fn):
    if request.method=="GET":
     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
    return Response("Authenticated Voting Terminal access is required for this voting-stream action.",status=403)
+  if time.time()-float(session.get("terminal_lease_checked_at") or 0)>=60:
+   lease_ok=pulse_terminal_lease("active")
+   if lease_ok is False:
+    session.pop("voting_agent",None)
+    session.pop("terminal_lease_checked_at",None)
+    if request.method=="GET":
+     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
+    return Response("This Voting Terminal login has been released or replaced.",status=403)
+   if lease_ok is True:
+    session["terminal_lease_checked_at"]=time.time()
   return fn(*args,**kwargs)
  return wrapped
 
@@ -202,7 +233,7 @@ def agent_access():
   )
  except BadSignature:
   return Response("This Voting Terminal access link is invalid or has expired. Return to the Voting Terminal login and try again.",status=403)
- required=("agent_id","nonce","county","constituency","ward","poll_station","stream","terminal_role")
+ required=("agent_id","nonce","county","constituency","ward","poll_station","stream","terminal_role","terminal_session_token")
  if not isinstance(payload,dict) or any(not str(payload.get(k) or "").strip() for k in required):
   return Response("This Voting Terminal access link is incomplete. Confirm the station and stream credentials in county_main.csv.",status=403)
  if payload.get("terminal_role")!="voting":
@@ -222,16 +253,27 @@ def agent_access():
  if not accepted:
   return Response("This Voting Terminal access link has already been used. Return to the Voting Terminal login and try again.",status=403)
  session["voting_agent"]={k:str(payload.get(k) or "").strip() for k in (
-  "agent_id","agent_name","terminal_role","county","constituency","ward","poll_station","poll_station_code","stream"
+  "agent_id","agent_name","terminal_role","terminal_session_token","county","constituency","ward","poll_station","poll_station_code","stream"
  )}
  session["voting_agent"]["authenticated_at"]=time.time()
  session.permanent=True
+ if not pulse_terminal_lease("active"):
+  session.pop("voting_agent",None)
+  return Response("The Voting Terminal reservation could not be confirmed. Return to the Voting Terminal login and try again.",status=409)
+ session["terminal_lease_checked_at"]=time.time()
  return redirect(url_for("stream_control"))
 
 
 @app.get("/terminal-login")
 def terminal_login():
  """Public entry point for a voting device before it has an SSO session."""
+ return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
+
+
+@app.get("/terminal-logout")
+def terminal_logout():
+ pulse_terminal_lease("release")
+ session.clear()
  return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
 
 
