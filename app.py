@@ -155,7 +155,7 @@ def agent_access_required(fn):
   if not current_agent_access():
    if request.method=="GET":
     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
-   return Response("Authenticated recruited-agent access is required for this voting-stream action.",status=403)
+   return Response("Authenticated Voting Terminal access is required for this voting-stream action.",status=403)
   return fn(*args,**kwargs)
  return wrapped
 
@@ -192,19 +192,21 @@ def repository_admin_logged_in():
 
 @app.get("/agent-access")
 def agent_access():
- """Consume a one-time, five-minute handoff from Voter Verification."""
+ """Consume a one-time, five-minute handoff from the terminal login service."""
  if not AGENT_SSO_SECRET:
-  return Response("Agent access is not configured. Set the same AGENT_SSO_SECRET on both Render services.",status=503)
+  return Response("Voting Terminal access is not configured. Set the same AGENT_SSO_SECRET on both Render services.",status=503)
  token=(request.args.get("token") or "").strip()
  try:
   payload=URLSafeTimedSerializer(AGENT_SSO_SECRET,salt="voting-agent-handoff-v1").loads(
    token,max_age=AGENT_SSO_MAX_AGE_SECONDS
   )
  except BadSignature:
-  return Response("This agent access link is invalid or has expired. Return to Voter Verification and open the Voting System again.",status=403)
- required=("agent_id","nonce","county","constituency","ward","poll_station","stream")
+  return Response("This Voting Terminal access link is invalid or has expired. Return to the Voting Terminal login and try again.",status=403)
+ required=("agent_id","nonce","county","constituency","ward","poll_station","stream","terminal_role")
  if not isinstance(payload,dict) or any(not str(payload.get(k) or "").strip() for k in required):
-  return Response("This agent access link is incomplete. Ask the administrator to confirm the station and stream assignment.",status=403)
+  return Response("This Voting Terminal access link is incomplete. Confirm the station and stream credentials in county_main.csv.",status=403)
+ if payload.get("terminal_role")!="voting":
+  return Response("Voting access denied: this handoff was not issued to a Voting Terminal.",status=403)
  try:
   with central_control_db() as conn:
    with conn.cursor() as cur:
@@ -216,15 +218,21 @@ def agent_access():
    conn.commit()
  except Exception as exc:
   app.logger.exception("Could not consume agent handoff")
-  return Response(f"Agent access is temporarily unavailable because the central database could not confirm the login. {exc}",status=503)
+  return Response(f"Voting Terminal access is temporarily unavailable because the central database could not confirm the login. {exc}",status=503)
  if not accepted:
-  return Response("This agent access link has already been used. Return to Voter Verification and open the Voting System again.",status=403)
+  return Response("This Voting Terminal access link has already been used. Return to the Voting Terminal login and try again.",status=403)
  session["voting_agent"]={k:str(payload.get(k) or "").strip() for k in (
-  "agent_id","agent_name","county","constituency","ward","poll_station","poll_station_code","stream"
+  "agent_id","agent_name","terminal_role","county","constituency","ward","poll_station","poll_station_code","stream"
  )}
  session["voting_agent"]["authenticated_at"]=time.time()
  session.permanent=True
  return redirect(url_for("stream_control"))
+
+
+@app.get("/terminal-login")
+def terminal_login():
+ """Public entry point for a voting device before it has an SSO session."""
+ return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
 
 
 # V22.56: shared PostgreSQL connection pool + one-time schema initialization.

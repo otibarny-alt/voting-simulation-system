@@ -40,7 +40,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if reopened_notice %}<div class="vote-success admin-reopen-success">{{reopened_notice}}</div>{% endif %}
 {% if not row and not terminal_lock %}
-{% if agent_access %}<div class="terminal-lock-banner"><b>AUTHENTICATED ELECTION AGENT</b><br>{{agent_access.agent_name or agent_access.agent_id}} ({{agent_access.agent_id}}) is authorized only for <b>{{agent_access.poll_station}} — {{agent_access.stream}}</b>.</div>{% endif %}
+{% if agent_access %}<div class="terminal-lock-banner"><b>AUTHENTICATED VOTING TERMINAL</b><br>Terminal ID {{agent_access.agent_id}} is authorized only for <b>{{agent_access.poll_station}} — {{agent_access.stream}}</b>.</div>{% endif %}
 <p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
 <form method=post action=/stream/open id=streamOpenForm>
 <input type="hidden" name="opening_lat" id="opening_lat">
