@@ -149,6 +149,28 @@ def current_agent_access():
  return data
 
 
+VOTER_SESSION_KEYS=(
+ "pending_voter_id","membership_serial_no","membership_submission_id",
+ "membership_verified","membership_station_match","membership_station",
+ "entrance_approval_checked","entrance_approval","entrance_approval_consumed",
+ "geo","voter_id","choices","completed","cast_error"
+)
+
+
+def clear_voter_state():
+ """Clear one voter's private state without deleting terminal authentication."""
+ for key in VOTER_SESSION_KEYS:
+  session.pop(key,None)
+
+
+def reset_session_preserving_terminal():
+ """Reset stream/voter state while retaining the authenticated terminal handoff."""
+ retained={key:session.get(key) for key in ("voting_agent","terminal_lease_checked_at") if key in session}
+ session.clear()
+ session.update(retained)
+ session.permanent=True
+
+
 def pulse_terminal_lease(action="active"):
  """Refresh or release the verifier-side voting-terminal reservation."""
  data=session.get("voting_agent")
@@ -2049,7 +2071,7 @@ def terminal_reset():
   # locked centrally rather than allowing another device to take it over.
   release_pending=True
 
- session.clear()
+ reset_session_preserving_terminal()
  session["awaiting_new_stream_after_reset"]=True
  session["terminal_reset_completed"]=True
  if release_pending:
@@ -2613,7 +2635,7 @@ def start():
  locked_station = geo.get("poll_station","")
  station_match = bool(membership_station and locked_station and station_key(membership_station)==station_key(locked_station))
 
- session.clear()
+ clear_voter_state()
  session["pending_voter_id"]=voter
  session["membership_serial_no"]=serial_no
  session["membership_submission_id"]=member["submission_id"]
@@ -2648,26 +2670,26 @@ def confirm_member():
  voter=session.get("pending_voter_id")
  previous=previous_vote(voter)
  if previous:
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error=already_voted_message(voter,previous["poll_station"],previous["stream"]))
  geo=session.get("geo",{})
  lock=terminal_lock()
  if not lock or any(geo.get(k,"")!=lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")):
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error="Terminal stream verification changed. Restart voter verification.")
  ss=stream_session(geo.get("poll_station",""),geo.get("stream",""),geo.get("session_date"))
  if not ss or ss["closed_at"]:
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error="This stream is not open for simulated voting.")
  if not session.get("entrance_approval_checked") or not session.get("entrance_approval"):
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error="Entrance approval was not checked. Restart voter verification.")
  try:
   approval_claimed,approval_message=consume_entrance_approval(voter,geo.get("poll_station",""),geo.get("stream",""))
  except Exception as e:
   return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"Unable to claim entrance approval: {e}")
  if not approval_claimed:
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error=f"VOTING NOT ALLOWED: {approval_message}")
  session["voter_id"]=voter
  session["entrance_approval_consumed"]=True
@@ -2679,7 +2701,7 @@ def confirm_member():
 @agent_access_required
 def cancel_member():
  keep_geo=session.get("geo")
- session.clear()
+ clear_voter_state()
  return redirect(url_for("home"))
 
 @app.get("/membership-photo/<submission_id>/<kind>")
@@ -2851,7 +2873,7 @@ def cast():
  existing=c.execute("SELECT poll_station, stream FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
  if existing:
   c.close()
-  session.clear()
+  clear_voter_state()
   return render_template("verify.html",error=already_voted_message(voter,existing["poll_station"],existing["stream"]))
  prepared=[]; session_date=geo.get("session_date") or today_iso(); recorded_at=kenya_now().isoformat(timespec="seconds")
  try:
