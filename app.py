@@ -1271,24 +1271,55 @@ def polling_register_code_key(value):
   return ""
 
 
-def registered_voters_for_stream(poll_station_code, stream):
- """Return the polling station's unique membership-CSV electorate for this stream report."""
- if master_register.configured():
-  station_name=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
-  master_total=master_register.registered_for_station(poll_station_code,station_name)
-  if master_total or MASTER_REGISTER_STRICT:return master_total
- rows=_load_membership_csv().values()
+_REPORT_VOTERS_REGISTER_CACHE={"loaded_at":0.0,"members":[]}
+_REPORT_VOTERS_REGISTER_LOCK=threading.Lock()
+
+
+def report_voters_register_members():
+ """Return the same merged voter list displayed by Admin > Voters Register."""
+ now=time.monotonic()
+ if (_REPORT_VOTERS_REGISTER_CACHE["members"]
+     and now-_REPORT_VOTERS_REGISTER_CACHE["loaded_at"]<300):
+  return _REPORT_VOTERS_REGISTER_CACHE["members"]
+ with _REPORT_VOTERS_REGISTER_LOCK:
+  now=time.monotonic()
+  if (_REPORT_VOTERS_REGISTER_CACHE["members"]
+      and now-_REPORT_VOTERS_REGISTER_CACHE["loaded_at"]<300):
+   return _REPORT_VOTERS_REGISTER_CACHE["members"]
+  members,_stats=combined_voters_register()
+  _REPORT_VOTERS_REGISTER_CACHE.update(loaded_at=now,members=members)
+  return members
+
+
+def registered_voters_for_stream(poll_station_code,stream,poll_station="",county="",constituency="",ward=""):
+ """Count unique voters from the generated voters register for one station."""
+ # Resolve both the machine key and display label so register rows match either.
+ station_aliases={station_key(poll_station)}
+ stream_station=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
+ station_aliases.add(station_key(stream_station))
  target_code=polling_register_code_key(poll_station_code)
- if target_code:
-  matched={re.sub(r"\D","",str(r.get("national_id_no") or "")) for r in rows
-           if polling_register_code_key(r.get("poll_station_code"))==target_code}
-  matched.discard("")
-  if matched:return len(matched)
- station_name=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
- station_key=norm_key(station_name)
- matched={re.sub(r"\D","",str(r.get("national_id_no") or "")) for r in rows
-          if norm_key(r.get("poll_station",""))==station_key}
- matched.discard("")
+ for row in hierarchy_rows():
+  if row.get("list_name")!="poll_station":continue
+  row_code=polling_register_code_key(row.get("poll_station_code"))
+  row_aliases={station_key(row.get("name")),station_key(row.get("label"))}
+  if (target_code and row_code==target_code) or (station_aliases & row_aliases):
+   station_aliases.update(row_aliases)
+ station_aliases.discard("")
+
+ target_geo={
+  "county":station_key(county),"constituency":station_key(constituency),"ward":station_key(ward)
+ }
+ matched=set()
+ for member in report_voters_register_members():
+  if station_key(member.get("polling_station")) not in station_aliases:
+   continue
+  # Geographic checks prevent identically named stations in different areas
+  # from being combined. Blank legacy register fields remain matchable by station.
+  if any(target_geo[key] and station_key(member.get(key))
+         and target_geo[key]!=station_key(member.get(key)) for key in target_geo):
+   continue
+  member_id=re.sub(r"\D","",str(member.get("member_id") or ""))
+  if member_id:matched.add(member_id)
  return len(matched)
 
 def hierarchy_rows():
@@ -4087,7 +4118,10 @@ def tallies():
    legacy_vote_map[(r["election"],legacy_slot)]=legacy_vote_map.get((r["election"],legacy_slot),0)+int(r["votes"])
  # Every registered-voter calculation below comes from this one polling-register
  # lookup, resolved by station code plus stream identity.
- authoritative_registered=registered_voters_for_stream(report_station_code,report_stream)
+ authoritative_registered=registered_voters_for_stream(
+  report_station_code,report_stream,report_poll_station,
+  report_ref.get("county",""),report_ref.get("constituency",""),report_ref.get("ward","")
+ )
  hp=hierarchy_payload()
  stream_to_station={norm_key(x["name"]):norm_key(x.get("poll_station_key","")) for x in hp["streams"]}
  station_labels={norm_key(x["name"]):x.get("label") or x["name"] for x in hp["poll_stations"]}
