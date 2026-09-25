@@ -161,6 +161,72 @@ def lookup_by_national_id(national_id):
             return cur.fetchone()
 
 
+def apply_membership_change(national_id, request_type, updates, request_id=None):
+    """Apply an approved self-service membership request to the master register."""
+    ensure_schema()
+    national_id = _digits(national_id)
+    request_type = str(request_type or "").strip().lower()
+    updates = dict(updates or {})
+    if not national_id:
+        raise ValueError("The membership request has no valid National ID.")
+    if request_type not in ("new", "edit"):
+        raise ValueError("Unsupported membership request type.")
+    source_ref = f"membership-request:{request_id}" if request_id is not None else "membership-request"
+    mapping = {
+        "serial_no": "serial_no",
+        "odm_membership_no": "party_membership_number",
+        "first_name": "first_name",
+        "middle_name": "middle_name",
+        "surname": "surname",
+        "phone_no": "phone",
+        "county": "county",
+        "constituency": "constituency",
+        "ward": "ward",
+        "poll_station": "polling_station",
+        "poll_station_code": "polling_station_code",
+        "member_id_photo": "id_photo_ref",
+        "member_passport_photo": "passport_photo_ref",
+    }
+    with connect(statement_timeout_ms=30000, lock_timeout_ms=5000) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM master_voters WHERE national_id=%s FOR UPDATE", (national_id,))
+            existing = cur.fetchone()
+            if request_type == "edit" and not existing:
+                raise ValueError("The member record to be edited is no longer present in the master voters register.")
+            if request_type == "new" and existing and existing.get("source_submission_id") != source_ref:
+                raise ValueError("This National ID is already present in the master voters register.")
+            values = dict(existing or {})
+            for request_key, database_key in mapping.items():
+                if request_key in updates:
+                    values[database_key] = str(updates.get(request_key) or "").strip()
+            if request_type == "new" and not str(values.get("serial_no") or "").strip():
+                raise ValueError("This new membership request has no generated serial number.")
+            if not str(values.get("party_membership_number") or "").strip():
+                values["party_membership_number"] = "ODM" + national_id
+            values["full_name"] = " ".join(
+                str(values.get(key) or "").strip()
+                for key in ("first_name", "middle_name", "surname")
+                if str(values.get(key) or "").strip()
+            )
+            columns = (
+                "serial_no", "party_membership_number", "first_name", "middle_name", "surname",
+                "full_name", "phone", "gender", "date_of_birth", "county", "constituency",
+                "ward", "polling_station", "polling_station_code", "id_photo_ref", "passport_photo_ref",
+            )
+            params = [national_id] + [str(values.get(column) or "").strip() for column in columns] + [source_ref]
+            cur.execute(f"""
+                INSERT INTO master_voters
+                    (national_id,{','.join(columns)},source_submission_id,source_updated_at,active,updated_at)
+                VALUES (%s,{','.join(['%s'] * len(columns))},%s,NOW()::text,TRUE,NOW())
+                ON CONFLICT (national_id) DO UPDATE SET
+                    {','.join(f'{column}=EXCLUDED.{column}' for column in columns)},
+                    source_submission_id=EXCLUDED.source_submission_id,
+                    source_updated_at=EXCLUDED.source_updated_at,
+                    active=TRUE,updated_at=NOW()
+            """, params)
+        conn.commit()
+
+
 def registered_total():
     ensure_schema()
     with connect() as conn:

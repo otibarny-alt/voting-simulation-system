@@ -4773,11 +4773,12 @@ def generate_unique_membership_serial(cur):
  # The advisory transaction lock makes the check-and-insert sequence safe
  # when several applicants submit at the same time.
  cur.execute("SELECT pg_advisory_xact_lock(hashtext('membership-serial-generation'))")
- csv_serials=_load_membership_csv()
- del csv_serials  # Loading refreshes _MEMBERSHIP_CSV_CACHE['serial_rows'].
+ if not master_register.configured():
+  csv_serials=_load_membership_csv()
+  del csv_serials  # Loading refreshes _MEMBERSHIP_CSV_CACHE['serial_rows'].
  for _ in range(100):
   candidate=str(lower+secrets.randbelow(span))
-  if candidate.casefold() in _MEMBERSHIP_CSV_CACHE.get("serial_rows",{}):
+  if not master_register.configured() and candidate.casefold() in _MEMBERSHIP_CSV_CACHE.get("serial_rows",{}):
    continue
   if master_register.configured() and master_register.serial_exists(candidate):
    continue
@@ -4829,7 +4830,7 @@ def membership_csv_source_bytes():
  raise RuntimeError(f"{MEMBERSHIP_CSV_FILENAME} is missing from Kobo media and no packaged fallback exists.")
 
 def approve_membership_request(request_id,reviewer):
- """Apply one pending request to the authoritative CSV and mark it approved."""
+ """Apply one pending request to the authoritative register and mark it approved."""
  init_membership_request_db()
  with membership_request_db() as conn:
   with conn.cursor() as cur:
@@ -4840,6 +4841,18 @@ def approve_membership_request(request_id,reviewer):
     raise ValueError("Membership request was not found.")
    if request_row["status"]!="pending":
     raise ValueError("This membership request has already been reviewed.")
+   if master_register.configured():
+    updates=request_row.get("request_data") or {}
+    if request_row["request_type"]=="new":
+     updates["odm_membership_no"]="ODM"+request_row["national_id"]
+    master_register.apply_membership_change(
+     request_row["national_id"],request_row["request_type"],updates,request_id=request_id)
+    cur.execute("""UPDATE membership_change_requests
+                   SET status='approved',reviewed_at=NOW(),reviewed_by=%s,rejection_reason=NULL
+                   WHERE id=%s""",(reviewer,request_id))
+    conn.commit()
+    _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
+    return "postgresql_master_register"
    raw=membership_csv_source_bytes()
    text=raw.decode("utf-8-sig",errors="replace")
    reader=csv.DictReader(StringIO(text))
@@ -4889,8 +4902,9 @@ def approve_membership_request(request_id,reviewer):
    cur.execute("""UPDATE membership_change_requests
                   SET status='approved',reviewed_at=NOW(),reviewed_by=%s,rejection_reason=NULL
                   WHERE id=%s""",(reviewer,request_id))
-  conn.commit()
+ conn.commit()
  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
+ return "kobo_membership_csv"
 
 def kobo_membership_media_files():
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
@@ -5876,8 +5890,11 @@ def admin_membership_requests():
    request_id=int(request.form.get("request_id") or 0)
    decision=(request.form.get("decision") or "").strip().lower()
    if decision=="approve":
-    approve_membership_request(request_id,ADMIN_USERNAME or "administrator")
-    session["membership_admin_message"]="Membership request approved and the Kobo CSV was updated."
+    approval_target=approve_membership_request(request_id,ADMIN_USERNAME or "administrator")
+    if approval_target=="postgresql_master_register":
+     session["membership_admin_message"]="Membership request approved and the PostgreSQL master voters register was updated."
+    else:
+     session["membership_admin_message"]="Membership request approved and the Kobo membership CSV was updated."
    elif decision=="reject":
     reason=(request.form.get("rejection_reason") or "").strip()
     if not reason:raise ValueError("Enter a reason for rejection.")
