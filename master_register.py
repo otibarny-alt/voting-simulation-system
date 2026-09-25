@@ -67,6 +67,7 @@ def ensure_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_geo ON master_voters (LOWER(county), LOWER(constituency), LOWER(ward)) WHERE active")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_station ON master_voters (LOWER(polling_station)) WHERE active")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_station_code ON master_voters (polling_station_code) WHERE active")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_active_phone ON master_voters (phone) WHERE active")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS voter_register_import_batches (
                     batch_id UUID PRIMARY KEY,
@@ -172,19 +173,14 @@ def phone_owner(phone, exclude_national_id=""):
     if not configured() or not value:
         return None
     ensure_schema()
-    # Imported registers may contain 07..., 7... or 2547... formatting. Match
-    # their canonical 0XXXXXXXXX representation without changing stored data.
-    digits_sql = "REGEXP_REPLACE(COALESCE(phone,''), '[^0-9]', '', 'g')"
-    normalized_sql = (
-        f"CASE WHEN {digits_sql} ~ '^254[0-9]{{9}}$' THEN '0' || SUBSTRING({digits_sql} FROM 4) "
-        f"WHEN {digits_sql} ~ '^[0-9]{{9}}$' THEN '0' || {digits_sql} ELSE {digits_sql} END"
-    )
+    local = value[1:] if value.startswith("0") and len(value) == 10 else value
+    variants = list(dict.fromkeys((value, local, "254" + local, "+254" + local)))
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT national_id FROM master_voters WHERE active AND national_id<>%s "
-                f"AND {normalized_sql}=%s LIMIT 1",
-                (excluded, value),
+                "SELECT national_id FROM master_voters WHERE active AND national_id<>%s "
+                "AND phone=ANY(%s) LIMIT 1",
+                (excluded, variants),
             )
             row = cur.fetchone()
             return row.get("national_id") if row else None

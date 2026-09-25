@@ -4817,15 +4817,11 @@ def assert_membership_phone_available(cur,phone,national_id,include_pending=True
  if registered_phone_owner(phone,national_id):
   raise ValueError("This phone number is already registered to another member. Use a different phone number.")
  if include_pending:
+  local=phone[1:] if phone.startswith("0") and len(phone)==10 else phone
+  variants=list(dict.fromkeys((phone,local,"254"+local,"+254"+local)))
   cur.execute("""SELECT national_id FROM membership_change_requests
                  WHERE status='pending' AND national_id<>%s
-                   AND CASE
-                     WHEN REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g') ~ '^254[0-9]{9}$'
-                       THEN '0'||SUBSTRING(REGEXP_REPLACE(request_data->>'phone_no','[^0-9]','','g') FROM 4)
-                     WHEN REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g') ~ '^[0-9]{9}$'
-                       THEN '0'||REGEXP_REPLACE(request_data->>'phone_no','[^0-9]','','g')
-                     ELSE REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g')
-                   END=%s LIMIT 1""",(national_id,phone))
+                   AND request_data->>'phone_no'=ANY(%s) LIMIT 1""",(national_id,variants))
   if cur.fetchone():
    raise ValueError("This phone number is already being used in another pending membership request. Use a different phone number.")
 
