@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g
+from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g, stream_with_context
 from markupsafe import escape
 try:
  from whitenoise import WhiteNoise
@@ -1334,6 +1334,9 @@ def report_voters_register_members():
 
 def registered_voters_for_stream(poll_station_code,stream,poll_station="",county="",constituency="",ward=""):
  """Count unique voters from the generated voters register for one station."""
+ if master_register.configured():
+  count=master_register.registered_for_station(poll_station_code,poll_station)
+  if count or MASTER_REGISTER_STRICT:return count
  # Resolve both the machine key and display label so register rows match either.
  station_aliases={station_key(poll_station)}
  stream_station=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
@@ -5099,8 +5102,15 @@ def _register_geography_index():
  _REGISTER_GEO_INDEX=index
  return index
 
-def combined_voters_register():
+def combined_voters_register(filters=None,limit=None):
  """Merge both sources by National ID; the newest live Kobo record wins."""
+ if master_register.configured():
+  total=master_register.voters_register_count(filters)
+  if total or MASTER_REGISTER_STRICT:
+   members=master_register.voters_register_rows(filters,limit=limit)
+   return members,{"source":"postgresql_master_register","database_records":total,
+                   "displayed_records":len(members),"unique_members":total,
+                   "kobo_submissions":0,"csv_records":0,"csv_added":0,"csv_fields_filled":0}
  kobo_rows=_all_kobo_membership_submissions(); newest={}
  for raw in kobo_rows:
   member=_register_member_from_kobo(raw); member_id=re.sub(r"\D","",member["member_id"])
@@ -5117,6 +5127,8 @@ def combined_voters_register():
      newest[member_id][key]=csv_member[key]; csv_fields_filled+=1
  members=[_enrich_register_geography(member) for member in newest.values()]
  members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),station_key(member.get("full_name")),member.get("member_id","")))
+ if filters:members=_filter_register(members,filters)
+ if limit is not None:members=members[:int(limit)]
  return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"csv_fields_filled":csv_fields_filled,"unique_members":len(members)}
 
 def _register_filters():
@@ -5887,8 +5899,11 @@ def admin_voters_register():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  members,stats=combined_voters_register(); members=_filter_register(members,filters); groups=_register_station_groups(members)
-  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=len(members),error=None)
+  members,stats=combined_voters_register(filters,limit=5001)
+  truncated=len(members)>5000
+  if truncated:members=members[:5000]
+  groups=_register_station_groups(members)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None)
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,error=str(exc)),502
 
@@ -5897,10 +5912,16 @@ def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  members,_=combined_voters_register(); members=_filter_register(members,filters); output=StringIO(newline="")
   columns=["member_id","serial_no","full_name","odm_registration_no","county","constituency","ward","polling_station"]
-  writer=csv.DictWriter(output,fieldnames=columns); writer.writeheader()
-  for member in members: writer.writerow({key:member.get(key,"") for key in columns})
+  if master_register.configured() and (master_register.voters_register_count(filters) or MASTER_REGISTER_STRICT):
+   def generate():
+    output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns)
+    output.write("\ufeff");writer.writeheader();yield output.getvalue()
+    for member in master_register.iter_voters_register_rows(filters):
+     output.seek(0);output.truncate(0);writer.writerow({key:member.get(key,"") for key in columns});yield output.getvalue()
+   return Response(stream_with_context(generate()),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
+  members,_=combined_voters_register(filters); output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
+  for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
  except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
 
@@ -5909,7 +5930,10 @@ def download_voters_register_pdf():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  members,_=combined_voters_register(); members=_filter_register(members,filters); pdf=_register_pdf(members,filters)
+  count=master_register.voters_register_count(filters) if master_register.configured() else None
+  if count is not None and count>5000:
+   return Response("Select a ward or polling station containing no more than 5,000 voters before generating a printable PDF. Use CSV download for larger areas.",status=400,mimetype="text/plain")
+  members,_=combined_voters_register(filters); pdf=_register_pdf(members,filters)
   return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=True,download_name=_safe_register_filename(filters,"pdf"),max_age=0)
  except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
 

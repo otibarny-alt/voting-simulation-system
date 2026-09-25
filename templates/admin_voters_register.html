@@ -24,7 +24,7 @@
    <div class="register-actions"><button class="register-button" type="submit">Apply Filters</button><a class="register-button" href="{{ url_for('admin_voters_register') }}">Clear Filters</a></div>
   </form>
   {% if error %}<div class="register-summary"><b>Register could not be generated:</b> {{ error }}</div>{% else %}
-  <div class="register-summary"><b>{{ total }} members</b> in <b>{{ groups|length }} polling stations</b>. Source: {{ stats.kobo_submissions }} live Kobo submissions + {{ stats.csv_records }} CSV records; {{ stats.csv_added }} CSV-only members added.</div>
+  <div class="register-summary"><b>{{ total }} members</b>{% if stats.source == 'postgresql_master_register' %}. Source: active PostgreSQL master voters register.{% else %} in <b>{{ groups|length }} polling stations</b>. Source: {{ stats.kobo_submissions }} live Kobo submissions + {{ stats.csv_records }} CSV records; {{ stats.csv_added }} CSV-only members added.{% endif %}{% if truncated %}<br><b>Display limited to the first 5,000 records.</b> Apply narrower filters or use Download CSV for the complete selection.{% endif %}</div>
   <div class="register-actions">
    <a class="register-button" href="{{ url_for('download_voters_register_pdf', county=filters.county, constituency=filters.constituency, ward=filters.ward, polling_station=filters.polling_station) }}">Download Printable PDF</a>
    <a class="register-button" href="{{ url_for('download_voters_register_csv', county=filters.county, constituency=filters.constituency, ward=filters.ward, polling_station=filters.polling_station) }}">Download CSV</a>

@@ -13,7 +13,7 @@ def configured():
     return bool(MASTER_REGISTER_DATABASE_URL)
 
 
-def connect():
+def connect(statement_timeout_ms=4000, lock_timeout_ms=2000):
     if not MASTER_REGISTER_DATABASE_URL:
         raise RuntimeError("MASTER_REGISTER_DATABASE_URL is not configured.")
     # Never let a temporary Render PostgreSQL outage hold an entire web page
@@ -23,7 +23,7 @@ def connect():
         MASTER_REGISTER_DATABASE_URL,
         row_factory=dict_row,
         connect_timeout=2,
-        options="-c statement_timeout=4000 -c lock_timeout=2000",
+        options=f"-c statement_timeout={int(statement_timeout_ms)} -c lock_timeout={int(lock_timeout_ms)}",
     )
 
 
@@ -178,6 +178,71 @@ def registered_breakdown():
                            GROUP BY county, constituency, ward
                            ORDER BY LOWER(county), LOWER(constituency), LOWER(ward)""")
             return list(cur.fetchall())
+
+
+def _register_where(filters=None):
+    filters = filters or {}
+    clauses = ["active"]
+    params = []
+    columns = {
+        "county": "county", "constituency": "constituency", "ward": "ward",
+        "polling_station": "polling_station",
+    }
+    for key, column in columns.items():
+        value = str(filters.get(key) or "").strip()
+        if value:
+            clauses.append(f"LOWER({column})=LOWER(%s)")
+            params.append(value)
+    return " AND ".join(clauses), params
+
+
+def voters_register_count(filters=None):
+    """Count active voters for the selected register geography."""
+    ensure_schema()
+    where, params = _register_where(filters)
+    with connect(statement_timeout_ms=30000) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS n FROM master_voters WHERE {where}", params)
+            return int(cur.fetchone()["n"] or 0)
+
+
+def voters_register_rows(filters=None, limit=None):
+    """Return active register rows without consulting Kobo or the fallback CSV."""
+    ensure_schema()
+    where, params = _register_where(filters)
+    sql = f"""SELECT national_id AS member_id, serial_no,
+                     CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
+                     party_membership_number AS odm_registration_no,
+                     county,constituency,ward,polling_station
+              FROM master_voters WHERE {where}
+              ORDER BY LOWER(county),LOWER(constituency),LOWER(ward),
+                       LOWER(polling_station),LOWER(surname),LOWER(first_name),national_id"""
+    if limit is not None:
+        sql += " LIMIT %s"
+        params = [*params, int(limit)]
+    with connect(statement_timeout_ms=120000) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def iter_voters_register_rows(filters=None):
+    """Stream a complete filtered register without holding it in web-worker memory."""
+    ensure_schema()
+    where, params = _register_where(filters)
+    sql = f"""SELECT national_id AS member_id, serial_no,
+                     CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
+                     party_membership_number AS odm_registration_no,
+                     county,constituency,ward,polling_station
+              FROM master_voters WHERE {where}
+              ORDER BY LOWER(county),LOWER(constituency),LOWER(ward),
+                       LOWER(polling_station),LOWER(surname),LOWER(first_name),national_id"""
+    with connect(statement_timeout_ms=0) as conn:
+        with conn.cursor(name="voters_register_export") as cur:
+            cur.itersize = 10000
+            cur.execute(sql, params)
+            for row in cur:
+                yield dict(row)
 
 
 def registered_for_station(polling_station_code="", polling_station=""):

@@ -51,7 +51,7 @@ def clean_row(raw):
 
 def stage(path, mode, encoding, resume_batch=None):
     ensure_schema(); batch_id = uuid.UUID(resume_batch) if resume_batch else uuid.uuid4()
-    with connect() as conn:
+    with connect(statement_timeout_ms=0, lock_timeout_ms=30000) as conn:
         with conn.cursor() as cur:
             if resume_batch:
                 cur.execute("SELECT * FROM voter_register_import_batches WHERE batch_id=%s", (batch_id,)); batch = cur.fetchone()
@@ -117,7 +117,7 @@ def stage(path, mode, encoding, resume_batch=None):
 
 def promote(batch_id, allow_rejections=False):
     ensure_schema()
-    with connect() as conn:
+    with connect(statement_timeout_ms=0, lock_timeout_ms=30000) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM voter_register_import_batches WHERE batch_id=%s FOR UPDATE", (batch_id,)); batch = cur.fetchone()
             if not batch: raise RuntimeError("Import batch was not found.")
