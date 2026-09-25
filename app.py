@@ -4714,6 +4714,17 @@ MEMBERSHIP_SELF_SERVICE_FIELDS=(
  "member_id_photo","member_passport_photo",
 )
 
+# Existing members may correct only contact, photo, and assigned-location data.
+# Identity fields are preserved from the authoritative register even if a
+# malicious client adds altered values to the POST request.
+MEMBERSHIP_EXISTING_EDITABLE_FIELDS=(
+ "phone_no","county","constituency","ward","poll_station",
+ "poll_station_code","member_id_photo","member_passport_photo",
+)
+MEMBERSHIP_LOCKED_IDENTITY_FIELDS=(
+ "odm_membership_no","first_name","middle_name","surname",
+)
+
 MEMBERSHIP_SERIAL_DIGITS=8
 
 MEMBERSHIP_IMAGE_FIELDS={
@@ -5819,9 +5830,13 @@ def membership_application():
   elif pending:
    error="Your previous request is still pending administrator review."
   else:
-   submitted={key:str(request.form.get(key) or "").strip() for key in MEMBERSHIP_SELF_SERVICE_FIELDS if key not in MEMBERSHIP_IMAGE_FIELDS}
+   accepted_fields=MEMBERSHIP_EXISTING_EDITABLE_FIELDS if current else MEMBERSHIP_SELF_SERVICE_FIELDS
+   submitted={key:str(request.form.get(key) or "").strip() for key in accepted_fields if key not in MEMBERSHIP_IMAGE_FIELDS}
    for key in MEMBERSHIP_IMAGE_FIELDS:
     submitted[key]=str((current or {}).get(key) or "").strip()
+   if current:
+    for key in MEMBERSHIP_LOCKED_IDENTITY_FIELDS:
+     submitted[key]=str(current.get(key) or "").strip()
    submitted["phone_no"]=clean_phone(submitted["phone_no"])
    if not current:
     submitted["odm_membership_no"]="ODM"+national_id
