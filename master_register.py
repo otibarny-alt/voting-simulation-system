@@ -67,7 +67,6 @@ def ensure_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_geo ON master_voters (LOWER(county), LOWER(constituency), LOWER(ward)) WHERE active")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_station ON master_voters (LOWER(polling_station)) WHERE active")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_station_code ON master_voters (polling_station_code) WHERE active")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_active_phone ON master_voters (phone) WHERE active")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS voter_register_import_batches (
                     batch_id UUID PRIMARY KEY,
