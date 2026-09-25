@@ -12,7 +12,8 @@
  <h1>{% if current %}My Membership Details{% else %}New Membership Registration{% endif %}</h1>
  <div class="notice {% if current %}approved{% else %}pending{% endif %}"><b>National ID:</b> {{ national_id }} · {% if current %}Membership record found in the registration CSV.{% else %}No approved CSV record was found. Complete the form to request registration.{% endif %}</div>
  {% if latest %}<div class="notice {{ latest.status }}"><b>Latest request: {{ latest.status|upper }}</b>{% if latest.status == 'pending' %} — awaiting administrator review.{% elif latest.status == 'approved' %} — approved on {{ latest.reviewed_at }}.{% elif latest.status == 'rejected' %} — {{ latest.rejection_reason }}{% endif %}</div>{% endif %}
- {% if current %}<div id="edit-lock-notice" class="notice edit-lock"><b>Details locked:</b> Your saved information is protected from accidental changes. Select <b>Unlock Details for Editing</b> only when you intend to submit corrections.</div>{% endif %}
+ {% if current and not candidate_locked and not candidate_lock_error %}<div id="edit-lock-notice" class="notice edit-lock"><b>Details locked:</b> Your saved information is protected from accidental changes. Select <b>Unlock Details for Editing</b> only when you intend to submit corrections.</div>{% endif %}
+ {% if candidate_locked %}<div class="notice error"><b>Membership changes are not permitted</b> because this National ID has registered as a candidate for election.</div>{% elif candidate_lock_error %}<div class="notice error">{{ candidate_lock_error }}</div>{% endif %}
  {% if message %}<div class="notice success">{{ message }}</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
  <form method="post" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="poll_station_code" id="poll_station_code" value="{{ values.get('poll_station_code','') }}">
@@ -31,8 +32,8 @@
    <div class="member-field"><label for="passport_photo">Passport Photo</label>{% if values.get('member_passport_photo') %}<img id="passport-photo-preview" class="photo-preview" src="{{ url_for('membership_self_photo',kind='passport') }}" alt="Saved passport photo">{% else %}<div id="passport-photo-placeholder" class="photo-placeholder">No passport photo uploaded</div><img id="passport-photo-preview" class="photo-preview" alt="Selected passport photo preview" hidden>{% endif %}<input data-member-editable id="passport_photo" name="passport_photo" type="file" accept="image/jpeg,image/png,image/webp" {% if not current %}required{% else %}disabled{% endif %}><div class="help">{% if values.get('member_passport_photo') %}Current file: {{ values.get('member_passport_photo') }}. Upload only to replace it.{% else %}Upload a clear passport-style photograph for voter verification.{% endif %}</div></div>
   </div>
   <div class="form-actions">
-   {% if current and not (latest and latest.status == 'pending') %}<button id="unlock-edit" class="unlock" type="button">Unlock Details for Editing</button><button id="cancel-edit" class="cancel-edit" type="button" hidden>Cancel Editing</button>{% endif %}
-   <button id="submit-request" class="save" type="submit" {% if current or (latest and latest.status == 'pending') %}disabled{% endif %}>Submit for Administrator Approval</button>
+   {% if current and not candidate_locked and not candidate_lock_error and not (latest and latest.status == 'pending') %}<button id="unlock-edit" class="unlock" type="button">Unlock Details for Editing</button><button id="cancel-edit" class="cancel-edit" type="button" hidden>Cancel Editing</button>{% endif %}
+   <button id="submit-request" class="save" type="submit" {% if current or candidate_locked or candidate_lock_error or (latest and latest.status == 'pending') %}disabled{% endif %}>Submit for Administrator Approval</button>
    {% if not current %}<button type="reset" class="secondary">Cancel Unsaved Changes</button>{% endif %}
   </div>
  </form>

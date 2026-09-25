@@ -125,6 +125,7 @@ KOBO_OPENROSA_SUBMISSION_URL = os.getenv("KOBO_OPENROSA_SUBMISSION_URL", "").str
 _AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{},"deployment":{}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
 SYSTEM_RESET_TOKEN = os.getenv("SYSTEM_RESET_TOKEN", "").strip()
+CANDIDATE_ELIGIBILITY_TOKEN = os.getenv("CANDIDATE_ELIGIBILITY_TOKEN", SYSTEM_RESET_TOKEN).strip()
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
@@ -491,6 +492,27 @@ def candidate_portal_catalog(geo):
    cand["slot"]=idx
  _CANDIDATE_CATALOG_CACHE[cache_key]=(time.monotonic(),copy.deepcopy(catalog))
  return catalog
+
+def candidate_registration_lock(national_id):
+ """Return (registered, error) using the candidate portal's complete register."""
+ if not CANDIDATE_PORTAL_BASE_URL:
+  return False,"Candidate Registration connection is not configured. Membership changes are temporarily locked."
+ if not CANDIDATE_ELIGIBILITY_TOKEN:
+  return False,"Candidate Registration security token is not configured. Membership changes are temporarily locked."
+ try:
+  response=requests.get(
+   f"{CANDIDATE_PORTAL_BASE_URL}/api/internal/candidate-registration/{national_id}",
+   headers={"Authorization":"Bearer "+CANDIDATE_ELIGIBILITY_TOKEN},
+   timeout=(4,10),
+  )
+  response.raise_for_status()
+  payload=response.json()
+  if not isinstance(payload,dict) or payload.get("ok") is not True:
+   raise ValueError("Candidate Registration returned an invalid response.")
+  return bool(payload.get("registered")),None
+ except Exception as exc:
+  app.logger.warning("Candidate registration lock check failed for %s: %s",national_id,exc)
+  return False,"Candidate Registration could not be checked. Membership changes are temporarily locked."
 
 def election_with_candidates(step,geo):
  e=cfg()[step]
@@ -4852,6 +4874,11 @@ def approve_membership_request(request_id,reviewer):
     raise ValueError("Membership request was not found.")
    if request_row["status"]!="pending":
     raise ValueError("This membership request has already been reviewed.")
+   candidate_locked,candidate_lock_error=candidate_registration_lock(request_row["national_id"])
+   if candidate_lock_error:
+    raise RuntimeError(candidate_lock_error)
+   if candidate_locked:
+    raise ValueError("Membership changes cannot be approved because this National ID has registered as a candidate.")
    if master_register.configured():
     updates=request_row.get("request_data") or {}
     if request_row["request_type"]=="new":
@@ -5817,6 +5844,9 @@ def membership_application():
  session["membership_csrf"]=token
  message=session.pop("membership_message",None); error=None
  pending=bool(latest and latest.get("status")=="pending")
+ candidate_locked=False; candidate_lock_error=None
+ if current:
+  candidate_locked,candidate_lock_error=candidate_registration_lock(national_id)
  values=dict(current or {})
  if latest and not current and latest.get("request_data"):
   values.update(latest["request_data"])
@@ -5827,6 +5857,10 @@ def membership_application():
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
    error="Security token expired. Reload the page and try again."
+  elif candidate_locked:
+   error="Membership changes are not permitted because this National ID has registered as a candidate."
+  elif candidate_lock_error:
+   error=candidate_lock_error
   elif pending:
    error="Your previous request is still pending administrator review."
   else:
@@ -5879,7 +5913,7 @@ def membership_application():
     except Exception as exc:
      app.logger.exception("Membership request submission failed")
      error="Membership request was not saved. The approval database returned: "+str(exc)
- return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message)
+ return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error)
 
 
 @app.post("/membership/logout")
