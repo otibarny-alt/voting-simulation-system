@@ -4799,6 +4799,36 @@ def clean_phone(value):
   digits="0"+digits
  return digits
 
+def registered_phone_owner(phone,national_id):
+ """Find another approved member already using this normalized phone."""
+ phone=clean_phone(phone); national_id=clean_national_id(national_id)
+ if not phone:return None
+ if master_register.configured():
+  return master_register.phone_owner(phone,national_id)
+ for owner_id,row in _load_membership_csv().items():
+  if owner_id!=national_id and clean_phone(row.get("phone_no"))==phone:
+   return owner_id
+ return None
+
+def assert_membership_phone_available(cur,phone,national_id,include_pending=True):
+ """Serialize phone claims and reject approved or pending duplicate use."""
+ phone=clean_phone(phone); national_id=clean_national_id(national_id)
+ cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("membership-phone:"+phone,))
+ if registered_phone_owner(phone,national_id):
+  raise ValueError("This phone number is already registered to another member. Use a different phone number.")
+ if include_pending:
+  cur.execute("""SELECT national_id FROM membership_change_requests
+                 WHERE status='pending' AND national_id<>%s
+                   AND CASE
+                     WHEN REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g') ~ '^254[0-9]{9}$'
+                       THEN '0'||SUBSTRING(REGEXP_REPLACE(request_data->>'phone_no','[^0-9]','','g') FROM 4)
+                     WHEN REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g') ~ '^[0-9]{9}$'
+                       THEN '0'||REGEXP_REPLACE(request_data->>'phone_no','[^0-9]','','g')
+                     ELSE REGEXP_REPLACE(COALESCE(request_data->>'phone_no',''),'[^0-9]','','g')
+                   END=%s LIMIT 1""",(national_id,phone))
+  if cur.fetchone():
+   raise ValueError("This phone number is already being used in another pending membership request. Use a different phone number.")
+
 def generate_unique_membership_serial(cur):
  """Generate a numeric serial unused by requests, the CSV, or either register table."""
  lower=10**(MEMBERSHIP_SERIAL_DIGITS-1)
@@ -4874,6 +4904,13 @@ def approve_membership_request(request_id,reviewer):
     raise ValueError("Membership request was not found.")
    if request_row["status"]!="pending":
     raise ValueError("This membership request has already been reviewed.")
+   requested_phone=clean_phone((request_row.get("request_data") or {}).get("phone_no"))
+   if not requested_phone:
+    raise ValueError("This membership request has no valid phone number.")
+   # Recheck at approval time in case the number was assigned after this
+   # request was submitted. Other pending requests do not block the first
+   # valid approval; subsequent approvals will then see the approved owner.
+   assert_membership_phone_available(cur,requested_phone,request_row["national_id"],include_pending=False)
    candidate_locked,candidate_lock_error=candidate_registration_lock(request_row["national_id"])
    if candidate_lock_error:
     raise RuntimeError(candidate_lock_error)
@@ -5892,14 +5929,22 @@ def membership_application():
     error="Enter a valid phone number."
    else:
     try:
+     # Preliminary check avoids uploading images for a request that is already
+     # known to use another member's phone. The locked check below closes any
+     # concurrency gap immediately before the request is inserted.
+     init_membership_request_db()
+     with membership_request_db() as check_conn:
+      with check_conn.cursor() as check_cur:
+       assert_membership_phone_available(check_cur,submitted["phone_no"],national_id)
+      check_conn.commit()
      for key,(form_name,label) in MEMBERSHIP_IMAGE_FIELDS.items():
       upload=request.files.get(form_name)
       if upload and upload.filename:
        submitted[key]=upload_membership_image(upload,national_id,form_name)
      request_type="edit" if current else "new"
-     init_membership_request_db()
      with membership_request_db() as conn:
       with conn.cursor() as cur:
+       assert_membership_phone_available(cur,submitted["phone_no"],national_id)
        if request_type=="new":
         submitted["serial_no"]=generate_unique_membership_serial(cur)
        cur.execute("""INSERT INTO membership_change_requests

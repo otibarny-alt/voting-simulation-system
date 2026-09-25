@@ -161,6 +161,35 @@ def lookup_by_national_id(national_id):
             return cur.fetchone()
 
 
+def phone_owner(phone, exclude_national_id=""):
+    """Return the active member using a normalized Kenyan phone number."""
+    value = _digits(phone)
+    if value.startswith("254") and len(value) == 12:
+        value = "0" + value[3:]
+    elif len(value) == 9:
+        value = "0" + value
+    excluded = _digits(exclude_national_id)
+    if not configured() or not value:
+        return None
+    ensure_schema()
+    # Imported registers may contain 07..., 7... or 2547... formatting. Match
+    # their canonical 0XXXXXXXXX representation without changing stored data.
+    digits_sql = "REGEXP_REPLACE(COALESCE(phone,''), '[^0-9]', '', 'g')"
+    normalized_sql = (
+        f"CASE WHEN {digits_sql} ~ '^254[0-9]{{9}}$' THEN '0' || SUBSTRING({digits_sql} FROM 4) "
+        f"WHEN {digits_sql} ~ '^[0-9]{{9}}$' THEN '0' || {digits_sql} ELSE {digits_sql} END"
+    )
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT national_id FROM master_voters WHERE active AND national_id<>%s "
+                f"AND {normalized_sql}=%s LIMIT 1",
+                (excluded, value),
+            )
+            row = cur.fetchone()
+            return row.get("national_id") if row else None
+
+
 def apply_membership_change(national_id, request_type, updates, request_id=None):
     """Apply an approved self-service membership request to the master register."""
     ensure_schema()
