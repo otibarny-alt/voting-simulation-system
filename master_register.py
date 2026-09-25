@@ -216,7 +216,9 @@ def voters_register_rows(filters=None, limit=None):
                      county,constituency,ward,polling_station
               FROM master_voters WHERE {where}
               ORDER BY LOWER(county),LOWER(constituency),LOWER(ward),
-                       LOWER(polling_station),LOWER(surname),LOWER(first_name),national_id"""
+                       LOWER(polling_station),
+                       CASE WHEN national_id ~ '^[0-9]+$' THEN national_id::numeric END,
+                       national_id"""
     if limit is not None:
         sql += " LIMIT %s"
         params = [*params, int(limit)]
@@ -236,7 +238,9 @@ def iter_voters_register_rows(filters=None):
                      county,constituency,ward,polling_station
               FROM master_voters WHERE {where}
               ORDER BY LOWER(county),LOWER(constituency),LOWER(ward),
-                       LOWER(polling_station),LOWER(surname),LOWER(first_name),national_id"""
+                       LOWER(polling_station),
+                       CASE WHEN national_id ~ '^[0-9]+$' THEN national_id::numeric END,
+                       national_id"""
     with connect(statement_timeout_ms=0) as conn:
         with conn.cursor(name="voters_register_export") as cur:
             cur.itersize = 10000

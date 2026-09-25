@@ -5127,7 +5127,11 @@ def combined_voters_register(filters=None,limit=None):
     if not str(newest[member_id].get(key) or "").strip() and str(csv_member.get(key) or "").strip():
      newest[member_id][key]=csv_member[key]; csv_fields_filled+=1
  members=[_enrich_register_geography(member) for member in newest.values()]
- members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),station_key(member.get("full_name")),member.get("member_id","")))
+ def id_sort_key(member):
+  value=str(member.get("member_id") or "").strip()
+  digits=re.sub(r"\D","",value)
+  return (0,int(digits),value) if digits else (1,0,value.lower())
+ members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),id_sort_key(member)))
  if filters:members=_filter_register(members,filters)
  if limit is not None:members=members[:int(limit)]
  return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"csv_fields_filled":csv_fields_filled,"unique_members":len(members)}
