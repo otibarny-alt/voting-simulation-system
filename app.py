@@ -1381,6 +1381,7 @@ def hierarchy_rows():
 _HIERARCHY_CACHE = None
 _HIERARCHY_LOCK = threading.Lock()
 _REGISTER_GEO_INDEX = None
+_TERMINAL_ASSIGNMENTS_CACHE = None
 
 def _hierarchy_cache():
  global _HIERARCHY_CACHE
@@ -5160,6 +5161,57 @@ def _register_station_groups(members):
   groups[-1][1].append(member)
  return groups
 
+def terminal_assignment_rows():
+ """Resolve county_main terminal credentials to polling-station geography."""
+ global _TERMINAL_ASSIGNMENTS_CACHE
+ if _TERMINAL_ASSIGNMENTS_CACHE is not None:return _TERMINAL_ASSIGNMENTS_CACHE
+ rows=hierarchy_rows()
+ terminal_key=lambda value:re.sub(r"[^a-z0-9]+","",str(value or "").strip().lower())
+ counties={station_key(row.get("name")):row for row in rows if row.get("list_name")=="county"}
+ constituencies=[row for row in rows if row.get("list_name")=="constituency"]
+ constituency_by_name={station_key(row.get("name")):row for row in constituencies}
+ constituency_by_number={f"{i:03d}":row for i,row in enumerate(constituencies,1)}
+ wards_by_name={}
+ for row in rows:
+  if row.get("list_name")=="ward":wards_by_name.setdefault(station_key(row.get("name")),[]).append(row)
+ stations_by_name={}
+ for row in rows:
+  if row.get("list_name")!="poll_station":continue
+  code=str(row.get("poll_station_code") or "").strip()
+  try:padded=str(round(float(code))).zfill(12)
+  except Exception:padded=""
+  code_constituency=constituency_by_number.get(padded[2:5]) if len(padded)>=5 else None
+  ward_options=wards_by_name.get(station_key(row.get("ward_key")),[])
+  ward=next((item for item in ward_options if code_constituency and station_key(item.get("constituency_key"))==station_key(code_constituency.get("name"))),None) or (ward_options[0] if ward_options else None)
+  constituency=constituency_by_name.get(station_key((ward or {}).get("constituency_key"))) or code_constituency
+  county=counties.get(station_key((constituency or {}).get("county_key")))
+  station=dict(row);station.update(county=(county or {}).get("label",""),constituency=(constituency or {}).get("label",""),ward=(ward or {}).get("label",""))
+  stations_by_name.setdefault(terminal_key(row.get("name")),[]).append(station)
+ stream_groups=[]
+ for stream in (row for row in rows if row.get("list_name")=="poll_station_stream"):
+  key=terminal_key(stream.get("poll_station_key"))
+  if not stream_groups or stream_groups[-1][0]!=key:stream_groups.append((key,[]))
+  stream_groups[-1][1].append(stream)
+ occurrences={};assignments=[]
+ for key,streams in stream_groups:
+  candidates=stations_by_name.get(key,[]);occurrence=occurrences.get(key,0);occurrences[key]=occurrence+1
+  station=candidates[min(occurrence,len(candidates)-1)] if candidates else {}
+  for stream in streams:
+   match=re.search(r"(?:^|_)stream_(\d+)$",str(stream.get("name") or ""),flags=re.I)
+   assignments.append({
+    "county":station.get("county",""),"constituency":station.get("constituency",""),"ward":station.get("ward",""),
+    "polling_station":station.get("label") or str(stream.get("poll_station_key") or "").replace("_"," ").upper(),
+    "polling_station_code":station.get("poll_station_code",""),"stream":stream.get("label") or stream.get("name",""),
+    "stream_number":int(match.group(1)) if match else None,"entrance_id":stream.get("entrance_id",""),
+    "entrance_password":stream.get("entrance_password",""),"voting_id":stream.get("voting_id",""),
+    "voting_password":stream.get("voting_passwaord") or stream.get("voting_password","")
+   })
+ _TERMINAL_ASSIGNMENTS_CACHE=assignments
+ return assignments
+
+def filtered_terminal_assignments(filters):
+ return [row for row in terminal_assignment_rows() if all(not filters.get(key) or station_key(row.get(key))==station_key(filters[key]) for key in filters)]
+
 def _safe_register_filename(filters,extension):
  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
  area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "National"
@@ -5520,7 +5572,7 @@ def admin_master_register_promote(batch_id):
 
 @app.route("/admin/data-files",methods=["GET","POST"])
 def admin_data_files():
- global _HIERARCHY_CACHE,_REGISTER_GEO_INDEX
+ global _HIERARCHY_CACHE,_REGISTER_GEO_INDEX,_TERMINAL_ASSIGNMENTS_CACHE
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
 
@@ -5582,6 +5634,7 @@ def admin_data_files():
     with _HIERARCHY_LOCK:
      _HIERARCHY_CACHE=None
      _REGISTER_GEO_INDEX=None
+     _TERMINAL_ASSIGNMENTS_CACHE=None
    session["data_files_message"]=f"{spec['label']} CSV replaced successfully ({rows:,} rows)."
   except Exception as exc:
    if os.path.exists(temp_path):
@@ -5906,6 +5959,20 @@ def admin_voters_register():
   return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None)
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,error=str(exc)),502
+
+@app.get("/admin/terminal-assignments")
+@app.get("/admin/data-files/terminal-assignments")
+def admin_terminal_assignments():
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters=_register_filters()
+ try:
+  options=_register_hierarchy_options(filters)
+  assignments=filtered_terminal_assignments(filters) if any(filters.values()) else []
+  return render_template("admin_terminal_assignments.html",assignments=assignments,filters=filters,options=options,total=len(assignments),error=None)
+ except Exception as exc:
+  app.logger.exception("Terminal assignments could not be loaded")
+  options={"counties":[],"constituencies":[],"wards":[],"stations":[]}
+  return render_template("admin_terminal_assignments.html",assignments=[],filters=filters,options=options,total=0,error="Terminal assignments could not be loaded: "+str(exc)),502
 
 @app.get("/admin/voters-register.csv")
 def download_voters_register_csv():
