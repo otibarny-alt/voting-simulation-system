@@ -174,7 +174,10 @@ def phone_owner(phone, exclude_national_id=""):
     ensure_schema()
     local = value[1:] if value.startswith("0") and len(value) == 10 else value
     variants = list(dict.fromkeys((value, local, "254" + local, "+254" + local)))
-    with connect() as conn:
+    # This is the only unavoidable whole-register phone comparison when the
+    # imported database has no phone index. Give it a bounded maintenance-style
+    # window instead of the four-second public lookup limit.
+    with connect(statement_timeout_ms=30000, lock_timeout_ms=5000) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT national_id FROM master_voters WHERE active AND national_id<>%s "

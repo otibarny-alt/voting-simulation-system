@@ -5925,14 +5925,7 @@ def membership_application():
     error="Enter a valid phone number."
    else:
     try:
-     # Preliminary check avoids uploading images for a request that is already
-     # known to use another member's phone. The locked check below closes any
-     # concurrency gap immediately before the request is inserted.
      init_membership_request_db()
-     with membership_request_db() as check_conn:
-      with check_conn.cursor() as check_cur:
-       assert_membership_phone_available(check_cur,submitted["phone_no"],national_id)
-      check_conn.commit()
      for key,(form_name,label) in MEMBERSHIP_IMAGE_FIELDS.items():
       upload=request.files.get(form_name)
       if upload and upload.filename:
@@ -5940,6 +5933,8 @@ def membership_application():
      request_type="edit" if current else "new"
      with membership_request_db() as conn:
       with conn.cursor() as cur:
+       # One serialized check is sufficient: the advisory transaction lock is
+       # retained until this request has been inserted and committed.
        assert_membership_phone_available(cur,submitted["phone_no"],national_id)
        if request_type=="new":
         submitted["serial_no"]=generate_unique_membership_serial(cur)
