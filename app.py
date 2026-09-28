@@ -5357,6 +5357,30 @@ def terminal_assignment_rows():
 def filtered_terminal_assignments(filters):
  return [row for row in terminal_assignment_rows() if all(not filters.get(key) or station_key(row.get(key))==station_key(filters[key]) for key in filters)]
 
+@app.post("/api/terminal-credentials/resolve")
+def resolve_terminal_credentials():
+ """Authoritative server-to-server terminal assignment lookup."""
+ supplied=request.headers.get("X-Terminal-Bridge-Secret","")
+ if not AGENT_SSO_SECRET or not hmac.compare_digest(supplied,AGENT_SSO_SECRET):
+  return jsonify({"ok":False,"error":"Unauthorized"}),403
+ payload=request.get_json(silent=True) or {}
+ terminal_id=str(payload.get("terminal_id") or "").strip()
+ terminal_mode=str(payload.get("terminal_mode") or "").strip().lower()
+ if terminal_mode not in {"verification","voting"} or not terminal_id:
+  return jsonify({"ok":False,"error":"Terminal ID and role are required."}),400
+ id_key="entrance_id" if terminal_mode=="verification" else "voting_id"
+ password_key="entrance_password" if terminal_mode=="verification" else "voting_password"
+ row=next((item for item in terminal_assignment_rows()
+           if str(item.get(id_key) or "").strip()==terminal_id),None)
+ if not row:return jsonify({"ok":False,"error":"Terminal assignment not found."}),404
+ return jsonify({"ok":True,"terminal":{
+  "terminal_id":terminal_id,"terminal_role":terminal_mode,"password":str(row.get(password_key) or ""),
+  "stream":str(row.get("stream") or ""),"stream_label":str(row.get("stream") or ""),
+  "polling_station":str(row.get("polling_station") or ""),"polling_station_label":str(row.get("polling_station") or ""),
+  "poll_station_code":str(row.get("polling_station_code") or ""),"ward":str(row.get("ward") or ""),
+  "constituency":str(row.get("constituency") or ""),"county":str(row.get("county") or "")
+ }})
+
 def _safe_register_filename(filters,extension):
  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
  area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "National"
