@@ -6084,14 +6084,16 @@ def download_admin_user_manual():
 def admin_voters_register():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
+ if not any(filters.values()):
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=None,prompt="Enter a National ID or select a county, then click Apply Filters to load the register.")
  try:
   members,stats=combined_voters_register(filters,limit=5001)
   truncated=len(members)>5000
   if truncated:members=members[:5000]
   groups=_register_station_groups(members)
-  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None,prompt=None)
  except Exception as exc:
-  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,error=str(exc)),502
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
 
 @app.get("/admin/terminal-assignments")
 @app.get("/admin/data-files/terminal-assignments")

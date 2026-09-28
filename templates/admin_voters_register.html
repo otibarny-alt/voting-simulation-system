@@ -24,7 +24,7 @@
    </div>
    <div class="register-actions"><button class="register-button" type="submit">Apply Filters</button><a class="register-button" href="{{ url_for('admin_voters_register') }}">Clear Filters</a></div>
   </form>
-  {% if error %}<div class="register-summary"><b>Register could not be generated:</b> {{ error }}</div>{% else %}
+  {% if prompt %}<div class="register-summary"><b>{{ prompt }}</b></div>{% elif error %}<div class="register-summary"><b>Register could not be generated:</b> {{ error }}</div>{% else %}
   <div class="register-summary"><b>{{ total }} members</b> in <b>{{ groups|length }} polling stations</b>.{% if stats.source == 'postgresql_master_register_plus_legacy_membership' %} Source: {{ stats.database_records }} active master-register records combined with the earlier Kobo membership CSV; duplicate National IDs use the master record.{% else %} Source: {{ stats.kobo_submissions }} live Kobo submissions + {{ stats.csv_records }} CSV records; {{ stats.csv_added }} CSV-only members added.{% endif %}{% if truncated %}<br><b>Display limited to the first 5,000 records.</b> Search by National ID, apply location filters, or use Download CSV for the complete selection.{% endif %}</div>
   <div class="register-actions">
    <a class="register-button" href="{{ url_for('download_voters_register_pdf', national_id=filters.national_id, county=filters.county, constituency=filters.constituency, ward=filters.ward, polling_station=filters.polling_station) }}">Download Printable PDF</a>
@@ -36,11 +36,11 @@
   {% for area, station_members in groups %}
   <section class="register-panel station">
    <h2>{{ area[3] or 'Polling station not specified' }} — {{ area[2] or 'Ward not specified' }}, {{ area[1] or 'Constituency not specified' }}, {{ area[0] or 'County not specified' }} ({{ station_members|length }})</h2>
-   <table><thead><tr><th>No.</th><th>Member ID</th><th>Serial No.</th><th>Full name</th><th>ODM registration no.</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th></tr></thead>
-   <tbody>{% for member in station_members %}<tr><td>{{ loop.index }}</td><td>{{ member.member_id }}</td><td>{{ member.serial_no or '—' }}</td><td>{{ member.full_name }}</td><td>{{ member.odm_registration_no }}</td><td>{{ member.county }}</td><td>{{ member.constituency }}</td><td>{{ member.ward }}</td><td>{{ member.polling_station }}</td></tr>{% endfor %}</tbody></table>
+   <table><thead><tr><th>No.</th><th>Member ID</th><th>Full name</th><th>ODM registration no.</th><th>County</th><th>Constituency</th><th>Ward</th><th>Polling station</th></tr></thead>
+   <tbody>{% for member in station_members %}<tr><td>{{ loop.index }}</td><td>{{ member.member_id }}</td><td>{{ member.full_name }}</td><td>{{ member.odm_registration_no }}</td><td>{{ member.county }}</td><td>{{ member.constituency }}</td><td>{{ member.ward }}</td><td>{{ member.polling_station }}</td></tr>{% endfor %}</tbody></table>
   </section>
   {% endfor %}
- {% else %}<section class="register-panel empty">No members match the selected filters.</section>{% endif %}
+ {% elif not prompt %}<section class="register-panel empty">No members match the selected filters.</section>{% endif %}
 </main>
 <script>
 (() => {

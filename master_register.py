@@ -284,7 +284,9 @@ def _register_where(filters=None):
     for key, column in columns.items():
         value = str(filters.get(key) or "").strip()
         if value:
-            clauses.append(f"LOWER({column})=LOWER(%s)")
+            # National ID is the primary key. Preserve an indexable equality
+            # predicate instead of wrapping it in LOWER(), which forces a scan.
+            clauses.append(f"{column}=%s" if key == "national_id" else f"LOWER({column})=LOWER(%s)")
             params.append(value)
     return " AND ".join(clauses), params
 
