@@ -5204,13 +5204,13 @@ def combined_voters_register(filters=None,limit=None):
    if member_id:
     member["member_id"]=member_id;member["source"]="PostgreSQL master register"
     newest[member_id]=member
- try:
-  kobo_rows=_all_kobo_membership_submissions()
- except Exception as exc:
-  # A temporary Kobo outage must not hide the active master register. The
-  # packaged/live CSV fallback below can still supply pre-migration members.
-  app.logger.warning("Legacy Kobo voters-register merge unavailable: %s",exc)
+ # With PostgreSQL active, membership_registration.csv is the legacy Kobo
+ # register snapshot. Do not paginate through every live Kobo submission on
+ # each admin page load; that was the principal source of slow register views.
+ if master_register.configured():
   kobo_rows=[]
+ else:
+  kobo_rows=_all_kobo_membership_submissions()
  for raw in kobo_rows:
   member=_register_member_from_kobo(raw); member_id=re.sub(r"\D","",member["member_id"])
   if not member_id: continue
@@ -5242,7 +5242,9 @@ def combined_voters_register(filters=None,limit=None):
                  "csv_fields_filled":csv_fields_filled,"unique_members":unique_total}
 
 def _register_filters():
- return {key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
+ filters={key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
+ filters["national_id"]=clean_national_id(request.args.get("national_id"))
+ return filters
 
 def _register_hierarchy_options(filters):
  """Return the county_main.csv branch matching the current register filters."""
@@ -5260,7 +5262,12 @@ def _register_hierarchy_options(filters):
  return {"counties":counties,"constituencies":constituencies,"wards":wards,"stations":stations}
 
 def _filter_register(members,filters):
- return [member for member in members if all(not filters.get(key) or station_key(member.get(key))==station_key(filters[key]) for key in filters)]
+ def matches(member):
+  if filters.get("national_id") and clean_national_id(member.get("member_id"))!=filters["national_id"]:
+   return False
+  return all(not filters.get(key) or station_key(member.get(key))==station_key(filters[key])
+             for key in ("county","constituency","ward","polling_station"))
+ return [member for member in members if matches(member)]
 
 def _register_station_groups(members):
  groups=[]

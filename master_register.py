@@ -279,7 +279,7 @@ def _register_where(filters=None):
     params = []
     columns = {
         "county": "county", "constituency": "constituency", "ward": "ward",
-        "polling_station": "polling_station",
+        "polling_station": "polling_station", "national_id": "national_id",
     }
     for key, column in columns.items():
         value = str(filters.get(key) or "").strip()
