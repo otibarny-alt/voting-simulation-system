@@ -5220,8 +5220,13 @@ def combined_voters_register(filters=None,limit=None):
  """
  newest={}; database_records=0
  if master_register.configured():
-  master_members=master_register.voters_register_rows(filters)
-  database_records=master_register.voters_register_count(filters)
+  # Ward/station values can arrive as hierarchy keys, display labels or text
+  # with harmless spacing differences. Narrow safely by ID/county/constituency
+  # in PostgreSQL, then apply ward/station after canonicalization below.
+  master_filters=dict(filters or {})
+  master_filters.pop("ward",None)
+  master_filters.pop("polling_station",None)
+  master_members=master_register.voters_register_rows(master_filters)
   for member in master_members:
    member_id=re.sub(r"\D","",str(member.get("member_id") or ""))
    if member_id:
@@ -5257,6 +5262,7 @@ def combined_voters_register(filters=None,limit=None):
   return (0,int(digits),value) if digits else (1,0,value.lower())
  members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),id_sort_key(member)))
  if filters:members=_filter_register(members,filters)
+ database_records=sum(1 for member in members if member.get("source")=="PostgreSQL master register")
  unique_total=len(members)
  if limit is not None:members=members[:int(limit)]
  return members,{"source":"postgresql_master_register_plus_legacy_membership" if master_register.configured() else "legacy_membership",
