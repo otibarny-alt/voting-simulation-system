@@ -1829,6 +1829,29 @@ def lookup_member_by_serial(serial_no):
  if live_error:raise live_error
  return None
 
+def lookup_member_for_verification(reference):
+ """Accept the membership serial number or National ID at voter verification.
+
+ Serial remains the preferred public lookup. A National ID fallback is needed
+ for newly approved master-register members and for members who have not yet
+ received or retained their generated serial number.
+ """
+ value=str(reference or "").strip()
+ if master_register.configured():
+  row=master_register.lookup_by_serial(value)
+  if row:return _master_member_submission(row)
+  national_id=clean_national_id(value)
+  if national_id:
+   row=master_register.lookup_by_national_id(national_id)
+   if row:return _master_member_submission(row)
+  if MASTER_REGISTER_STRICT:return None
+ row=lookup_member_by_serial(value)
+ if row:return row
+ national_id=clean_national_id(value)
+ if national_id:
+  return lookup_member(national_id)
+ return None
+
 def member_view(row):
  first=field(row,"members_particulars/first_name","members_particulars/first_name1")
  other=field(row,"members_particulars/other_names","members_particulars/other_names1")
@@ -2703,15 +2726,15 @@ def start():
 
  serial_no=request.form.get("serial_no","").strip()
  if not serial_no:
-  return render_template("verify.html",stream_ready=True,stream_row=ss,error="Enter the voter's membership serial number.")
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error="Enter the voter's membership serial number or National ID.")
  geo={k:lock.get(k,"") for k in ("session_date","county","constituency","ward","poll_station","stream")}
 
  try:
-  row=lookup_member_by_serial(serial_no)
+  row=lookup_member_for_verification(serial_no)
  except Exception as e:
   return render_template("verify.html",error=f"Unable to verify voter from the membership lookup sources: {e}")
  if not row:
-  return render_template("verify.html",error=f"Serial number {serial_no} was not found in Kobo submissions or membership_registration.csv.")
+  return render_template("verify.html",stream_ready=True,stream_row=ss,error=f"No voter record was found for membership serial number or National ID {serial_no}.")
 
  member=member_view(row)
  voter=clean_national_id(member.get("national_id"))
@@ -2735,7 +2758,7 @@ def start():
 
  clear_voter_state()
  session["pending_voter_id"]=voter
- session["membership_serial_no"]=serial_no
+ session["membership_serial_no"]=member.get("serial_no") or serial_no
  session["membership_submission_id"]=member["submission_id"]
  session["membership_verified"]=True
  session["membership_station_match"]=station_match
