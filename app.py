@@ -5189,20 +5189,36 @@ def _register_geography_index():
  return index
 
 def combined_voters_register(filters=None,limit=None):
- """Merge both sources by National ID; the newest live Kobo record wins."""
+ """Merge master, live Kobo and CSV members by National ID.
+
+ The PostgreSQL master row wins when an ID exists in more than one source.
+ This keeps imported/corrected data authoritative while retaining members who
+ were registered in Kobo before the master-register migration.
+ """
+ newest={}; database_records=0
  if master_register.configured():
-  total=master_register.voters_register_count(filters)
-  if total or MASTER_REGISTER_STRICT:
-   members=master_register.voters_register_rows(filters,limit=limit)
-   return members,{"source":"postgresql_master_register","database_records":total,
-                   "displayed_records":len(members),"unique_members":total,
-                   "kobo_submissions":0,"csv_records":0,"csv_added":0,"csv_fields_filled":0}
- kobo_rows=_all_kobo_membership_submissions(); newest={}
+  master_members=master_register.voters_register_rows(filters)
+  database_records=master_register.voters_register_count(filters)
+  for member in master_members:
+   member_id=re.sub(r"\D","",str(member.get("member_id") or ""))
+   if member_id:
+    member["member_id"]=member_id;member["source"]="PostgreSQL master register"
+    newest[member_id]=member
+ try:
+  kobo_rows=_all_kobo_membership_submissions()
+ except Exception as exc:
+  # A temporary Kobo outage must not hide the active master register. The
+  # packaged/live CSV fallback below can still supply pre-migration members.
+  app.logger.warning("Legacy Kobo voters-register merge unavailable: %s",exc)
+  kobo_rows=[]
  for raw in kobo_rows:
   member=_register_member_from_kobo(raw); member_id=re.sub(r"\D","",member["member_id"])
   if not member_id: continue
   member["member_id"]=member_id; existing=newest.get(member_id)
-  if not existing or member["submission_time"]>=existing["submission_time"]: newest[member_id]=member
+  if not existing:
+   newest[member_id]=member
+  elif existing.get("source")!="PostgreSQL master register" and member["submission_time"]>=existing.get("submission_time",""):
+   newest[member_id]=member
  csv_rows=_load_membership_csv(); csv_added=0; csv_fields_filled=0
  for member_id,raw in csv_rows.items():
   csv_member=_register_member_from_csv(raw)
@@ -5218,8 +5234,12 @@ def combined_voters_register(filters=None,limit=None):
   return (0,int(digits),value) if digits else (1,0,value.lower())
  members.sort(key=lambda member:(station_key(member.get("county")),station_key(member.get("constituency")),station_key(member.get("ward")),station_key(member.get("polling_station")),id_sort_key(member)))
  if filters:members=_filter_register(members,filters)
+ unique_total=len(members)
  if limit is not None:members=members[:int(limit)]
- return members,{"kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,"csv_fields_filled":csv_fields_filled,"unique_members":len(members)}
+ return members,{"source":"postgresql_master_register_plus_legacy_membership" if master_register.configured() else "legacy_membership",
+                 "database_records":database_records,"displayed_records":len(members),
+                 "kobo_submissions":len(kobo_rows),"csv_records":len(csv_rows),"csv_added":csv_added,
+                 "csv_fields_filled":csv_fields_filled,"unique_members":unique_total}
 
 def _register_filters():
  return {key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
@@ -6086,13 +6106,6 @@ def download_voters_register_csv():
  filters=_register_filters()
  try:
   columns=["member_id","serial_no","full_name","odm_registration_no","county","constituency","ward","polling_station"]
-  if master_register.configured() and (master_register.voters_register_count(filters) or MASTER_REGISTER_STRICT):
-   def generate():
-    output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns)
-    output.write("\ufeff");writer.writeheader();yield output.getvalue()
-    for member in master_register.iter_voters_register_rows(filters):
-     output.seek(0);output.truncate(0);writer.writerow({key:member.get(key,"") for key in columns});yield output.getvalue()
-   return Response(stream_with_context(generate()),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
   members,_=combined_voters_register(filters); output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
   for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
@@ -6103,10 +6116,10 @@ def download_voters_register_pdf():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  count=master_register.voters_register_count(filters) if master_register.configured() else None
-  if count is not None and count>5000:
+  members,_=combined_voters_register(filters)
+  if len(members)>5000:
    return Response("Select a ward or polling station containing no more than 5,000 voters before generating a printable PDF. Use CSV download for larger areas.",status=400,mimetype="text/plain")
-  members,_=combined_voters_register(filters); pdf=_register_pdf(members,filters)
+  pdf=_register_pdf(members,filters)
   return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=True,download_name=_safe_register_filename(filters,"pdf"),max_age=0)
  except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
 
