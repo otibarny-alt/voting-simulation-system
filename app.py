@@ -1287,6 +1287,76 @@ _REGISTERED_TOTAL_CACHE={"signature":None,"loaded_at":0.0,"value":0,"breakdown":
                          "kobo_only_records":0,"errors":[]}
 _REGISTERED_TOTAL_REFRESH_LOCK=threading.Lock()
 _REGISTERED_TOTAL_REFRESH_RUNNING=False
+_REGISTERED_TALLY_DB_READY=False
+_REGISTERED_TALLY_DB_LOCK=threading.Lock()
+
+def init_registered_tally_cache_db():
+ """Create the small durable cache shared by all Render web workers."""
+ global _REGISTERED_TALLY_DB_READY
+ if not DATABASE_URL or _REGISTERED_TALLY_DB_READY:return
+ with _REGISTERED_TALLY_DB_LOCK:
+  if _REGISTERED_TALLY_DB_READY:return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""CREATE TABLE IF NOT EXISTS simulation_registered_voter_tallies(
+       county TEXT NOT NULL DEFAULT '',constituency TEXT NOT NULL DEFAULT '',
+       ward TEXT NOT NULL DEFAULT '',registered_voters BIGINT NOT NULL,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       PRIMARY KEY(county,constituency,ward))""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS simulation_registered_voter_tally_state(
+       cache_key TEXT PRIMARY KEY,components JSONB NOT NULL DEFAULT '{}'::jsonb,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+   conn.commit()
+  _REGISTERED_TALLY_DB_READY=True
+
+def load_registered_tally_cache():
+ """Load the last complete combined tally without contacting Kobo."""
+ if not DATABASE_URL:return False
+ try:
+  init_registered_tally_cache_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("SELECT county,constituency,ward,registered_voters FROM simulation_registered_voter_tallies ORDER BY county,constituency,ward")
+    breakdown=[dict(row) for row in cur.fetchall()]
+    cur.execute("SELECT components FROM simulation_registered_voter_tally_state WHERE cache_key='combined_register'")
+    state=cur.fetchone()
+  if not breakdown:return False
+  components=dict((state or {}).get("components") or {})
+  _REGISTERED_TOTAL_CACHE.update(
+   signature=None,loaded_at=0.0,breakdown=breakdown,
+   value=sum(to_int(item.get("registered_voters")) for item in breakdown),
+   database_records=to_int(components.get("database_records")),
+   kobo_records=to_int(components.get("kobo_records")),
+   overlap_records=to_int(components.get("overlap_records")),
+   kobo_only_records=to_int(components.get("kobo_only_records")),errors=[])
+  return True
+ except Exception as exc:
+  app.logger.warning("Durable registered-voter tally cache unavailable: %s",exc)
+  return False
+
+def save_registered_tally_cache():
+ """Atomically publish only a complete DB + Kobo refresh."""
+ if not DATABASE_URL or _REGISTERED_TOTAL_CACHE.get("errors") or not _REGISTERED_TOTAL_CACHE.get("breakdown"):return
+ try:
+  init_registered_tally_cache_db()
+  rows=[(str(item.get("county") or ""),str(item.get("constituency") or ""),
+         str(item.get("ward") or ""),to_int(item.get("registered_voters")))
+        for item in _REGISTERED_TOTAL_CACHE["breakdown"]]
+  components={key:to_int(_REGISTERED_TOTAL_CACHE.get(key)) for key in
+              ("database_records","kobo_records","overlap_records","kobo_only_records")}
+  components["combined_unique_records"]=to_int(_REGISTERED_TOTAL_CACHE.get("value"))
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("DELETE FROM simulation_registered_voter_tallies")
+    cur.executemany("INSERT INTO simulation_registered_voter_tallies(county,constituency,ward,registered_voters) VALUES(%s,%s,%s,%s)",rows)
+    cur.execute("""INSERT INTO simulation_registered_voter_tally_state(cache_key,components,updated_at)
+                   VALUES('combined_register',%s::jsonb,NOW())
+                   ON CONFLICT(cache_key) DO UPDATE SET components=EXCLUDED.components,updated_at=NOW()""",
+                (json.dumps(components),))
+   conn.commit()
+ except Exception as exc:
+  app.logger.warning("Could not persist registered-voter tally cache: %s",exc)
+
 def membership_registered_breakdown():
  """Count the deduplicated database + Kobo electorate by geography.
 
@@ -1303,7 +1373,8 @@ def membership_registered_breakdown():
   source_errors.append("kobo_membership_unavailable")
   rows={}
  signature=(bool(master_register.configured()),_MEMBERSHIP_CSV_CACHE.get("loaded_at"))
- if (_REGISTERED_TOTAL_CACHE.get("signature")==signature
+ if (_REGISTERED_TOTAL_CACHE.get("breakdown") and not _REGISTERED_TOTAL_CACHE.get("errors")
+     and _REGISTERED_TOTAL_CACHE.get("signature")==signature
      and time.monotonic()-_REGISTERED_TOTAL_CACHE.get("loaded_at",0)<300):
   return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
  grouped={}
@@ -1340,6 +1411,7 @@ def membership_registered_breakdown():
                                 kobo_records=len(rows),overlap_records=len(database_ids),
                                 kobo_only_records=max(0,len(rows)-len(database_ids)),
                                 errors=source_errors)
+ if not source_errors:save_registered_tally_cache()
  return list(breakdown)
 
 def refresh_registered_tallies_background():
@@ -6935,6 +7007,7 @@ def inject_report_branding():
 
 # Begin warming database + Kobo voter tallies as soon as each Render worker is
 # ready. This work no longer sits on the critical path of a dashboard request.
+load_registered_tally_cache()
 refresh_registered_tallies_background()
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))
