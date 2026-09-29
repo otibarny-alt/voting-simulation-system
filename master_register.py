@@ -39,7 +39,7 @@ def ensure_schema():
         return
     if _SCHEMA_READY:
         return
-    with connect() as conn:
+    with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS master_voters (
@@ -269,8 +269,11 @@ def registered_total():
 
 
 def registered_breakdown():
+    # Dashboard aggregation is background work and must not inherit the
+    # four-second interactive lookup timeout. A busy Render PostgreSQL service
+    # otherwise reports a false zero even though the register is populated.
     ensure_schema()
-    with connect() as conn:
+    with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT county, constituency, ward, COUNT(*) AS registered_voters
                            FROM master_voters WHERE active

@@ -1368,20 +1368,6 @@ def membership_registered_breakdown():
  polling stations keeps national dashboard responses compact.
  """
  source_errors=[]
- try:
-  rows=_live_kobo_tally_rows()
- except Exception as exc:
-  app.logger.warning("Live Kobo membership register unavailable for dashboard tally: %s",exc)
-  source_errors.append("live_kobo_membership_unavailable")
-  # The form-media CSV is an emergency display fallback only. It is not saved
-  # over the last complete live database + Kobo tally.
-  try:rows=_load_membership_csv()
-  except Exception:rows={}
- signature=(bool(master_register.configured()),_KOBO_TALLY_CACHE.get("loaded_at"))
- if (_REGISTERED_TOTAL_CACHE.get("breakdown") and not _REGISTERED_TOTAL_CACHE.get("errors")
-     and _REGISTERED_TOTAL_CACHE.get("signature")==signature
-     and time.monotonic()-_REGISTERED_TOTAL_CACHE.get("loaded_at",0)<300):
-  return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
  grouped={}
  database_ids=set()
  database_records=0
@@ -1393,12 +1379,36 @@ def membership_registered_breakdown():
     count=to_int(item.get("registered_voters"))
     grouped[geo]=grouped.get(geo,0)+count
     database_records+=count
-   database_ids=master_register.existing_active_national_ids(rows.keys())
+   # Publish PostgreSQL immediately. The live Kobo asset may take longer to
+   # paginate, but dashboards must never show zero while that merge runs.
+   if grouped:
+    database_breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"registered_voters":n} for g,n in grouped.items()]
+    database_breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
+    _REGISTERED_TOTAL_CACHE.update(signature=None,loaded_at=0.0,value=database_records,
+     breakdown=database_breakdown,database_records=database_records,kobo_records=0,
+     overlap_records=0,kobo_only_records=0,errors=["live_kobo_membership_refreshing"])
+    invalidate_registered_dashboard_payloads()
   except Exception as exc:
    app.logger.warning("Master register unavailable for dashboard tally: %s",exc)
    source_errors.append("master_register_unavailable")
+ try:
+  rows=_live_kobo_tally_rows()
+ except Exception as exc:
+  app.logger.warning("Live Kobo membership register unavailable for dashboard tally: %s",exc)
+  source_errors.append("live_kobo_membership_unavailable")
+  # The form-media CSV is an emergency display fallback only. It is not saved
+  # over the last complete live database + Kobo tally.
+  try:rows=_load_membership_csv()
+  except Exception:rows={}
+ if master_register.configured() and database_records:
+  try:database_ids=master_register.existing_active_national_ids(rows.keys())
+  except Exception as exc:
+   app.logger.warning("Master/Kobo overlap query unavailable: %s",exc)
+   source_errors.append("master_register_overlap_unavailable")
+   rows={}
  elif MASTER_REGISTER_STRICT:
   rows={}
+ signature=(bool(master_register.configured()),_KOBO_TALLY_CACHE.get("loaded_at"))
  for national_id,row in rows.items():
   if national_id in database_ids:continue
   geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward"))
@@ -1419,6 +1429,13 @@ def membership_registered_breakdown():
  if not source_errors:save_registered_tally_cache()
  return list(breakdown)
 
+def invalidate_registered_dashboard_payloads():
+ """Discard result payloads that were created before a register refresh."""
+ for name in ("_GOV_DASHBOARD_CACHE","_SEN_DASHBOARD_CACHE","_PRES_DASHBOARD_CACHE",
+              "_WOMAN_REP_DASHBOARD_CACHE","_MNA_DASHBOARD_CACHE","_MCA_DASHBOARD_CACHE"):
+  cache=globals().get(name)
+  if isinstance(cache,dict):cache["payload"]=None;cache["at"]=0.0
+
 def refresh_registered_tallies_background():
  """Warm combined DB + Kobo dashboard totals without blocking result pages."""
  global _REGISTERED_TOTAL_REFRESH_RUNNING
@@ -1431,10 +1448,7 @@ def refresh_registered_tallies_background():
    with app.app_context():membership_registered_breakdown()
    # Do not leave an early cold-start payload containing zero registered
    # voters in the per-election caches after the background tally is ready.
-   for name in ("_GOV_DASHBOARD_CACHE","_SEN_DASHBOARD_CACHE","_PRES_DASHBOARD_CACHE",
-                "_WOMAN_REP_DASHBOARD_CACHE","_MNA_DASHBOARD_CACHE","_MCA_DASHBOARD_CACHE"):
-    cache=globals().get(name)
-    if isinstance(cache,dict):cache["payload"]=None;cache["at"]=0.0
+   invalidate_registered_dashboard_payloads()
   except Exception as exc:
    app.logger.warning("Combined register background refresh failed: %s",exc)
   finally:
