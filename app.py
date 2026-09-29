@@ -1284,7 +1284,9 @@ def agent_rows():
 
 _REGISTERED_TOTAL_CACHE={"signature":None,"loaded_at":0.0,"value":0,"breakdown":[],
                          "database_records":0,"kobo_records":0,"overlap_records":0,
-                         "kobo_only_records":0}
+                         "kobo_only_records":0,"errors":[]}
+_REGISTERED_TOTAL_REFRESH_LOCK=threading.Lock()
+_REGISTERED_TOTAL_REFRESH_RUNNING=False
 def membership_registered_breakdown():
  """Count the deduplicated database + Kobo electorate by geography.
 
@@ -1293,7 +1295,13 @@ def membership_registered_breakdown():
  the database. Ward is the dashboards' finest electorate filter; excluding
  polling stations keeps national dashboard responses compact.
  """
- rows=_load_membership_csv()
+ source_errors=[]
+ try:
+  rows=_load_membership_csv()
+ except Exception as exc:
+  app.logger.warning("Kobo membership register unavailable for dashboard tally: %s",exc)
+  source_errors.append("kobo_membership_unavailable")
+  rows={}
  signature=(bool(master_register.configured()),_MEMBERSHIP_CSV_CACHE.get("loaded_at"))
  if (_REGISTERED_TOTAL_CACHE.get("signature")==signature
      and time.monotonic()-_REGISTERED_TOTAL_CACHE.get("loaded_at",0)<300):
@@ -1302,13 +1310,17 @@ def membership_registered_breakdown():
  database_ids=set()
  database_records=0
  if master_register.configured():
-  master_rows=[dict(row) for row in master_register.registered_breakdown()]
-  for item in master_rows:
-   geo=tuple(str(item.get(k) or "").strip() for k in ("county","constituency","ward"))
-   count=to_int(item.get("registered_voters"))
-   grouped[geo]=grouped.get(geo,0)+count
-   database_records+=count
-  database_ids=master_register.existing_active_national_ids(rows.keys())
+  try:
+   master_rows=[dict(row) for row in master_register.registered_breakdown()]
+   for item in master_rows:
+    geo=tuple(str(item.get(k) or "").strip() for k in ("county","constituency","ward"))
+    count=to_int(item.get("registered_voters"))
+    grouped[geo]=grouped.get(geo,0)+count
+    database_records+=count
+   database_ids=master_register.existing_active_national_ids(rows.keys())
+  except Exception as exc:
+   app.logger.warning("Master register unavailable for dashboard tally: %s",exc)
+   source_errors.append("master_register_unavailable")
  elif MASTER_REGISTER_STRICT:
   rows={}
  for national_id,row in rows.items():
@@ -1317,16 +1329,45 @@ def membership_registered_breakdown():
   grouped[geo]=grouped.get(geo,0)+1
  breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"registered_voters":n} for g,n in grouped.items()]
  breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
+ # If both live sources fail during a transient Render outage, preserve the
+ # last successful combined tally instead of replacing it with zeros.
+ if source_errors and not grouped and _REGISTERED_TOTAL_CACHE.get("breakdown"):
+  _REGISTERED_TOTAL_CACHE["errors"]=source_errors
+  return list(_REGISTERED_TOTAL_CACHE["breakdown"])
  _REGISTERED_TOTAL_CACHE.update(signature=signature,loaded_at=time.monotonic(),
                                 value=sum(item["registered_voters"] for item in breakdown),
                                 breakdown=breakdown,database_records=database_records,
                                 kobo_records=len(rows),overlap_records=len(database_ids),
-                                kobo_only_records=max(0,len(rows)-len(database_ids)))
+                                kobo_only_records=max(0,len(rows)-len(database_ids)),
+                                errors=source_errors)
  return list(breakdown)
+
+def refresh_registered_tallies_background():
+ """Warm combined DB + Kobo dashboard totals without blocking result pages."""
+ global _REGISTERED_TOTAL_REFRESH_RUNNING
+ with _REGISTERED_TOTAL_REFRESH_LOCK:
+  if _REGISTERED_TOTAL_REFRESH_RUNNING:return
+  _REGISTERED_TOTAL_REFRESH_RUNNING=True
+ def worker():
+  global _REGISTERED_TOTAL_REFRESH_RUNNING
+  try:
+   with app.app_context():membership_registered_breakdown()
+   # Do not leave an early cold-start payload containing zero registered
+   # voters in the per-election caches after the background tally is ready.
+   for name in ("_GOV_DASHBOARD_CACHE","_SEN_DASHBOARD_CACHE","_PRES_DASHBOARD_CACHE",
+                "_WOMAN_REP_DASHBOARD_CACHE","_MNA_DASHBOARD_CACHE","_MCA_DASHBOARD_CACHE"):
+    cache=globals().get(name)
+    if isinstance(cache,dict):cache["payload"]=None;cache["at"]=0.0
+  except Exception as exc:
+   app.logger.warning("Combined register background refresh failed: %s",exc)
+  finally:
+   with _REGISTERED_TOTAL_REFRESH_LOCK:_REGISTERED_TOTAL_REFRESH_RUNNING=False
+ threading.Thread(target=worker,name="registered-voter-tally-warmup",daemon=True).start()
 
 def authoritative_registered_total():
  """Return unique active database voters plus Kobo-only members."""
- membership_registered_breakdown()
+ if not _REGISTERED_TOTAL_CACHE.get("breakdown"):
+  refresh_registered_tallies_background()
  return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
 
 def to_int(v):
@@ -3249,15 +3290,21 @@ def dashboard_api_authorized():
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
 
 def dashboard_registered_metadata():
+ # Cold Render workers begin loading the two registers immediately. Dashboard
+ # requests use the last good tally while that refresh runs.
+ if not _REGISTERED_TOTAL_CACHE.get("breakdown"):
+  refresh_registered_tallies_background()
  return {
   "registered_voters_source":"postgresql_master_register_plus_kobo_membership" if master_register.configured() else "kobo_membership_registration_csv",
-  "registered_voter_breakdown":membership_registered_breakdown(),
+  "registered_voter_breakdown":list(_REGISTERED_TOTAL_CACHE.get("breakdown") or []),
   "registered_voter_components":{
    "database_records":int(_REGISTERED_TOTAL_CACHE.get("database_records") or 0),
    "kobo_records":int(_REGISTERED_TOTAL_CACHE.get("kobo_records") or 0),
    "overlap_records":int(_REGISTERED_TOTAL_CACHE.get("overlap_records") or 0),
    "kobo_only_records":int(_REGISTERED_TOTAL_CACHE.get("kobo_only_records") or 0),
    "combined_unique_records":int(_REGISTERED_TOTAL_CACHE.get("value") or 0),
+   "refreshing":bool(_REGISTERED_TOTAL_REFRESH_RUNNING),
+   "source_errors":list(_REGISTERED_TOTAL_CACHE.get("errors") or []),
   },
   "expected_streams_source":"voting_system_county_main_csv",
   "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
@@ -6885,5 +6932,9 @@ def inject_report_branding():
   "reset_required": bool(lock and not terminal_active_after_reset(lock)),
   "stream_admin_logged_in": repository_admin_logged_in()
  }
+
+# Begin warming database + Kobo voter tallies as soon as each Render worker is
+# ready. This work no longer sits on the critical path of a dashboard request.
+refresh_registered_tallies_background()
 
 if __name__=="__main__": app.run(host="0.0.0.0",port=int(os.getenv("PORT","5000")))
