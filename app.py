@@ -1379,27 +1379,24 @@ def membership_registered_breakdown():
     count=to_int(item.get("registered_voters"))
     grouped[geo]=grouped.get(geo,0)+count
     database_records+=count
-   # Publish PostgreSQL immediately. The live Kobo asset may take longer to
-   # paginate, but dashboards must never show zero while that merge runs.
+   # Publish PostgreSQL immediately. The Kobo media CSV may take longer to
+   # download, but dashboards must never show zero while that merge runs.
    if grouped:
     database_breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"registered_voters":n} for g,n in grouped.items()]
     database_breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
     _REGISTERED_TOTAL_CACHE.update(signature=None,loaded_at=0.0,value=database_records,
      breakdown=database_breakdown,database_records=database_records,kobo_records=0,
-     overlap_records=0,kobo_only_records=0,errors=["live_kobo_membership_refreshing"])
+     overlap_records=0,kobo_only_records=0,errors=["kobo_membership_csv_refreshing"])
     invalidate_registered_dashboard_payloads()
   except Exception as exc:
    app.logger.warning("Master register unavailable for dashboard tally: %s",exc)
    source_errors.append("master_register_unavailable")
  try:
-  rows=_live_kobo_tally_rows()
+  rows=_load_membership_csv()
  except Exception as exc:
-  app.logger.warning("Live Kobo membership register unavailable for dashboard tally: %s",exc)
-  source_errors.append("live_kobo_membership_unavailable")
-  # The form-media CSV is an emergency display fallback only. It is not saved
-  # over the last complete live database + Kobo tally.
-  try:rows=_load_membership_csv()
-  except Exception:rows={}
+  app.logger.warning("Kobo membership CSV unavailable for dashboard tally: %s",exc)
+  source_errors.append("kobo_membership_csv_unavailable")
+  rows={}
  if master_register.configured() and database_records:
   try:database_ids=master_register.existing_active_national_ids(rows.keys())
   except Exception as exc:
@@ -1408,7 +1405,7 @@ def membership_registered_breakdown():
    rows={}
  elif MASTER_REGISTER_STRICT:
   rows={}
- signature=(bool(master_register.configured()),_KOBO_TALLY_CACHE.get("loaded_at"))
+ signature=(bool(master_register.configured()),_MEMBERSHIP_CSV_CACHE.get("loaded_at"))
  for national_id,row in rows.items():
   if national_id in database_ids:continue
   geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward"))
@@ -3386,7 +3383,7 @@ def dashboard_registered_metadata():
  if not _REGISTERED_TOTAL_CACHE.get("breakdown"):
   refresh_registered_tallies_background()
  return {
-  "registered_voters_source":"postgresql_master_register_plus_kobo_membership" if master_register.configured() else "kobo_membership_registration_csv",
+  "registered_voters_source":"postgresql_master_register_plus_kobo_membership_csv" if master_register.configured() else "kobo_membership_registration_csv",
   "registered_voter_breakdown":list(_REGISTERED_TOTAL_CACHE.get("breakdown") or []),
   "registered_voter_components":{
    "database_records":int(_REGISTERED_TOTAL_CACHE.get("database_records") or 0),
