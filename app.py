@@ -117,6 +117,8 @@ MEMBERSHIP_CSV_FILENAME = os.getenv("MEMBERSHIP_CSV_FILENAME", "membership_regis
 MEMBERSHIP_CSV_CACHE_SECONDS = int(os.getenv("MEMBERSHIP_CSV_CACHE_SECONDS", "300") or 300)
 _MEMBERSHIP_CSV_CACHE = {"loaded_at": 0.0, "rows": {}, "serial_rows": {}, "media": {}}
 _MEMBERSHIP_CSV_LOAD_LOCK = threading.Lock()
+_KOBO_TALLY_CACHE = {"loaded_at": 0.0, "rows": {}}
+_KOBO_TALLY_LOAD_LOCK = threading.Lock()
 
 MEMBERSHIP_SERIAL_FIELD=os.getenv("MEMBERSHIP_SERIAL_FIELD","basics/serial_no").strip()
 AGENTS_ASSET_UID = os.getenv("AGENTS_ASSET_UID", "a4VAzs8X6u5bq6eYWVP4o6").strip()
@@ -1367,12 +1369,15 @@ def membership_registered_breakdown():
  """
  source_errors=[]
  try:
-  rows=_load_membership_csv()
+  rows=_live_kobo_tally_rows()
  except Exception as exc:
-  app.logger.warning("Kobo membership register unavailable for dashboard tally: %s",exc)
-  source_errors.append("kobo_membership_unavailable")
-  rows={}
- signature=(bool(master_register.configured()),_MEMBERSHIP_CSV_CACHE.get("loaded_at"))
+  app.logger.warning("Live Kobo membership register unavailable for dashboard tally: %s",exc)
+  source_errors.append("live_kobo_membership_unavailable")
+  # The form-media CSV is an emergency display fallback only. It is not saved
+  # over the last complete live database + Kobo tally.
+  try:rows=_load_membership_csv()
+  except Exception:rows={}
+ signature=(bool(master_register.configured()),_KOBO_TALLY_CACHE.get("loaded_at"))
  if (_REGISTERED_TOTAL_CACHE.get("breakdown") and not _REGISTERED_TOTAL_CACHE.get("errors")
      and _REGISTERED_TOTAL_CACHE.get("signature")==signature
      and time.monotonic()-_REGISTERED_TOTAL_CACHE.get("loaded_at",0)<300):
@@ -5288,6 +5293,34 @@ def _all_kobo_membership_submissions():
   response=requests.get(url,headers=kobo_headers(),timeout=60); response.raise_for_status()
   payload=response.json(); rows.extend(payload.get("results",[])); url=payload.get("next")
  return rows
+
+def _live_kobo_tally_rows():
+ """Return the latest live Kobo membership submission per National ID."""
+ now=time.time()
+ if _KOBO_TALLY_CACHE["rows"] and now-_KOBO_TALLY_CACHE["loaded_at"]<MEMBERSHIP_CSV_CACHE_SECONDS:
+  return _KOBO_TALLY_CACHE["rows"]
+ with _KOBO_TALLY_LOAD_LOCK:
+  now=time.time()
+  if _KOBO_TALLY_CACHE["rows"] and now-_KOBO_TALLY_CACHE["loaded_at"]<MEMBERSHIP_CSV_CACHE_SECONDS:
+   return _KOBO_TALLY_CACHE["rows"]
+  rows={}
+  for submission in _all_kobo_membership_submissions():
+   member=_register_member_from_kobo(submission)
+   national_id=clean_national_id(member.get("member_id"))
+   if not national_id:continue
+   candidate={
+    "national_id_no":national_id,
+    "county":str(member.get("county") or "").strip(),
+    "constituency":str(member.get("constituency") or "").strip(),
+    "ward":str(member.get("ward") or "").strip(),
+    "_submission_time":str(member.get("submission_time") or ""),
+    "_id":to_int(submission.get("_id")),
+   }
+   previous=rows.get(national_id)
+   if not previous or (candidate["_submission_time"],candidate["_id"]) >= (previous.get("_submission_time",""),previous.get("_id",0)):
+    rows[national_id]=candidate
+  _KOBO_TALLY_CACHE.update(loaded_at=now,rows=rows)
+  return rows
 
 def _register_member_from_kobo(row):
  first=field(row,"members_particulars/first_name","members_particulars/first_name1","basics/first_name","first_name")
