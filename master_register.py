@@ -5,7 +5,13 @@ import psycopg
 from psycopg.rows import dict_row
 
 
-MASTER_REGISTER_DATABASE_URL = os.getenv("MASTER_REGISTER_DATABASE_URL", "").strip()
+# A dedicated master-register database remains preferred. Deployments that
+# imported master_voters into the voting service's existing PostgreSQL database
+# can use DATABASE_URL automatically instead of silently counting Kobo alone.
+MASTER_REGISTER_DATABASE_URL = (
+    os.getenv("MASTER_REGISTER_DATABASE_URL", "").strip()
+    or os.getenv("DATABASE_URL", "").strip()
+)
 _SCHEMA_READY = False
 
 

@@ -1282,7 +1282,9 @@ def agent_rows():
   return []
 
 
-_REGISTERED_TOTAL_CACHE={"signature":None,"loaded_at":0.0,"value":0,"breakdown":[]}
+_REGISTERED_TOTAL_CACHE={"signature":None,"loaded_at":0.0,"value":0,"breakdown":[],
+                         "database_records":0,"kobo_records":0,"overlap_records":0,
+                         "kobo_only_records":0}
 def membership_registered_breakdown():
  """Count the deduplicated database + Kobo electorate by geography.
 
@@ -1298,11 +1300,14 @@ def membership_registered_breakdown():
   return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
  grouped={}
  database_ids=set()
+ database_records=0
  if master_register.configured():
   master_rows=[dict(row) for row in master_register.registered_breakdown()]
   for item in master_rows:
    geo=tuple(str(item.get(k) or "").strip() for k in ("county","constituency","ward"))
-   grouped[geo]=grouped.get(geo,0)+to_int(item.get("registered_voters"))
+   count=to_int(item.get("registered_voters"))
+   grouped[geo]=grouped.get(geo,0)+count
+   database_records+=count
   database_ids=master_register.existing_active_national_ids(rows.keys())
  elif MASTER_REGISTER_STRICT:
   rows={}
@@ -1314,7 +1319,9 @@ def membership_registered_breakdown():
  breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
  _REGISTERED_TOTAL_CACHE.update(signature=signature,loaded_at=time.monotonic(),
                                 value=sum(item["registered_voters"] for item in breakdown),
-                                breakdown=breakdown)
+                                breakdown=breakdown,database_records=database_records,
+                                kobo_records=len(rows),overlap_records=len(database_ids),
+                                kobo_only_records=max(0,len(rows)-len(database_ids)))
  return list(breakdown)
 
 def authoritative_registered_total():
@@ -3245,6 +3252,13 @@ def dashboard_registered_metadata():
  return {
   "registered_voters_source":"postgresql_master_register_plus_kobo_membership" if master_register.configured() else "kobo_membership_registration_csv",
   "registered_voter_breakdown":membership_registered_breakdown(),
+  "registered_voter_components":{
+   "database_records":int(_REGISTERED_TOTAL_CACHE.get("database_records") or 0),
+   "kobo_records":int(_REGISTERED_TOTAL_CACHE.get("kobo_records") or 0),
+   "overlap_records":int(_REGISTERED_TOTAL_CACHE.get("overlap_records") or 0),
+   "kobo_only_records":int(_REGISTERED_TOTAL_CACHE.get("kobo_only_records") or 0),
+   "combined_unique_records":int(_REGISTERED_TOTAL_CACHE.get("value") or 0),
+  },
   "expected_streams_source":"voting_system_county_main_csv",
   "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
  }
