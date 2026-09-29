@@ -273,6 +273,31 @@ def registered_breakdown():
             return list(cur.fetchall())
 
 
+def existing_active_national_ids(national_ids, batch_size=5000):
+    """Return IDs already represented by active master-register voters.
+
+    Dashboard totals use this to add only Kobo-only members to the database
+    electorate.  Checking the comparatively small Kobo ID set in batches is
+    considerably faster than loading the complete master register into each
+    dashboard worker.
+    """
+    ids = sorted({str(value or "").strip() for value in national_ids
+                  if str(value or "").strip()})
+    if not ids:
+        return set()
+    ensure_schema()
+    found = set()
+    with connect(statement_timeout_ms=120000) as conn:
+        with conn.cursor() as cur:
+            for start in range(0, len(ids), max(1, int(batch_size))):
+                batch = ids[start:start + max(1, int(batch_size))]
+                cur.execute("""SELECT national_id FROM master_voters
+                               WHERE active AND national_id = ANY(%s)""", (batch,))
+                found.update(str(row["national_id"] or "").strip()
+                             for row in cur.fetchall())
+    return found
+
+
 def _register_where(filters=None):
     filters = filters or {}
     clauses = ["active"]

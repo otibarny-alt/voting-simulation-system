@@ -1282,35 +1282,43 @@ def agent_rows():
   return []
 
 
-_REGISTERED_TOTAL_CACHE={"signature":None,"value":0,"breakdown":[]}
+_REGISTERED_TOTAL_CACHE={"signature":None,"loaded_at":0.0,"value":0,"breakdown":[]}
 def membership_registered_breakdown():
- """Count unique approved CSV members by compact dashboard geography.
+ """Count the deduplicated database + Kobo electorate by geography.
 
- Ward is the dashboards' finest electorate filter. Excluding polling stations
- prevents national responses from becoming excessively large; stream closing
- reports still count the matching polling station directly from the CSV.
+ The active PostgreSQL master register is authoritative for duplicate National
+ IDs.  A Kobo membership row is added only when its National ID is absent from
+ the database. Ward is the dashboards' finest electorate filter; excluding
+ polling stations keeps national dashboard responses compact.
  """
- if master_register.configured():
-  master_rows=[dict(row) for row in master_register.registered_breakdown()]
-  if master_rows or MASTER_REGISTER_STRICT:return master_rows
  rows=_load_membership_csv()
- signature=_MEMBERSHIP_CSV_CACHE.get("loaded_at")
- if _REGISTERED_TOTAL_CACHE.get("signature")==signature:
+ signature=(bool(master_register.configured()),_MEMBERSHIP_CSV_CACHE.get("loaded_at"))
+ if (_REGISTERED_TOTAL_CACHE.get("signature")==signature
+     and time.monotonic()-_REGISTERED_TOTAL_CACHE.get("loaded_at",0)<300):
   return list(_REGISTERED_TOTAL_CACHE.get("breakdown") or [])
  grouped={}
- for row in rows.values():
+ database_ids=set()
+ if master_register.configured():
+  master_rows=[dict(row) for row in master_register.registered_breakdown()]
+  for item in master_rows:
+   geo=tuple(str(item.get(k) or "").strip() for k in ("county","constituency","ward"))
+   grouped[geo]=grouped.get(geo,0)+to_int(item.get("registered_voters"))
+  database_ids=master_register.existing_active_national_ids(rows.keys())
+ elif MASTER_REGISTER_STRICT:
+  rows={}
+ for national_id,row in rows.items():
+  if national_id in database_ids:continue
   geo=tuple(str(row.get(k) or "").strip() for k in ("county","constituency","ward"))
   grouped[geo]=grouped.get(geo,0)+1
  breakdown=[{"county":g[0],"constituency":g[1],"ward":g[2],"registered_voters":n} for g,n in grouped.items()]
  breakdown.sort(key=lambda x:tuple(norm_key(x[k]) for k in ("county","constituency","ward")))
- _REGISTERED_TOTAL_CACHE.update(signature=signature,value=len(rows),breakdown=breakdown)
+ _REGISTERED_TOTAL_CACHE.update(signature=signature,loaded_at=time.monotonic(),
+                                value=sum(item["registered_voters"] for item in breakdown),
+                                breakdown=breakdown)
  return list(breakdown)
 
 def authoritative_registered_total():
- """Return the authoritative active master-register electorate."""
- if master_register.configured():
-  master_total=master_register.registered_total()
-  if master_total or MASTER_REGISTER_STRICT:return master_total
+ """Return unique active database voters plus Kobo-only members."""
  membership_registered_breakdown()
  return int(_REGISTERED_TOTAL_CACHE.get("value") or 0)
 
@@ -3235,7 +3243,7 @@ def dashboard_api_authorized():
 
 def dashboard_registered_metadata():
  return {
-  "registered_voters_source":"postgresql_master_register" if master_register.configured() else "kobo_membership_registration_csv",
+  "registered_voters_source":"postgresql_master_register_plus_kobo_membership" if master_register.configured() else "kobo_membership_registration_csv",
   "registered_voter_breakdown":membership_registered_breakdown(),
   "expected_streams_source":"voting_system_county_main_csv",
   "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
