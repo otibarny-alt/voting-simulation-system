@@ -6362,6 +6362,42 @@ def admin_voters_register():
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
 
+
+@app.route("/admin/data-files/id-serial-lookup",methods=["GET","POST"])
+def admin_id_serial_lookup():
+ """Resolve one National ID to its serial number without exposing member data."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.path))
+ token=session.get("data_files_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32)
+  session["data_files_csrf"]=token
+ serial_no=None
+ error=None
+ national_id=""
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   error="Security token expired. Reload the page and try again."
+  else:
+   national_id=clean_national_id(request.form.get("national_id"))
+   if not re.fullmatch(r"\d{7,8}",national_id):
+    error="Enter a valid 7- or 8-digit National ID number."
+   else:
+    try:
+     row=lookup_member(national_id)
+     if row:
+      serial_no=str(member_view(row).get("serial_no") or "").strip()
+     if not row:
+      error="No voter record was found for that National ID."
+     elif not serial_no:
+      error="This voter record does not have a serial number."
+    except Exception as exc:
+     app.logger.exception("Admin ID-to-serial lookup failed")
+     error="The voters register is temporarily unavailable: "+str(exc)
+ return render_template("admin_id_serial_lookup.html",csrf_token=token,
+                        national_id=national_id,serial_no=serial_no,error=error)
+
 @app.get("/admin/terminal-assignments")
 @app.get("/admin/data-files/terminal-assignments")
 def admin_terminal_assignments():
