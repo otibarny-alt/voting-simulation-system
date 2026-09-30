@@ -140,10 +140,36 @@ VOTER_VERIFICATION_BASE_URL = os.getenv("VOTER_VERIFICATION_BASE_URL", "https://
 AGENT_SSO_SECRET = os.getenv("AGENT_SSO_SECRET", "").strip()
 AGENT_SSO_MAX_AGE_SECONDS = int(os.getenv("AGENT_SSO_MAX_AGE_SECONDS", "300") or 300)
 AGENT_SESSION_HOURS = int(os.getenv("AGENT_SESSION_HOURS", "12") or 12)
+VOTING_TERMINAL_ACCESS_COOKIE="odm_voting_terminal_access"
+
+def voting_terminal_access_serializer():
+ return URLSafeTimedSerializer(app.secret_key,salt="voting-terminal-access-backup-v1")
+
+def set_voting_terminal_access_cookie(response,data):
+ response.set_cookie(
+  VOTING_TERMINAL_ACCESS_COOKIE,voting_terminal_access_serializer().dumps(dict(data or {})),
+  max_age=AGENT_SESSION_HOURS*3600,httponly=True,secure=request.is_secure,samesite="Lax",path="/"
+ )
+ return response
+
+def clear_voting_terminal_access_cookie(response):
+ response.delete_cookie(VOTING_TERMINAL_ACCESS_COOKIE,path="/",samesite="Lax",secure=request.is_secure)
+ return response
 
 
 def current_agent_access():
  data=session.get("voting_agent")
+ if not isinstance(data,dict) or not data.get("agent_id") or not data.get("poll_station") or not data.get("stream"):
+  raw=request.cookies.get(VOTING_TERMINAL_ACCESS_COOKIE,"")
+  if raw:
+   try:
+    restored=voting_terminal_access_serializer().loads(raw,max_age=AGENT_SESSION_HOURS*3600)
+    if isinstance(restored,dict) and restored.get("agent_id") and restored.get("poll_station") and restored.get("stream"):
+     data=restored
+     session["voting_agent"]=dict(restored)
+     session.permanent=True
+   except BadSignature:
+    data=None
  if not isinstance(data,dict) or not data.get("agent_id") or not data.get("poll_station") or not data.get("stream"):
   return None
  if time.time()-float(data.get("authenticated_at") or 0) > AGENT_SESSION_HOURS*3600:
@@ -201,15 +227,15 @@ def agent_access_required(fn):
   if not current_agent_access():
    if request.method=="GET":
     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
-   return Response("Authenticated Voting Terminal access is required for this voting-stream action.",status=403)
+   return Response("Voting Terminal authentication was lost. Return to the Voting Terminal login, sign in again, then retry this voter.",status=403)
   if time.time()-float(session.get("terminal_lease_checked_at") or 0)>=60:
    lease_ok=pulse_terminal_lease("active")
    if lease_ok is False:
     session.pop("voting_agent",None)
     session.pop("terminal_lease_checked_at",None)
     if request.method=="GET":
-     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
-    return Response("This Voting Terminal login has been released or replaced.",status=403)
+     return clear_voting_terminal_access_cookie(redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting"))
+    return clear_voting_terminal_access_cookie(Response("This Voting Terminal login has been released or replaced.",status=403))
    if lease_ok is True:
     session["terminal_lease_checked_at"]=time.time()
   return fn(*args,**kwargs)
@@ -286,7 +312,8 @@ def agent_access():
   session.pop("voting_agent",None)
   return Response("The Voting Terminal reservation could not be confirmed. Return to the Voting Terminal login and try again.",status=409)
  session["terminal_lease_checked_at"]=time.time()
- return redirect(url_for("stream_control"))
+ response=redirect(url_for("stream_control"))
+ return set_voting_terminal_access_cookie(response,session["voting_agent"])
 
 
 @app.get("/terminal-login")
@@ -299,7 +326,7 @@ def terminal_login():
 def terminal_logout():
  pulse_terminal_lease("release")
  session.clear()
- return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
+ return clear_voting_terminal_access_cookie(redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting"))
 
 
 @app.post("/terminal-heartbeat")
@@ -313,7 +340,9 @@ def terminal_heartbeat():
  if lease_ok is False:
   session.pop("voting_agent",None)
   session.pop("terminal_lease_checked_at",None)
-  return jsonify({"ok":False}),409
+  response=jsonify({"ok":False})
+  clear_voting_terminal_access_cookie(response)
+  return response,409
  # A temporary network failure must not interrupt voting already in progress.
  return jsonify({"ok":False,"temporary":True}),503
 
@@ -965,7 +994,7 @@ def entrance_approval_status(national_id,poll_station):
    """,(ENTRANCE_APPROVAL_MINUTES,ELECTION_ID,national_id))
    row=cur.fetchone()
  if not row:
-  return False,"Entrance approval not found. Return to the entrance verification official for positive identification.",None
+  return False,"This voter has not been verified at the entrance. Please complete entrance verification before proceeding.",None
  if row.get("voted_at"):
   voted_station=row.get("voted_at_station") or row.get("consumed_station") or row.get("polling_station")
   return False,already_voted_message(national_id,voted_station,row.get("consumed_stream"),include_prefix=False),None
