@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer, BadSignature
-from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g, stream_with_context
+from flask import Flask, render_template, request, redirect, url_for, session, Response, jsonify, send_file, g, stream_with_context, make_response
 from markupsafe import escape
 try:
  from whitenoise import WhiteNoise
@@ -215,7 +215,24 @@ def pulse_terminal_lease(action="active"):
    json={"terminal_id":terminal_id,"session_token":terminal_token,"action":action},
    headers={"X-Terminal-Bridge-Secret":AGENT_SSO_SECRET},timeout=(3,5)
   )
-  return response.status_code==200
+  if response.status_code==200:
+   session.pop("terminal_pause_reason",None)
+   session.pop("terminal_pause_message",None)
+   return True
+  try:
+   error_message=str((response.json() or {}).get("error") or "").strip()
+  except (ValueError,TypeError):
+   error_message=""
+  if "Verification Terminal for this station is not logged in" in error_message:
+   session["terminal_pause_reason"]="entrance_terminal_offline"
+   session["terminal_pause_message"]=(
+    "The Entrance Verification Terminal for this station is logged out. "
+    "Please log it back in to allow voting to continue."
+   )
+  else:
+   session.pop("terminal_pause_reason",None)
+   session.pop("terminal_pause_message",None)
+  return False
  except requests.RequestException:
   app.logger.warning("Voting terminal lease pulse failed",exc_info=True)
   return None
@@ -227,15 +244,22 @@ def agent_access_required(fn):
   if not current_agent_access():
    if request.method=="GET":
     return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
-   return Response("Voting Terminal authentication was lost. Return to the Voting Terminal login, sign in again, then retry this voter.",status=403)
-  if time.time()-float(session.get("terminal_lease_checked_at") or 0)>=60:
+   return render_template("terminal_access_lost.html",
+                          voter_verification_base_url=VOTER_VERIFICATION_BASE_URL),403
+  if (session.get("terminal_pause_reason")=="entrance_terminal_offline" or
+      time.time()-float(session.get("terminal_lease_checked_at") or 0)>=60):
    lease_ok=pulse_terminal_lease("active")
    if lease_ok is False:
+    if session.get("terminal_pause_reason")=="entrance_terminal_offline":
+     return render_template("terminal_paused.html",
+                            message=session.get("terminal_pause_message")),409
     session.pop("voting_agent",None)
     session.pop("terminal_lease_checked_at",None)
     if request.method=="GET":
      return clear_voting_terminal_access_cookie(redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting"))
-    return clear_voting_terminal_access_cookie(Response("This Voting Terminal login has been released or replaced.",status=403))
+    response=make_response(render_template("terminal_access_lost.html",replaced=True,
+                                           voter_verification_base_url=VOTER_VERIFICATION_BASE_URL),403)
+    return clear_voting_terminal_access_cookie(response)
    if lease_ok is True:
     session["terminal_lease_checked_at"]=time.time()
   return fn(*args,**kwargs)
@@ -338,6 +362,10 @@ def terminal_heartbeat():
   session["terminal_lease_checked_at"]=time.time()
   return jsonify({"ok":True})
  if lease_ok is False:
+  if session.get("terminal_pause_reason")=="entrance_terminal_offline":
+   session.pop("terminal_lease_checked_at",None)
+   return jsonify({"ok":False,"paused":True,"reason":"entrance_terminal_offline",
+                   "message":session.get("terminal_pause_message")}),409
   session.pop("voting_agent",None)
   session.pop("terminal_lease_checked_at",None)
   response=jsonify({"ok":False})

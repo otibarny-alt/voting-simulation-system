@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Voting Temporarily Paused</title>
+ <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>
+  body{margin:0;background:#f4f6f8;font-family:Arial,sans-serif;color:#18202a}.pause-wrap{max-width:720px;margin:34px auto;padding:0 18px}.pause-card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:28px;box-shadow:0 7px 28px #0002;text-align:center}.pause-logo{width:100%;max-height:180px;object-fit:contain;margin-bottom:14px}.pause-badge{display:inline-block;background:#fff0c7;color:#6b4b00;border:1px solid #d6aa32;border-radius:999px;padding:7px 13px;font-weight:850}.pause-card h1{font-size:30px;margin:18px 0 10px}.pause-message{font-size:20px;line-height:1.45;background:#fff6df;border:2px solid #ef7d00;border-radius:10px;padding:18px;margin:18px 0}.pause-steps{text-align:left;max-width:520px;margin:18px auto;line-height:1.6}.retry-btn{display:inline-block;border:3px solid #ef7d00;border-radius:9px;background:#111;color:#fff;text-decoration:none;padding:12px 22px;font-size:17px;font-weight:850;cursor:pointer}.retry-status{min-height:22px;margin-top:13px;color:#555;font-weight:700}.simulation-note{margin-top:20px;color:#666;font-size:14px}
+ </style>
+</head>
+<body>
+<main class="pause-wrap">
+ <section class="pause-card" role="alert">
+  <img class="pause-logo" src="{{ url_for('static',filename='odm_screen_header.png') }}" alt="Orange Democratic Movement">
+  <span class="pause-badge">Voting temporarily paused</span>
+  <h1>Entrance Terminal Logged Out</h1>
+  <div class="pause-message">{{ message or 'The Entrance Verification Terminal for this station is logged out. Please log it back in to allow voting to continue.' }}</div>
+  <ol class="pause-steps">
+   <li>Log the assigned Entrance Verification Terminal back in.</li>
+   <li>Keep the Entrance Verification page open.</li>
+   <li>Return here and select <b>Check Again</b>. Voting will then continue.</li>
+  </ol>
+  <a class="retry-btn" id="retryButton" href="{{ url_for('home') }}">Check Again</a>
+  <div class="retry-status" id="retryStatus">Waiting for the Entrance Verification Terminal…</div>
+  <div class="simulation-note">TRAINING / SIMULATION ONLY — no vote has been lost.</div>
+ </section>
+</main>
+<script>
+(function(){
+ const status=document.getElementById('retryStatus');
+ async function checkEntrance(){
+  try{
+   const response=await fetch('{{ url_for("terminal_heartbeat") }}',{method:'POST',credentials:'same-origin',cache:'no-store'});
+   const data=await response.json().catch(()=>({}));
+   if(response.ok&&data.ok){status.textContent='Entrance Terminal detected. Resuming voting…';window.location.replace('{{ url_for("home") }}');return;}
+   status.textContent=data.paused?'Waiting for the Entrance Verification Terminal…':'Unable to check yet. Select Check Again.';
+  }catch(error){status.textContent='Connection check unavailable. Select Check Again.';}
+ }
+ window.setInterval(checkEntrance,8000);
+})();
+</script>
+</body>
+</html>
