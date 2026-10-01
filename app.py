@@ -5907,27 +5907,9 @@ def admin_reset_test_data():
  if request.form.get("confirmation","").strip()!="CLEAR TEST DATA":
   session["data_files_error"]="Reset cancelled. Type CLEAR TEST DATA exactly to confirm."
   return redirect(url_for("admin_data_files")+"#clean-test-reset")
- if not SYSTEM_RESET_TOKEN:
-  session["data_files_error"]="SYSTEM_RESET_TOKEN is not configured. No test data was removed."
-  return redirect(url_for("admin_data_files")+"#clean-test-reset")
- if not CANDIDATE_PORTAL_BASE_URL:
-  session["data_files_error"]="CANDIDATE_PORTAL_BASE_URL is not configured. No test data was removed."
-  return redirect(url_for("admin_data_files")+"#clean-test-reset")
-
- # Clear candidates first. If the separate service refuses or cannot complete
- # its reset, leave all voting data untouched so the administrator can retry.
- try:
-  candidate_response=requests.post(
-   CANDIDATE_PORTAL_BASE_URL+"/api/admin/reset-test-data",
-   headers={"Authorization":"Bearer "+SYSTEM_RESET_TOKEN},timeout=30
-  )
-  if candidate_response.status_code!=200:
-   detail=candidate_response.text.strip()[:300]
-   raise RuntimeError(f"candidate service returned HTTP {candidate_response.status_code}: {detail}")
- except Exception as exc:
-  app.logger.exception("Candidate clean-test reset failed")
-  session["data_files_error"]="Nothing was cleared because the Candidate Registration service could not be reset: "+str(exc)
-  return redirect(url_for("admin_data_files")+"#clean-test-reset")
+ # Candidate applications, approvals and ballot catalogues are deliberately
+ # preserved. A clean voting test should reset participation and tallies, not
+ # force administrators to register every test candidate again.
 
  try:
   if not DATABASE_URL:
@@ -5960,17 +5942,18 @@ def admin_reset_test_data():
   finally:
    local.close()
  except Exception as exc:
-  app.logger.exception("Voting clean-test reset failed after candidate reset")
-  session["data_files_error"]="Candidates were cleared, but voting data cleanup failed. Retry this reset before testing: "+str(exc)
+  app.logger.exception("Voting clean-test reset failed")
+  session["data_files_error"]="No voting reset was completed. Correct the error and retry: "+str(exc)
   return redirect(url_for("admin_data_files")+"#clean-test-reset")
 
  for key in list(session.keys()):
   if key not in {"repository_admin","data_files_csrf"}:
    session.pop(key,None)
  session["data_files_message"]=(
-  "Clean testing reset completed. Candidates, votes, voter voting status, "
+  "Clean testing reset completed. All candidates were preserved. Votes, voter voting status, "
   "stream locks, certified tallies, and opening/closing reports were cleared. "
-  "Membership, officials, polling locations, and configuration were preserved."
+  "The voters register now shows every member as Not Voted. Membership, officials, "
+  "polling locations, and configuration were preserved."
  )
  return redirect(url_for("admin_data_files")+"#clean-test-reset")
 

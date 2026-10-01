@@ -19,9 +19,9 @@
  <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
  <section class="data-panel reset-danger" id="clean-test-reset">
   <h2>Clean Testing Reset</h2>
-  <p><b>This permanently deletes all test candidates, votes, voter voting status, stream locks, certified tallies, and opening/closing reports.</b></p>
-  <p>It preserves the membership register, election officials, polling locations, master-register batches, uploaded CSV files, and configuration.</p>
-  <form method="post" action="{{ url_for('admin_reset_test_data') }}" onsubmit="return confirm('FINAL WARNING: Permanently clear all candidates, votes, locks, tallies and reports for clean testing?');">
+  <p><b>This permanently deletes votes, voter voting status, stream locks, certified tallies, and opening/closing reports.</b></p>
+  <p><b>All test candidates are preserved.</b> The voters register is reset so every voter shows <b>Not Voted</b>. Membership records, election officials, polling locations, master-register batches, uploaded CSV files, and configuration are also preserved.</p>
+  <form method="post" action="{{ url_for('admin_reset_test_data') }}" onsubmit="return confirm('FINAL WARNING: Clear votes, voting status, stream locks, tallies and reports? All candidates will be preserved.');">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
    <label for="reset_confirmation"><b>Type CLEAR TEST DATA to confirm</b></label>
    <input id="reset_confirmation" name="confirmation" autocomplete="off" required>
