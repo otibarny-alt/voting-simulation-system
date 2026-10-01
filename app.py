@@ -6454,6 +6454,32 @@ def admin_terminal_assignments():
   options={"counties":[],"constituencies":[],"wards":[],"stations":[]}
   return render_template("admin_terminal_assignments.html",assignments=[],filters=filters,options=options,total=0,error="Terminal assignments could not be loaded: "+str(exc)),502
 
+
+@app.get("/terminal-credentials-lookup")
+def terminal_credentials_lookup():
+ """Standalone station-level credential lookup, isolated from administration."""
+ filters=_register_filters()
+ required=("county","constituency","ward","polling_station")
+ complete=all(filters.get(key) for key in required)
+ assignments=[]
+ error=None
+ try:
+  options=_register_hierarchy_options(filters)
+  if complete:
+   assignments=filtered_terminal_assignments({key:filters[key] for key in required})
+ except Exception as exc:
+  app.logger.exception("Standalone terminal credential lookup failed")
+  options={"counties":[],"constituencies":[],"wards":[],"stations":[]}
+  error="Terminal assignments could not be loaded: "+str(exc)
+ response=make_response(render_template(
+  "terminal_credentials_lookup.html",assignments=assignments,filters=filters,
+  options=options,total=len(assignments),complete=complete,error=error
+ ))
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
+ response.headers["Pragma"]="no-cache"
+ response.headers["X-Robots-Tag"]="noindex, nofollow"
+ return response
+
 @app.get("/admin/voters-register.csv")
 def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
