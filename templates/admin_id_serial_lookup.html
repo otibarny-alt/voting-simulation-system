@@ -5,23 +5,27 @@
  <title>ID to Serial Number Lookup</title>
  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
  <style>
-  body{background:#f4f6f8}.lookup-wrap{max-width:620px;margin:36px auto;padding:0 18px}.lookup-card{background:#fff;border:1px solid #ddd;border-radius:14px;padding:26px;box-shadow:0 5px 24px #0001}.lookup-card h1{margin-top:0}.lookup-card label{display:block;font-weight:800;margin-bottom:7px}.lookup-card input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #aaa;border-radius:8px;font-size:18px}.lookup-card button{width:100%;margin-top:12px;padding:13px;border:3px solid #ef7d00;border-radius:8px;background:#111;color:#fff;font-size:17px;font-weight:850;cursor:pointer}.serial-result{margin-top:20px;padding:22px;border:2px solid #218838;border-radius:10px;background:#eaf7ed;text-align:center}.serial-result small{display:block;color:#345;margin-bottom:7px}.serial-result strong{font-size:30px;letter-spacing:1px}.lookup-error{margin-top:18px;padding:13px;border:1px solid #c75b5b;border-radius:8px;background:#fdecec}.back-link{display:inline-block;margin-bottom:14px;font-weight:800}
+  body{background:#f4f6f8}.lookup-wrap{max-width:620px;margin:36px auto;padding:0 18px}.lookup-card{background:#fff;border:1px solid #ddd;border-radius:14px;padding:26px;box-shadow:0 5px 24px #0001}.lookup-card h1{margin-top:0}.lookup-card label{display:block;font-weight:800;margin-bottom:7px}.lookup-card input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #aaa;border-radius:8px;font-size:18px}.lookup-card button{width:100%;margin-top:12px;padding:13px;border:3px solid #ef7d00;border-radius:8px;background:#111;color:#fff;font-size:17px;font-weight:850;cursor:pointer}.serial-result{margin-top:20px;padding:22px;border:2px solid #218838;border-radius:10px;background:#eaf7ed}.result-row{padding:11px 0;border-bottom:1px solid #b8d8bf}.result-row:last-child{border-bottom:0}.result-row small{display:block;color:#345;margin-bottom:5px;font-weight:700}.result-row strong{font-size:21px}.result-row:first-child strong{font-size:30px;letter-spacing:1px}.lookup-error{margin-top:18px;padding:13px;border:1px solid #c75b5b;border-radius:8px;background:#fdecec}.privacy-note{margin-top:16px;color:#666;font-size:13px}
  </style>
 </head>
 <body>
 <main class="lookup-wrap">
- <a class="back-link" href="{{ url_for('admin_data_files') }}">← Back to Admin Data Files</a>
  <section class="lookup-card">
   <h1>ID to Serial Number Lookup</h1>
-  <p>Enter a member's National ID. The lookup displays only the related membership serial number.</p>
+  <p>Enter a member's National ID to retrieve the related voter details.</p>
   <form method="post" autocomplete="off">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
    <label for="national_id">National ID</label>
    <input id="national_id" name="national_id" value="{{ national_id }}" inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" autocomplete="off" required autofocus>
    <button type="submit">Find Serial Number</button>
   </form>
-  {% if serial_no %}<div class="serial-result"><small>Serial Number</small><strong>{{ serial_no }}</strong></div>{% endif %}
+  {% if serial_no %}<div class="serial-result">
+   <div class="result-row"><small>Serial Number</small><strong>{{ serial_no }}</strong></div>
+   <div class="result-row"><small>Voter's Name</small><strong>{{ full_name or 'Not recorded' }}</strong></div>
+   <div class="result-row"><small>Polling Station</small><strong>{{ (polling_station or 'Not recorded')|replace('_',' ')|title }}</strong></div>
+  </div>{% endif %}
   {% if error %}<div class="lookup-error">{{ error }}</div>{% endif %}
+  <div class="privacy-note">This standalone page does not provide access to system administration.</div>
  </section>
 </main>
 </body>

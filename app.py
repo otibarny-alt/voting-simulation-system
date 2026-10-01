@@ -6391,16 +6391,22 @@ def admin_voters_register():
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
 
 
-@app.route("/admin/data-files/id-serial-lookup",methods=["GET","POST"])
-def admin_id_serial_lookup():
- """Resolve one National ID to its serial number without exposing member data."""
- if not repository_admin_logged_in():
-  return redirect(url_for("repository_admin_login",next=request.path))
- token=session.get("data_files_csrf")
+@app.get("/admin/data-files/id-serial-lookup")
+def legacy_admin_id_serial_lookup():
+ """Keep old bookmarks working while separating lookup from administration."""
+ return redirect(url_for("id_serial_lookup"),code=302)
+
+
+@app.route("/id-serial-lookup",methods=["GET","POST"])
+def id_serial_lookup():
+ """Standalone National-ID lookup with no access path into administration."""
+ token=session.get("serial_lookup_csrf")
  if not token:
   token=secrets.token_urlsafe(32)
-  session["data_files_csrf"]=token
+  session["serial_lookup_csrf"]=token
  serial_no=None
+ full_name=None
+ polling_station=None
  error=None
  national_id=""
  if request.method=="POST":
@@ -6415,16 +6421,24 @@ def admin_id_serial_lookup():
     try:
      row=lookup_member(national_id)
      if row:
-      serial_no=str(member_view(row).get("serial_no") or "").strip()
+      member=member_view(row)
+      serial_no=str(member.get("serial_no") or "").strip()
+      full_name=str(member.get("full_name") or "").strip()
+      polling_station=str(member.get("polling_station_label") or member.get("polling_station_key") or "").strip()
      if not row:
       error="No voter record was found for that National ID."
      elif not serial_no:
       error="This voter record does not have a serial number."
     except Exception as exc:
-     app.logger.exception("Admin ID-to-serial lookup failed")
+     app.logger.exception("Standalone ID-to-serial lookup failed")
      error="The voters register is temporarily unavailable: "+str(exc)
- return render_template("admin_id_serial_lookup.html",csrf_token=token,
-                        national_id=national_id,serial_no=serial_no,error=error)
+ response=make_response(render_template("admin_id_serial_lookup.html",csrf_token=token,
+                        national_id=national_id,serial_no=serial_no,full_name=full_name,
+                        polling_station=polling_station,error=error))
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
+ response.headers["Pragma"]="no-cache"
+ response.headers["X-Robots-Tag"]="noindex, nofollow"
+ return response
 
 @app.get("/admin/terminal-assignments")
 @app.get("/admin/data-files/terminal-assignments")
