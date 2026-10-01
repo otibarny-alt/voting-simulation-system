@@ -5760,11 +5760,11 @@ def _register_pdf(members,filters):
  for index,(area,station_members) in enumerate(groups):
   county,constituency,ward,polling_station=area
   story.extend([Paragraph("ODM VOTERS REGISTER",title_style),Paragraph(f"Polling Station: {escape(polling_station or 'Not specified')}",station_style),Paragraph(f"County: {escape(county or 'Not specified')} &nbsp;&nbsp; Constituency: {escape(constituency or 'Not specified')} &nbsp;&nbsp; Ward: {escape(ward or 'Not specified')} &nbsp;&nbsp; Registered members: {len(station_members):,}",small),Spacer(1,4*mm)])
-  data=[[Paragraph(value,header) for value in ("No.","Member ID","Serial No.","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Checked")]]
+  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Checked")]]
   for number,member in enumerate(station_members,1):
-   values=(str(number),member["member_id"],member.get("serial_no",""),member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],"")
+   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],"")
    data.append([Paragraph(escape(str(value or "")),small) for value in values])
-  table=Table(data,colWidths=[9*mm,20*mm,22*mm,38*mm,28*mm,22*mm,29*mm,26*mm,44*mm,14*mm],repeatRows=1,hAlign="LEFT")
+  table=Table(data,colWidths=[9*mm,20*mm,45*mm,30*mm,25*mm,33*mm,30*mm,47*mm,15*mm],repeatRows=1,hAlign="LEFT")
   table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#9a9a9a")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")])]))
   story.append(table)
   if index<len(groups)-1: story.append(PageBreak())
@@ -6459,7 +6459,7 @@ def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  columns=["member_id","serial_no","full_name","odm_registration_no","county","constituency","ward","polling_station"]
+  columns=["member_id","full_name","odm_registration_no","county","constituency","ward","polling_station"]
   members,_=combined_voters_register(filters); output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
   for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
