@@ -5548,6 +5548,52 @@ def _register_station_groups(members):
   groups[-1][1].append(member)
  return groups
 
+
+def voter_participation_status(national_ids):
+ """Bulk-read participation status without exposing ballot selections."""
+ ids=[];seen=set()
+ for value in national_ids:
+  national_id=clean_national_id(value)
+  if national_id and national_id not in seen:
+   seen.add(national_id);ids.append(national_id)
+ if not ids:return {}
+ statuses={}
+ try:
+  init_voter_access_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT national_id,voted_at,voted_at_station FROM voter_status
+                   WHERE election_id=%s AND national_id=ANY(%s) AND voted_at IS NOT NULL""",
+                (ELECTION_ID,ids))
+    for row in cur.fetchall():
+     national_id=clean_national_id(row.get("national_id"))
+     statuses[national_id]={"status":"Voted","voted_at":row.get("voted_at"),
+                            "voted_at_station":str(row.get("voted_at_station") or "")}
+  return statuses
+ except Exception:
+  app.logger.warning("Central voter status lookup failed; using local vote fallback",exc_info=True)
+  c=con()
+  try:
+   marks=",".join("?" for _ in ids)
+   rows=c.execute(f"""SELECT voter_session,MIN(poll_station) AS poll_station
+                       FROM demo_votes WHERE voter_session IN ({marks})
+                       GROUP BY voter_session""",ids).fetchall()
+   for row in rows:
+    national_id=clean_national_id(row["voter_session"])
+    statuses[national_id]={"status":"Voted","voted_at":None,
+                           "voted_at_station":str(row["poll_station"] or "")}
+   return statuses
+  finally:c.close()
+
+
+def attach_voting_status(members):
+ statuses=voter_participation_status(member.get("member_id") for member in members)
+ for member in members:
+  detail=statuses.get(clean_national_id(member.get("member_id")))
+  member["voting_status"]="Voted" if detail else "Not Voted"
+  member["voted_at_station"]=(detail or {}).get("voted_at_station","")
+ return members
+
 def terminal_assignment_rows():
  """Resolve county_main terminal credentials to polling-station geography."""
  global _TERMINAL_ASSIGNMENTS_CACHE
@@ -5760,11 +5806,11 @@ def _register_pdf(members,filters):
  for index,(area,station_members) in enumerate(groups):
   county,constituency,ward,polling_station=area
   story.extend([Paragraph("ODM VOTERS REGISTER",title_style),Paragraph(f"Polling Station: {escape(polling_station or 'Not specified')}",station_style),Paragraph(f"County: {escape(county or 'Not specified')} &nbsp;&nbsp; Constituency: {escape(constituency or 'Not specified')} &nbsp;&nbsp; Ward: {escape(ward or 'Not specified')} &nbsp;&nbsp; Registered members: {len(station_members):,}",small),Spacer(1,4*mm)])
-  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Checked")]]
+  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Voting status","Checked")]]
   for number,member in enumerate(station_members,1):
-   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],"")
+   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],member.get("voting_status","Not Voted"),"")
    data.append([Paragraph(escape(str(value or "")),small) for value in values])
-  table=Table(data,colWidths=[9*mm,20*mm,45*mm,30*mm,25*mm,33*mm,30*mm,47*mm,15*mm],repeatRows=1,hAlign="LEFT")
+  table=Table(data,colWidths=[9*mm,18*mm,38*mm,27*mm,21*mm,29*mm,25*mm,42*mm,23*mm,12*mm],repeatRows=1,hAlign="LEFT")
   table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#9a9a9a")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")])]))
   story.append(table)
   if index<len(groups)-1: story.append(PageBreak())
@@ -6385,10 +6431,25 @@ def admin_voters_register():
   members,stats=combined_voters_register(filters,limit=5001)
   truncated=len(members)>5000
   if truncated:members=members[:5000]
+  attach_voting_status(members)
   groups=_register_station_groups(members)
   return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None,prompt=None)
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
+
+
+@app.post("/admin/voters-register/voting-status")
+def admin_voters_register_voting_status():
+ if not repository_admin_logged_in():return jsonify({"ok":False,"error":"Administrator login required."}),403
+ payload=request.get_json(silent=True) or {};ids=payload.get("national_ids") or []
+ if not isinstance(ids,list):return jsonify({"ok":False,"error":"national_ids must be a list."}),400
+ cleaned=[clean_national_id(value) for value in ids[:5000] if clean_national_id(value)]
+ try:
+  voted=voter_participation_status(cleaned)
+  return jsonify({"ok":True,"statuses":{item:("Voted" if item in voted else "Not Voted") for item in cleaned},
+                  "updated_at":kenya_now().isoformat(timespec="seconds")})
+ except Exception as exc:
+  return jsonify({"ok":False,"error":"Voting status is temporarily unavailable: "+str(exc)}),503
 
 
 @app.get("/admin/data-files/id-serial-lookup")
@@ -6485,8 +6546,8 @@ def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  columns=["member_id","full_name","odm_registration_no","county","constituency","ward","polling_station"]
-  members,_=combined_voters_register(filters); output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
+  columns=["member_id","full_name","odm_registration_no","county","constituency","ward","polling_station","voting_status"]
+  members,_=combined_voters_register(filters);attach_voting_status(members);output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
   for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
  except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
@@ -6499,7 +6560,7 @@ def download_voters_register_pdf():
   members,_=combined_voters_register(filters)
   if len(members)>5000:
    return Response("Select a ward or polling station containing no more than 5,000 voters before generating a printable PDF. Use CSV download for larger areas.",status=400,mimetype="text/plain")
-  pdf=_register_pdf(members,filters)
+  attach_voting_status(members);pdf=_register_pdf(members,filters)
   return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=True,download_name=_safe_register_filename(filters,"pdf"),max_age=0)
  except Exception as exc: return Response(f"Unable to generate voters register: {exc}",status=502,mimetype="text/plain")
 
