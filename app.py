@@ -6715,9 +6715,72 @@ def terminal_credentials_lookup():
  response.headers["X-Robots-Tag"]="noindex, nofollow"
  return response
 
+def terminal_credentials_pdf(assignments,filters):
+ """Create the branded PDF used for both printing and email."""
+ output=BytesIO();page_width,page_height=landscape(A4);styles=getSampleStyleSheet()
+ area=next((str(filters.get(key) or "").strip() for key in
+            ("polling_station","ward","constituency","county") if filters.get(key)),"Selected Area")
+ title_style=ParagraphStyle("CredentialTitle",parent=styles["Title"],fontName="Helvetica-Bold",
+                            fontSize=16,leading=19,alignment=TA_CENTER,spaceAfter=4)
+ info_style=ParagraphStyle("CredentialInfo",parent=styles["BodyText"],fontSize=8,leading=10,
+                           alignment=TA_CENTER,spaceAfter=7)
+ cell_style=ParagraphStyle("CredentialCell",parent=styles["BodyText"],fontName="Helvetica",
+                           fontSize=6.3,leading=7.4)
+ secret_style=ParagraphStyle("CredentialSecret",parent=cell_style,fontName="Courier-Bold",fontSize=6.4)
+ header_style=ParagraphStyle("CredentialHeader",parent=cell_style,fontName="Helvetica-Bold",
+                             textColor=colors.white,alignment=TA_CENTER)
+ header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+ def page_header_footer(canvas,doc):
+  canvas.saveState()
+  if os.path.isfile(header_path):
+   try:canvas.drawImage(header_path,(page_width-190*mm)/2,page_height-29*mm,width=190*mm,height=31*mm,preserveAspectRatio=True,mask="auto")
+   except Exception:pass
+  canvas.setFont("Helvetica",7);canvas.setFillColor(colors.HexColor("#555555"))
+  canvas.drawString(10*mm,7*mm,"Restricted ODM Polling-Station Terminal Credentials")
+  canvas.drawRightString(page_width-10*mm,7*mm,f"Page {doc.page}")
+  canvas.restoreState()
+ doc=SimpleDocTemplate(output,pagesize=landscape(A4),rightMargin=7*mm,leftMargin=7*mm,
+                       topMargin=34*mm,bottomMargin=11*mm,
+                       title=f"Polling-Station Terminal Credentials - {area}")
+ story=[Paragraph("POLLING-STATION TERMINAL CREDENTIALS",title_style),
+        Paragraph(f"Selected area: {escape(area)} &nbsp;&nbsp; | &nbsp;&nbsp; Streams: {len(assignments):,} &nbsp;&nbsp; | &nbsp;&nbsp; Generated: {kenya_now().strftime('%d %B %Y %H:%M EAT')}",info_style)]
+ headings=("Polling station","Stream","Entrance verification ID","Entrance password",
+           "Voting ID","Voting password","ID-to-Serial lookup ID","ID-to-Serial lookup password")
+ data=[[Paragraph(value,header_style) for value in headings]]
+ for row in assignments:
+  values=(row.get("polling_station"),row.get("stream"),row.get("entrance_id"),row.get("entrance_password"),
+          row.get("voting_id"),row.get("voting_password"),row.get("serial_lookup_id"),row.get("serial_lookup_password"))
+  data.append([Paragraph(escape(str(value or "")),cell_style if index<2 else secret_style)
+               for index,value in enumerate(values)])
+ table=Table(data,colWidths=[43*mm,38*mm,31*mm,31*mm,29*mm,29*mm,34*mm,34*mm],repeatRows=1,hAlign="CENTER")
+ table.setStyle(TableStyle([
+  ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+  ("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#999999")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+  ("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2),
+  ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
+  ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")]),
+  ("BACKGROUND",(6,1),(7,-1),colors.HexColor("#fff8e8"))]))
+ story.append(table);doc.build(story,onFirstPage=page_header_footer,onLaterPages=page_header_footer)
+ return output.getvalue(),area
+
+@app.get("/terminal-credentials-lookup.pdf")
+def terminal_credentials_lookup_pdf():
+ filters=_register_filters();selected={key:value for key,value in filters.items() if value}
+ if not filters.get("county"):return Response("Select at least a county before creating the PDF.",status=400,mimetype="text/plain")
+ try:
+  assignments=filtered_terminal_assignments(selected)
+  if not assignments:return Response("No terminal credentials matched the selected filters.",status=404,mimetype="text/plain")
+  pdf_data,area=terminal_credentials_pdf(assignments,filters)
+  safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
+  return send_file(BytesIO(pdf_data),mimetype="application/pdf",as_attachment=False,
+                   download_name=f"Terminal_Credentials_{safe_area}.pdf",max_age=0)
+ except Exception as exc:
+  app.logger.exception("Terminal credentials PDF generation failed")
+  return Response("The terminal credentials PDF could not be generated.",status=502,mimetype="text/plain")
+
 @app.post("/api/terminal-credentials/email")
 def email_terminal_credentials():
- """Email the selected county/constituency/ward/station credentials as CSV."""
+ """Email the selected county/constituency/ward/station credentials as PDF."""
  data=request.get_json(silent=True) or {}
  supplied=str(data.get("csrf_token") or "")
  expected=str(session.get("terminal_credentials_csrf") or "")
@@ -6736,18 +6799,13 @@ def email_terminal_credentials():
   assignments=filtered_terminal_assignments(selected)
   if not assignments:
    return jsonify({"ok":False,"error":"No terminal credentials were found for the selected filters."}),404
-  output=StringIO(newline="")
-  columns=("county","constituency","ward","polling_station","stream","entrance_id",
-           "entrance_password","voting_id","voting_password","serial_lookup_id","serial_lookup_password")
-  writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
-  for row in assignments:writer.writerow({key:row.get(key,"") for key in columns})
-  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters[key]),"Selected_Area")
+  pdf_data,area=terminal_credentials_pdf(assignments,filters)
   safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
   msg=EmailMessage();msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>";msg["To"]=recipient
   msg["Subject"]=f"Polling-Station Terminal Credentials - {area}"
-  msg.set_content(f"Attached are {len(assignments):,} polling-station stream credential assignments for {area}. Protect this restricted information from unauthorized access.")
-  msg.add_attachment(("\ufeff"+output.getvalue()).encode("utf-8"),maintype="text",subtype="csv",
-                     filename=f"Terminal_Credentials_{safe_area}.csv")
+  msg.set_content(f"Attached is the branded PDF containing {len(assignments):,} polling-station stream credential assignments for {area}. Protect this restricted information from unauthorized access.")
+  msg.add_attachment(pdf_data,maintype="application",subtype="pdf",
+                     filename=f"Terminal_Credentials_{safe_area}.pdf")
   smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
   with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
    if not SMTP_USE_SSL and SMTP_USE_TLS:server.starttls()
