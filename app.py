@@ -6689,28 +6689,76 @@ def admin_terminal_assignments():
 
 @app.get("/terminal-credentials-lookup")
 def terminal_credentials_lookup():
- """Standalone station-level credential lookup, isolated from administration."""
+ """Standalone area credential lookup, isolated from administration."""
  filters=_register_filters()
- required=("county","constituency","ward","polling_station")
- complete=all(filters.get(key) for key in required)
+ selected={key:value for key,value in filters.items() if value}
+ complete=bool(filters.get("county"))
  assignments=[]
  error=None
+ token=session.get("terminal_credentials_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32);session["terminal_credentials_csrf"]=token
  try:
   options=_register_hierarchy_options(filters)
   if complete:
-   assignments=filtered_terminal_assignments({key:filters[key] for key in required})
+   assignments=filtered_terminal_assignments(selected)
  except Exception as exc:
   app.logger.exception("Standalone terminal credential lookup failed")
   options={"counties":[],"constituencies":[],"wards":[],"stations":[]}
   error="Terminal assignments could not be loaded: "+str(exc)
  response=make_response(render_template(
   "terminal_credentials_lookup.html",assignments=assignments,filters=filters,
-  options=options,total=len(assignments),complete=complete,error=error
+  options=options,total=len(assignments),complete=complete,error=error,csrf_token=token
  ))
  response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
  response.headers["Pragma"]="no-cache"
  response.headers["X-Robots-Tag"]="noindex, nofollow"
  return response
+
+@app.post("/api/terminal-credentials/email")
+def email_terminal_credentials():
+ """Email the selected county/constituency/ward/station credentials as CSV."""
+ data=request.get_json(silent=True) or {}
+ supplied=str(data.get("csrf_token") or "")
+ expected=str(session.get("terminal_credentials_csrf") or "")
+ if not supplied or not expected or not hmac.compare_digest(supplied,expected):
+  return jsonify({"ok":False,"error":"Security token expired. Reload the page and try again."}),403
+ recipient=str(data.get("email") or "").strip()
+ if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",recipient):
+  return jsonify({"ok":False,"error":"Enter a valid recipient email address."}),400
+ filters={key:str(data.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
+ selected={key:value for key,value in filters.items() if value}
+ if not filters["county"]:
+  return jsonify({"ok":False,"error":"Select at least a county before emailing credentials."}),400
+ if not SMTP_HOST or not SMTP_FROM_EMAIL:
+  return jsonify({"ok":False,"error":"Email is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL on Render."}),503
+ try:
+  assignments=filtered_terminal_assignments(selected)
+  if not assignments:
+   return jsonify({"ok":False,"error":"No terminal credentials were found for the selected filters."}),404
+  output=StringIO(newline="")
+  columns=("county","constituency","ward","polling_station","stream","entrance_id",
+           "entrance_password","voting_id","voting_password","serial_lookup_id","serial_lookup_password")
+  writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
+  for row in assignments:writer.writerow({key:row.get(key,"") for key in columns})
+  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters[key]),"Selected_Area")
+  safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
+  msg=EmailMessage();msg["From"]=f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>";msg["To"]=recipient
+  msg["Subject"]=f"Polling-Station Terminal Credentials - {area}"
+  msg.set_content(f"Attached are {len(assignments):,} polling-station stream credential assignments for {area}. Protect this restricted information from unauthorized access.")
+  msg.add_attachment(("\ufeff"+output.getvalue()).encode("utf-8"),maintype="text",subtype="csv",
+                     filename=f"Terminal_Credentials_{safe_area}.csv")
+  smtp_cls=smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+  with smtp_cls(SMTP_HOST,SMTP_PORT,timeout=25) as server:
+   if not SMTP_USE_SSL and SMTP_USE_TLS:server.starttls()
+   if SMTP_USERNAME:server.login(SMTP_USERNAME,SMTP_PASSWORD)
+   server.send_message(msg)
+ except smtplib.SMTPAuthenticationError:
+  return jsonify({"ok":False,"error":"SMTP authentication failed. Check the configured email username and app password."}),502
+ except Exception as exc:
+  app.logger.exception("Filtered terminal credentials email failed")
+  return jsonify({"ok":False,"error":"The credentials email could not be sent. Check the Render SMTP settings and try again."}),502
+ return jsonify({"ok":True,"message":f"{len(assignments):,} credential assignments emailed successfully to {recipient}."})
 
 @app.get("/admin/voters-register.csv")
 def download_voters_register_csv():
