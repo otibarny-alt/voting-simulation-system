@@ -6778,6 +6778,29 @@ def terminal_credentials_lookup_pdf():
   app.logger.exception("Terminal credentials PDF generation failed")
   return Response("The terminal credentials PDF could not be generated.",status=502,mimetype="text/plain")
 
+@app.get("/terminal-credentials-lookup.csv")
+def terminal_credentials_lookup_csv():
+ """Download exactly the filtered terminal credential assignments as CSV."""
+ filters=_register_filters();selected={key:value for key,value in filters.items() if value}
+ if not filters.get("county"):
+  return Response("Select at least a county before downloading the CSV.",status=400,mimetype="text/plain")
+ try:
+  assignments=filtered_terminal_assignments(selected)
+  if not assignments:return Response("No terminal credentials matched the selected filters.",status=404,mimetype="text/plain")
+  columns=("county","constituency","ward","polling_station","stream","entrance_id",
+           "entrance_password","voting_id","voting_password","serial_lookup_id","serial_lookup_password")
+  output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
+  for row in assignments:writer.writerow({key:row.get(key,"") for key in columns})
+  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters[key]),"Selected_Area")
+  safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
+  return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={
+   "Content-Disposition":f'attachment; filename="Terminal_Credentials_{safe_area}.csv"',
+   "Cache-Control":"no-store, no-cache, must-revalidate, private",
+   "X-Robots-Tag":"noindex, nofollow"})
+ except Exception:
+  app.logger.exception("Terminal credentials CSV generation failed")
+  return Response("The terminal credentials CSV could not be generated.",status=502,mimetype="text/plain")
+
 @app.post("/api/terminal-credentials/email")
 def email_terminal_credentials():
  """Email the selected county/constituency/ward/station credentials as PDF."""
