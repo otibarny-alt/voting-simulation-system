@@ -6677,6 +6677,40 @@ def id_serial_lookup_keepalive():
   return jsonify({"ok":False,"error":"This Serial Lookup login is no longer active."}),409
  return jsonify({"ok":True})
 
+@app.route("/voter-polling-center-lookup",methods=["GET","POST"])
+def voter_polling_center_lookup():
+ """Independent ID lookup showing only voter name and polling centre."""
+ token=session.get("polling_center_lookup_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32);session["polling_center_lookup_csrf"]=token
+ national_id="";full_name=None;polling_center=None;error=None
+ if request.method=="POST":
+  supplied=str(request.form.get("csrf_token") or "")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   error="Security token expired. Reload the page and try again."
+  else:
+   national_id=clean_national_id(request.form.get("national_id"))
+   if not re.fullmatch(r"\d{7,8}",national_id):
+    error="Enter a valid 7- or 8-digit National ID number."
+   else:
+    try:
+     row=lookup_member(national_id)
+     if not row:
+      error="No voter record was found for that National ID."
+     else:
+      member=member_view(row)
+      full_name=str(member.get("full_name") or "").strip()
+      polling_center=str(member.get("polling_station_label") or member.get("polling_station_key") or "").strip()
+      if not polling_center:error="This voter record does not have a polling centre assigned."
+    except Exception:
+     app.logger.exception("Independent voter polling-centre lookup failed")
+     error="The voters register is temporarily unavailable. Please try again."
+ response=make_response(render_template("voter_polling_center_lookup.html",csrf_token=token,
+  national_id=national_id,full_name=full_name,polling_center=polling_center,error=error))
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
+ response.headers["Pragma"]="no-cache";response.headers["X-Robots-Tag"]="noindex, nofollow"
+ return response
+
 @app.get("/admin/terminal-assignments")
 @app.get("/admin/data-files/terminal-assignments")
 def admin_terminal_assignments():

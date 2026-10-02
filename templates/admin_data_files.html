@@ -58,6 +58,13 @@
   {% else %}<div class="closed-stream-empty" style="margin-top:16px">No master-register import batches have been created yet.</div>{% endif %}
  </section>
  <section class="data-panel">
+  <h2>Voter Polling Centre Lookup</h2>
+  <p>Open the independent National ID search page. It displays only the voter's name and assigned polling centre and provides no access to administration pages.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('voter_polling_center_lookup') }}" target="_blank" rel="noopener">Open Voter Polling Centre Lookup</a>
+  </div>
+ </section>
+ <section class="data-panel">
   <h2>Opening Report Repository</h2>
   <p>View automatically archived voting-stream opening certificates. Each successful stream opening deposits one formatted PDF containing the zero-vote check, opening time, GPS details and signature sections.</p>
   <div class="verification-admin-actions">
