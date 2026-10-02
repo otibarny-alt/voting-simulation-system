@@ -10,6 +10,7 @@
  .closed-stream-table{width:100%;border-collapse:collapse;margin-top:14px}.closed-stream-table th,.closed-stream-table td{border-bottom:1px solid #ddd;padding:10px 8px;text-align:left;vertical-align:middle}.closed-stream-table th{background:#f6f6f6}.reopen-stream-btn{background:#111;color:#fff;border:3px solid #ef7d00;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer;white-space:nowrap}.closed-stream-empty{background:#f7f7f7;border:1px solid #ddd;border-radius:8px;padding:13px}
  .master-action{background:#111;color:#fff;border:3px solid #ef7d00;border-radius:9px;padding:11px 16px;font-weight:850;cursor:pointer}.master-action:disabled{opacity:.55;cursor:not-allowed}.master-table{width:100%;border-collapse:collapse;margin-top:16px;font-size:.92rem}.master-table th,.master-table td{padding:9px 7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:middle}.master-table th{background:#f3f4f6}.status-pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eee;font-weight:800}.status-PROMOTED{background:#dff3e4;color:#176b2c}.status-STAGED{background:#fff0c7;color:#815900}.status-STAGING{background:#dfeeff;color:#174e85}
  .reset-danger{border:3px solid #b00020;background:#fff3f3}.reset-danger input{display:block;width:100%;max-width:360px;padding:11px;margin:10px 0;border:2px solid #b00020;border-radius:7px}.reset-danger button{background:#b00020;color:#fff;border:0;border-radius:8px;padding:12px 18px;font-weight:900;cursor:pointer}
+ .phone-progress{margin:16px 0}.phone-progress-track{height:24px;background:#e5e7eb;border:1px solid #aab0b8;border-radius:999px;overflow:hidden}.phone-progress-fill{height:100%;width:0;background:#ef7d00;transition:width .45s ease}.phone-progress-fill.complete{background:#218838}.phone-progress-fill.failed{background:#b00020}.phone-progress-label{display:flex;justify-content:space-between;gap:10px;margin-top:7px;font-weight:800}.phone-progress-message{margin-top:7px;color:#454b55}
  </style>
 </head>
 <body>
@@ -63,10 +64,38 @@
   {% if phone_backfill_state.running %}<div class="data-warning"><b>Background update running:</b> {{ phone_backfill_state.message }} Started {{ phone_backfill_state.started_at }}. You may leave this page and reload it later.</div>
   {% elif phone_backfill_state.error %}<div class="data-message data-error">{{ phone_backfill_state.error }}</div>
   {% elif phone_backfill_state.message %}<div class="data-message data-success">{{ phone_backfill_state.message }}</div>{% endif %}
+  <div class="phone-progress" id="phone-progress" aria-live="polite">
+   <div class="phone-progress-track" role="progressbar" aria-label="Permanent phone update progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ phone_backfill_state.progress or 0 }}">
+    <div class="phone-progress-fill {{ 'failed' if phone_backfill_state.phase == 'failed' else 'complete' if phone_backfill_state.phase == 'complete' else '' }}" id="phone-progress-fill" style="width:{{ phone_backfill_state.progress or 0 }}%"></div>
+   </div>
+   <div class="phone-progress-label"><span id="phone-progress-phase">{{ phone_backfill_state.phase|replace('_',' ')|title }}</span><span id="phone-progress-percent">{{ phone_backfill_state.progress or 0 }}%</span></div>
+   <div class="phone-progress-message" id="phone-progress-message">{{ phone_backfill_state.message or 'Ready to permanently fill missing phone numbers.' }}</div>
+  </div>
   <form method="post" action="{{ url_for('admin_backfill_test_phones') }}" onsubmit="return confirm('Fill every blank test phone field in PostgreSQL and Kobo using 07 + National ID? Existing phone numbers will not be changed.');">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
    <button class="master-action" type="submit" {% if phone_backfill_state.running or not master_register_configured %}disabled{% endif %}>Permanently Fill Missing Test Phones</button>
   </form>
+  <script>
+  (function(){
+   const fill=document.getElementById('phone-progress-fill');
+   const track=fill.parentElement;
+   const percent=document.getElementById('phone-progress-percent');
+   const phase=document.getElementById('phone-progress-phase');
+   const message=document.getElementById('phone-progress-message');
+   function title(value){return String(value||'idle').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());}
+   async function refresh(){
+    try{
+     const response=await fetch("{{ url_for('admin_backfill_test_phones_status') }}",{credentials:'same-origin',cache:'no-store'});
+     const data=await response.json();if(!response.ok||!data.ok)return;
+     const value=Math.max(0,Math.min(100,Number(data.progress)||0));
+     fill.style.width=value+'%';track.setAttribute('aria-valuenow',value);percent.textContent=value+'%';phase.textContent=title(data.phase);message.textContent=data.error||data.message||'Ready to permanently fill missing phone numbers.';
+     fill.classList.toggle('complete',data.phase==='complete');fill.classList.toggle('failed',data.phase==='failed');
+     if(data.running)setTimeout(refresh,2000);
+    }catch(error){if({{ 'true' if phone_backfill_state.running else 'false' }})setTimeout(refresh,4000);}
+   }
+   refresh();
+  })();
+  </script>
  </section>
  <section class="data-panel">
   <h2>Voter Polling Centre Lookup</h2>
