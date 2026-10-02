@@ -195,44 +195,52 @@ def phone_owner(phone, exclude_national_id=""):
 
 
 def backfill_missing_test_phones():
-    """Fill blank active-member phones with 07 + National ID."""
+    """Permanently fill blank active-member phones with one set-based update."""
     ensure_schema()
-    updated = skipped_invalid_id = skipped_conflict = 0
-    with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
+    with connect(statement_timeout_ms=0, lock_timeout_ms=30000) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT national_id,phone FROM master_voters WHERE active FOR UPDATE")
-            rows = list(cur.fetchall())
-            occupied = set()
-            for row in rows:
-                phone = _digits(row.get("phone"))
-                if phone.startswith("254") and len(phone) == 12:
-                    phone = "0" + phone[3:]
-                elif len(phone) == 9:
-                    phone = "0" + phone
-                if phone:
-                    occupied.add(phone)
-            for row in rows:
-                if str(row.get("phone") or "").strip():
-                    continue
-                national_id = _digits(row.get("national_id"))
-                if not re.fullmatch(r"\d{7,8}", national_id):
-                    skipped_invalid_id += 1
-                    continue
-                generated = "07" + national_id
-                if generated in occupied:
-                    skipped_conflict += 1
-                    continue
-                cur.execute(
-                    "UPDATE master_voters SET phone=%s,updated_at=NOW() "
-                    "WHERE active AND national_id=%s AND NULLIF(BTRIM(phone),'') IS NULL",
-                    (generated, national_id),
+            cur.execute(r"""
+                WITH source AS (
+                    SELECT national_id,
+                           regexp_replace(COALESCE(national_id,''),'[^0-9]','','g') AS id_digits
+                    FROM master_voters
+                    WHERE active AND NULLIF(BTRIM(phone),'') IS NULL
+                ), candidates AS (
+                    SELECT national_id,'07' || id_digits AS generated_phone
+                    FROM source WHERE id_digits ~ '^[0-9]{7,8}$'
+                ), occupied AS (
+                    SELECT CASE
+                        WHEN digits LIKE '254%' AND LENGTH(digits)=12 THEN '0' || SUBSTRING(digits FROM 4)
+                        WHEN LENGTH(digits)=9 THEN '0' || digits
+                        ELSE digits END AS normalized_phone
+                    FROM (
+                        SELECT regexp_replace(COALESCE(phone,''),'[^0-9]','','g') AS digits
+                        FROM master_voters
+                        WHERE active AND NULLIF(BTRIM(phone),'') IS NOT NULL
+                    ) existing
+                ), safe AS (
+                    SELECT candidate.* FROM candidates candidate
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM occupied
+                        WHERE occupied.normalized_phone=candidate.generated_phone
+                    )
+                ), updated AS (
+                    UPDATE master_voters voter
+                    SET phone=safe.generated_phone,updated_at=NOW()
+                    FROM safe
+                    WHERE voter.active AND voter.national_id=safe.national_id
+                      AND NULLIF(BTRIM(voter.phone),'') IS NULL
+                    RETURNING voter.national_id
                 )
-                if cur.rowcount:
-                    occupied.add(generated)
-                    updated += cur.rowcount
+                SELECT (SELECT COUNT(*) FROM updated) AS updated,
+                       (SELECT COUNT(*) FROM source WHERE id_digits !~ '^[0-9]{7,8}$') AS skipped_invalid_id,
+                       (SELECT COUNT(*) FROM candidates)-(SELECT COUNT(*) FROM safe) AS skipped_conflict
+            """)
+            result=cur.fetchone()
         conn.commit()
-    return {"updated": updated, "skipped_invalid_id": skipped_invalid_id,
-            "skipped_conflict": skipped_conflict}
+    return {"updated":int(result["updated"] or 0),
+            "skipped_invalid_id":int(result["skipped_invalid_id"] or 0),
+            "skipped_conflict":int(result["skipped_conflict"] or 0)}
 
 
 def apply_membership_change(national_id, request_type, updates, request_id=None):

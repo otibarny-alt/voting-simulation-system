@@ -39,6 +39,8 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"]=3600
 # not terminate them. Durable progress remains in the PostgreSQL batch table.
 _MASTER_REGISTER_IMPORT_LOCK=threading.Lock()
 _MASTER_REGISTER_IMPORT_STATE={"running":False,"message":"","error":"","started_at":""}
+_PHONE_BACKFILL_LOCK=threading.Lock()
+_PHONE_BACKFILL_STATE={"running":False,"message":"","error":"","started_at":""}
 if WhiteNoise is not None:
  app.wsgi_app=WhiteNoise(
   app.wsgi_app,root=os.path.join(os.path.dirname(os.path.abspath(__file__)),"static"),
@@ -6036,34 +6038,48 @@ def validate_master_register_admin_post():
 
 @app.post("/admin/data-files/backfill-test-phones")
 def admin_backfill_test_phones():
- """Admin-only, idempotent phone backfill for PostgreSQL and Kobo test data."""
+ """Queue the durable PostgreSQL and Kobo backfill without holding the request."""
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
  if not validate_master_register_admin_post():
   session["data_files_error"]="Security token expired. Reload the page and try again."
   return redirect(url_for("admin_data_files")+"#test-phone-backfill")
- results=[];errors=[]
- if master_register.configured():
-  try:
-   result=master_register.backfill_missing_test_phones()
-   results.append(f"PostgreSQL: {result['updated']:,} blank phone fields filled")
-   if result["skipped_invalid_id"] or result["skipped_conflict"]:
-    results.append(f"PostgreSQL skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
-  except Exception as exc:
-   app.logger.exception("PostgreSQL test-phone backfill failed");errors.append("PostgreSQL: "+str(exc))
+ if not master_register.configured():
+  session["data_files_error"]="MASTER_REGISTER_DATABASE_URL is not configured. No database update was started."
+ elif not _PHONE_BACKFILL_LOCK.acquire(blocking=False):
+  session["data_files_error"]="The permanent phone-number update is already running. Reload this page to see its status."
  else:
-  errors.append("PostgreSQL: MASTER_REGISTER_DATABASE_URL is not configured")
- try:
-  result=backfill_kobo_membership_csv_test_phones()
-  results.append(f"Kobo CSV: {result['updated']:,} blank phone fields filled")
-  if result["skipped_invalid_id"] or result["skipped_conflict"]:
-   results.append(f"Kobo CSV skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
- except Exception as exc:
-  app.logger.exception("Kobo test-phone backfill failed");errors.append("Kobo CSV: "+str(exc))
- _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
- if errors:session["data_files_error"]="; ".join(errors)
- if results:session["data_files_message"]=". ".join(results)+". Existing phone numbers were preserved."
+  _PHONE_BACKFILL_STATE.update(running=True,message="Update queued…",error="",started_at=kenya_now().isoformat(timespec="seconds"))
+  threading.Thread(target=phone_backfill_worker,name="permanent-phone-backfill",daemon=True).start()
+  session["data_files_message"]="The permanent PostgreSQL phone update and Kobo synchronization have started in the background. Reload this page to see the result."
  return redirect(url_for("admin_data_files")+"#test-phone-backfill")
+
+
+def phone_backfill_worker():
+ """Persist generated phones, then synchronize the Kobo membership media CSV."""
+ messages=[];errors=[]
+ try:
+  _PHONE_BACKFILL_STATE["message"]="Permanently updating PostgreSQL phone fields…"
+  result=master_register.backfill_missing_test_phones()
+  messages.append(f"PostgreSQL permanently updated {result['updated']:,} voters")
+  if result["skipped_invalid_id"] or result["skipped_conflict"]:
+   messages.append(f"PostgreSQL skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+ except Exception as exc:
+  app.logger.exception("Permanent PostgreSQL phone backfill failed");errors.append("PostgreSQL: "+str(exc))
+ try:
+  _PHONE_BACKFILL_STATE["message"]="Synchronizing missing phone numbers to the Kobo membership CSV…"
+  result=backfill_kobo_membership_csv_test_phones()
+  messages.append(f"Kobo CSV updated {result['updated']:,} voters")
+  if result["skipped_invalid_id"] or result["skipped_conflict"]:
+   messages.append(f"Kobo CSV skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+ except Exception as exc:
+  app.logger.exception("Background Kobo phone backfill failed");errors.append("Kobo CSV: "+str(exc))
+ finally:
+  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
+  _PHONE_BACKFILL_STATE["error"]="; ".join(errors)
+  _PHONE_BACKFILL_STATE["message"]=(". ".join(messages)+". Existing phone numbers were preserved.") if messages else ""
+  _PHONE_BACKFILL_STATE["running"]=False
+  _PHONE_BACKFILL_LOCK.release()
 
 
 @app.post("/admin/data-files/reset-test-data")
@@ -6301,7 +6317,8 @@ def admin_data_files():
   candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL,
   closed_streams=closed_streams,closed_streams_error=closed_streams_error,
   master_register_configured=master_register.configured(),master_batches=master_batches,
-  master_register_error=master_register_error,master_import_state=dict(_MASTER_REGISTER_IMPORT_STATE)
+  master_register_error=master_register_error,master_import_state=dict(_MASTER_REGISTER_IMPORT_STATE),
+  phone_backfill_state=dict(_PHONE_BACKFILL_STATE)
  )
 
 
