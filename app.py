@@ -130,7 +130,11 @@ SYSTEM_RESET_TOKEN = os.getenv("SYSTEM_RESET_TOKEN", "").strip()
 CANDIDATE_ELIGIBILITY_TOKEN = os.getenv("CANDIDATE_ELIGIBILITY_TOKEN", SYSTEM_RESET_TOKEN).strip()
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+# Prefer a dedicated Voting database, then the working master-register
+# database. The older general DATABASE_URL remains a compatibility fallback.
+DATABASE_URL = (os.getenv("VOTING_DATABASE_URL", "").strip()
+                or os.getenv("MASTER_REGISTER_DATABASE_URL", "").strip()
+                or os.getenv("DATABASE_URL", "").strip())
 SERIAL_LOOKUP_DATABASE_URL=(os.getenv("SERIAL_LOOKUP_DATABASE_URL","").strip()
                             or os.getenv("MASTER_REGISTER_DATABASE_URL","").strip()
                             or DATABASE_URL)
@@ -330,7 +334,8 @@ def agent_access():
    conn.commit()
  except Exception as exc:
   app.logger.exception("Could not consume agent handoff")
-  return Response(f"Voting Terminal access is temporarily unavailable because the central database could not confirm the login. {exc}",status=503)
+  return render_template("terminal_database_unavailable.html",
+   voter_verification_base_url=VOTER_VERIFICATION_BASE_URL),503
  if not accepted:
   return Response("This Voting Terminal access link has already been used. Return to the Voting Terminal login and try again.",status=403)
  session["voting_agent"]={k:str(payload.get(k) or "").strip() for k in (
