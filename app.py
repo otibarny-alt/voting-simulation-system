@@ -131,6 +131,9 @@ CANDIDATE_ELIGIBILITY_TOKEN = os.getenv("CANDIDATE_ELIGIBILITY_TOKEN", SYSTEM_RE
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+SERIAL_LOOKUP_LEASE_SECONDS=max(60,int(os.getenv("SERIAL_LOOKUP_LEASE_SECONDS","120") or 120))
+_SERIAL_LOOKUP_DB_READY=False
+_SERIAL_LOOKUP_DB_INIT_LOCK=threading.Lock()
 MASTER_REGISTER_STRICT = os.getenv("MASTER_REGISTER_STRICT", "false").strip().lower() in {"1","true","yes","on"}
 ELECTION_ID = os.getenv("ELECTION_ID", "ODM_INTERNAL_NOMINATIONS").strip()
 ENTRANCE_APPROVAL_MINUTES = int(os.getenv("ENTRANCE_APPROVAL_MINUTES", "30") or 30)
@@ -700,6 +703,59 @@ def membership_request_db():
   connect_timeout=max(3,int(os.getenv("PG_MEMBERSHIP_CONNECT_TIMEOUT_SECONDS","8") or 8)),
   options="-c statement_timeout=15000"
  )
+
+def init_serial_lookup_db():
+ """Create the shared lease table for exclusive Serial Lookup terminals."""
+ global _SERIAL_LOOKUP_DB_READY
+ if not DATABASE_URL:
+  raise RuntimeError("DATABASE_URL is required for exclusive Serial Lookup terminal sessions.")
+ if _SERIAL_LOOKUP_DB_READY:return
+ with _SERIAL_LOOKUP_DB_INIT_LOCK:
+  if _SERIAL_LOOKUP_DB_READY:return
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""CREATE TABLE IF NOT EXISTS serial_lookup_terminal_sessions(
+      terminal_id TEXT PRIMARY KEY,session_token TEXT NOT NULL,
+      polling_station TEXT NOT NULL,stream TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+   conn.commit()
+  _SERIAL_LOOKUP_DB_READY=True
+
+def release_serial_lookup_lease(terminal):
+ if not isinstance(terminal,dict) or not terminal.get("terminal_id") or not terminal.get("session_token"):
+  return
+ try:
+  init_serial_lookup_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""DELETE FROM serial_lookup_terminal_sessions
+      WHERE terminal_id=%s AND session_token=%s""",
+      (terminal["terminal_id"],terminal["session_token"]))
+   conn.commit()
+ except Exception:
+  app.logger.exception("Serial Lookup terminal lease release failed")
+
+def serial_lookup_lease_is_current(terminal,renew=False):
+ if not isinstance(terminal,dict) or not terminal.get("terminal_id") or not terminal.get("session_token"):
+  return False
+ init_serial_lookup_db()
+ with central_control_db() as conn:
+  with conn.cursor() as cur:
+   if renew:
+    cur.execute("""UPDATE serial_lookup_terminal_sessions SET last_seen=NOW()
+      WHERE terminal_id=%s AND session_token=%s
+        AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
+      (terminal["terminal_id"],terminal["session_token"],SERIAL_LOOKUP_LEASE_SECONDS))
+    current=bool(cur.rowcount)
+   else:
+    cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
+      WHERE terminal_id=%s AND session_token=%s
+        AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
+      (terminal["terminal_id"],terminal["session_token"],SERIAL_LOOKUP_LEASE_SECONDS))
+    current=bool(cur.fetchone())
+  conn.commit()
+ return current
 
 def init_repository_db():
  """Initialize only the table used by the PDF repository."""
@@ -6473,6 +6529,7 @@ def id_serial_lookup():
   token=secrets.token_urlsafe(32)
   session["serial_lookup_csrf"]=token
  if request.args.get("logout")=="1":
+  release_serial_lookup_lease(session.get("serial_lookup_terminal"))
   session.pop("serial_lookup_terminal",None)
   return redirect(url_for("id_serial_lookup"))
  lookup_terminal=session.get("serial_lookup_terminal") or None
@@ -6481,6 +6538,15 @@ def id_serial_lookup():
  polling_station=None
  error=None
  national_id=""
+ if lookup_terminal:
+  try:
+   if not serial_lookup_lease_is_current(lookup_terminal):
+    session.pop("serial_lookup_terminal",None);lookup_terminal=None
+    error="This Serial Lookup login is no longer active. It may have expired or been opened on another terminal. Please log in again."
+  except Exception as exc:
+   app.logger.exception("Serial Lookup lease validation failed")
+   session.pop("serial_lookup_terminal",None);lookup_terminal=None
+   error="The exclusive lookup-terminal service is temporarily unavailable: "+str(exc)
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
@@ -6504,8 +6570,10 @@ def id_serial_lookup():
     elif not hmac.compare_digest(terminal_password,expected_password):
      error="Terminal ID or password is incorrect."
     else:
+     lease_token=secrets.token_urlsafe(32)
      lookup_terminal={
       "terminal_id":terminal_id,"terminal_role":"serial_lookup",
+      "session_token":lease_token,
       "polling_station":str(row.get("polling_station") or "").strip(),
       "polling_station_code":str(row.get("polling_station_code") or "").strip(),
       "stream":str(row.get("stream") or "").strip(),
@@ -6513,9 +6581,36 @@ def id_serial_lookup():
       "constituency":str(row.get("constituency") or "").strip(),
       "ward":str(row.get("ward") or "").strip(),
      }
-     session["serial_lookup_terminal"]=lookup_terminal
-     session.modified=True
-     return redirect(url_for("id_serial_lookup"))
+     try:
+      init_serial_lookup_db()
+      with central_control_db() as conn:
+       with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("serial-lookup:"+terminal_id,))
+        cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
+          WHERE terminal_id=%s AND last_seen>=NOW()-(%s*INTERVAL '1 second') FOR UPDATE""",
+          (terminal_id,SERIAL_LOOKUP_LEASE_SECONDS))
+        already_active=bool(cur.fetchone())
+        if not already_active:
+         cur.execute("""INSERT INTO serial_lookup_terminal_sessions
+           (terminal_id,session_token,polling_station,stream,started_at,last_seen)
+           VALUES(%s,%s,%s,%s,NOW(),NOW())
+           ON CONFLICT(terminal_id) DO UPDATE SET session_token=EXCLUDED.session_token,
+             polling_station=EXCLUDED.polling_station,stream=EXCLUDED.stream,
+             started_at=NOW(),last_seen=NOW()""",
+           (terminal_id,lease_token,lookup_terminal["polling_station"],lookup_terminal["stream"]))
+       if already_active:conn.rollback()
+       else:conn.commit()
+      if already_active:
+       lookup_terminal=None
+       error="Login blocked: this Serial Lookup ID is already active on another terminal. Log out from that terminal or wait two minutes after it goes offline."
+      else:
+       session["serial_lookup_terminal"]=lookup_terminal
+       session.modified=True
+       return redirect(url_for("id_serial_lookup"))
+     except Exception as exc:
+      app.logger.exception("Serial Lookup terminal lease could not be reserved")
+      lookup_terminal=None
+      error="Unable to reserve this Serial Lookup terminal: "+str(exc)
   else:
    national_id=clean_national_id(request.form.get("national_id"))
    if not re.fullmatch(r"\d{7,8}",national_id):
@@ -6547,6 +6642,23 @@ def id_serial_lookup():
  response.headers["Pragma"]="no-cache"
  response.headers["X-Robots-Tag"]="noindex, nofollow"
  return response
+
+@app.post("/api/id-serial-lookup/keepalive")
+def id_serial_lookup_keepalive():
+ terminal=session.get("serial_lookup_terminal")
+ if not terminal:return jsonify({"ok":False,"error":"Serial Lookup login required."}),401
+ supplied=str((request.get_json(silent=True) or {}).get("csrf_token") or "")
+ expected=str(session.get("serial_lookup_csrf") or "")
+ if not supplied or not expected or not hmac.compare_digest(supplied,expected):
+  return jsonify({"ok":False,"error":"Security token expired."}),403
+ try:
+  current=serial_lookup_lease_is_current(terminal,renew=True)
+ except Exception as exc:
+  return jsonify({"ok":False,"error":"Lookup-terminal lease is temporarily unavailable: "+str(exc)}),503
+ if not current:
+  session.pop("serial_lookup_terminal",None)
+  return jsonify({"ok":False,"error":"This Serial Lookup login is no longer active."}),409
+ return jsonify({"ok":True})
 
 @app.get("/admin/terminal-assignments")
 @app.get("/admin/data-files/terminal-assignments")

@@ -45,5 +45,16 @@
   <div class="privacy-note">This standalone page is restricted to the signed-in polling station and does not provide access to system administration.</div>
  </section>
 </main>
+{% if lookup_terminal %}<script>
+(function(){
+ const pulse=()=>fetch("{{ url_for('id_serial_lookup_keepalive') }}",{
+  method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",
+  body:JSON.stringify({csrf_token:"{{ csrf_token }}"})
+ }).then(r=>r.json().then(data=>({ok:r.ok,data}))).then(result=>{
+  if(!result.ok){alert(result.data.error||"This Serial Lookup login is no longer active.");location.reload();}
+ }).catch(()=>{});
+ setInterval(pulse,30000);
+})();
+</script>{% endif %}
 </body>
 </html>
