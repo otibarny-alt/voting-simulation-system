@@ -5637,7 +5637,9 @@ def terminal_assignment_rows():
     "polling_station_code":station.get("poll_station_code",""),"stream":stream.get("label") or stream.get("name",""),
     "stream_number":int(match.group(1)) if match else None,"entrance_id":stream.get("entrance_id",""),
     "entrance_password":stream.get("entrance_password",""),"voting_id":stream.get("voting_id",""),
-    "voting_password":stream.get("voting_passwaord") or stream.get("voting_password","")
+    "voting_password":stream.get("voting_passwaord") or stream.get("voting_password",""),
+    "serial_lookup_id":stream.get("serial_lookup_id",""),
+    "serial_lookup_password":stream.get("serial_lookup_password","")
    })
  _TERMINAL_ASSIGNMENTS_CACHE=assignments
  return assignments
@@ -5658,11 +5660,33 @@ def resolve_terminal_credentials():
   return jsonify({"ok":False,"error":"Terminal ID and role are required."}),400
  id_key="entrance_id" if terminal_mode=="verification" else "voting_id"
  password_key="entrance_password" if terminal_mode=="verification" else "voting_password"
- row=next((item for item in terminal_assignment_rows()
-           if str(item.get(id_key) or "").strip()==terminal_id),None)
- if not row:return jsonify({"ok":False,"error":"Terminal assignment not found."}),404
+ opposite_id_key="voting_id" if terminal_mode=="verification" else "entrance_id"
+ assignments=terminal_assignment_rows()
+ matches=[item for item in assignments if str(item.get(id_key) or "").strip()==terminal_id]
+ if not matches:return jsonify({"ok":False,"error":"Terminal assignment not found."}),404
+ if len(matches)>1:
+  return jsonify({"ok":False,"error":
+   f"Duplicate {terminal_mode} terminal ID in county_main.csv. Every terminal ID must identify exactly one polling station and stream."}),409
+ # A numeric ID must never identify both terminal roles, even on the same row.
+ if any(str(item.get(opposite_id_key) or "").strip()==terminal_id for item in assignments):
+  return jsonify({"ok":False,"error":
+   "This terminal ID is assigned to both Verification and Voting roles in county_main.csv. Supply a different ID for every terminal."}),409
+ row=matches[0]
+ paired_terminal_id=str(row.get(opposite_id_key) or "").strip()
+ password=str(row.get(password_key) or "").strip()
+ if not password or not paired_terminal_id:
+  return jsonify({"ok":False,"error":
+   "This polling-station stream has incomplete terminal credentials in county_main.csv."}),409
+ if paired_terminal_id==terminal_id:
+  return jsonify({"ok":False,"error":
+   "Verification and Voting terminals for a stream must use different IDs."}),409
+ station_code=str(row.get("polling_station_code") or "").strip()
+ station_name=str(row.get("polling_station") or "").strip()
+ stream_name=str(row.get("stream") or "").strip()
+ assignment_key="|".join((station_code or station_key(station_name),station_key(stream_name)))
  return jsonify({"ok":True,"terminal":{
-  "terminal_id":terminal_id,"terminal_role":terminal_mode,"password":str(row.get(password_key) or ""),
+  "terminal_id":terminal_id,"terminal_role":terminal_mode,"password":password,
+  "paired_terminal_id":paired_terminal_id,"assignment_key":assignment_key,
   "stream":str(row.get("stream") or ""),"stream_label":str(row.get("stream") or ""),
   "polling_station":str(row.get("polling_station") or ""),"polling_station_label":str(row.get("polling_station") or ""),
   "poll_station_code":str(row.get("polling_station_code") or ""),"ward":str(row.get("ward") or ""),
@@ -6443,11 +6467,15 @@ def legacy_admin_id_serial_lookup():
 
 @app.route("/id-serial-lookup",methods=["GET","POST"])
 def id_serial_lookup():
- """Standalone National-ID lookup with no access path into administration."""
+ """Station-bound National-ID lookup with no access path into administration."""
  token=session.get("serial_lookup_csrf")
  if not token:
   token=secrets.token_urlsafe(32)
   session["serial_lookup_csrf"]=token
+ if request.args.get("logout")=="1":
+  session.pop("serial_lookup_terminal",None)
+  return redirect(url_for("id_serial_lookup"))
+ lookup_terminal=session.get("serial_lookup_terminal") or None
  serial_no=None
  full_name=None
  polling_station=None
@@ -6457,6 +6485,37 @@ def id_serial_lookup():
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
    error="Security token expired. Reload the page and try again."
+  elif not lookup_terminal:
+   terminal_id=str(request.form.get("terminal_id") or "").strip()
+   terminal_password=str(request.form.get("terminal_password") or "")
+   matches=[row for row in terminal_assignment_rows()
+            if terminal_id==str(row.get("serial_lookup_id") or "").strip()]
+   if not terminal_id or not terminal_password:
+    error="Enter the terminal ID and password supplied for this polling station."
+   elif not matches:
+    error="Terminal ID or password is incorrect."
+   elif len(matches)!=1:
+    error="This Serial Lookup ID is duplicated in county_main.csv and cannot identify one polling station. Ask the administrator to correct the assignments."
+   else:
+    row=matches[0]
+    expected_password=str(row.get("serial_lookup_password") or "")
+    if not expected_password:
+     error="This station has no Serial Lookup password in county_main.csv."
+    elif not hmac.compare_digest(terminal_password,expected_password):
+     error="Terminal ID or password is incorrect."
+    else:
+     lookup_terminal={
+      "terminal_id":terminal_id,"terminal_role":"serial_lookup",
+      "polling_station":str(row.get("polling_station") or "").strip(),
+      "polling_station_code":str(row.get("polling_station_code") or "").strip(),
+      "stream":str(row.get("stream") or "").strip(),
+      "county":str(row.get("county") or "").strip(),
+      "constituency":str(row.get("constituency") or "").strip(),
+      "ward":str(row.get("ward") or "").strip(),
+     }
+     session["serial_lookup_terminal"]=lookup_terminal
+     session.modified=True
+     return redirect(url_for("id_serial_lookup"))
   else:
    national_id=clean_national_id(request.form.get("national_id"))
    if not re.fullmatch(r"\d{7,8}",national_id):
@@ -6469,16 +6528,21 @@ def id_serial_lookup():
       serial_no=str(member.get("serial_no") or "").strip()
       full_name=str(member.get("full_name") or "").strip()
       polling_station=str(member.get("polling_station_label") or member.get("polling_station_key") or "").strip()
+      assigned_station=str(lookup_terminal.get("polling_station") or "").strip()
+      if station_key(polling_station)!=station_key(assigned_station):
+       serial_no=None;full_name=None
+       error=("This voter is registered at " + (polling_station or "another polling station") +
+              ". This lookup terminal is restricted to " + assigned_station + ".")
      if not row:
       error="No voter record was found for that National ID."
-     elif not serial_no:
+     elif not serial_no and not error:
       error="This voter record does not have a serial number."
     except Exception as exc:
      app.logger.exception("Standalone ID-to-serial lookup failed")
      error="The voters register is temporarily unavailable: "+str(exc)
  response=make_response(render_template("admin_id_serial_lookup.html",csrf_token=token,
                         national_id=national_id,serial_no=serial_no,full_name=full_name,
-                        polling_station=polling_station,error=error))
+                        polling_station=polling_station,error=error,lookup_terminal=lookup_terminal))
  response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
  response.headers["Pragma"]="no-cache"
  response.headers["X-Robots-Tag"]="noindex, nofollow"
