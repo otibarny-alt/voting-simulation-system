@@ -131,6 +131,9 @@ CANDIDATE_ELIGIBILITY_TOKEN = os.getenv("CANDIDATE_ELIGIBILITY_TOKEN", SYSTEM_RE
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+SERIAL_LOOKUP_DATABASE_URL=(os.getenv("SERIAL_LOOKUP_DATABASE_URL","").strip()
+                            or os.getenv("MASTER_REGISTER_DATABASE_URL","").strip()
+                            or DATABASE_URL)
 SERIAL_LOOKUP_LEASE_SECONDS=max(60,int(os.getenv("SERIAL_LOOKUP_LEASE_SECONDS","120") or 120))
 _SERIAL_LOOKUP_DB_READY=False
 _SERIAL_LOOKUP_DB_INIT_LOCK=threading.Lock()
@@ -704,15 +707,24 @@ def membership_request_db():
   options="-c statement_timeout=15000"
  )
 
+def serial_lookup_db():
+ """Use the dedicated/master database before the general voting database."""
+ if not SERIAL_LOOKUP_DATABASE_URL:
+  raise RuntimeError("No database is configured for exclusive Serial Lookup terminal sessions.")
+ url=SERIAL_LOOKUP_DATABASE_URL
+ if url.startswith("postgres://"):url="postgresql://"+url[len("postgres://"):]
+ return psycopg.connect(url,row_factory=dict_row,connect_timeout=4,
+                        options="-c statement_timeout=10000 -c lock_timeout=5000")
+
 def init_serial_lookup_db():
  """Create the shared lease table for exclusive Serial Lookup terminals."""
  global _SERIAL_LOOKUP_DB_READY
- if not DATABASE_URL:
-  raise RuntimeError("DATABASE_URL is required for exclusive Serial Lookup terminal sessions.")
+ if not SERIAL_LOOKUP_DATABASE_URL:
+  raise RuntimeError("SERIAL_LOOKUP_DATABASE_URL, MASTER_REGISTER_DATABASE_URL, or DATABASE_URL is required for exclusive Serial Lookup terminal sessions.")
  if _SERIAL_LOOKUP_DB_READY:return
  with _SERIAL_LOOKUP_DB_INIT_LOCK:
   if _SERIAL_LOOKUP_DB_READY:return
-  with central_control_db() as conn:
+  with serial_lookup_db() as conn:
    with conn.cursor() as cur:
     cur.execute("""CREATE TABLE IF NOT EXISTS serial_lookup_terminal_sessions(
       terminal_id TEXT PRIMARY KEY,session_token TEXT NOT NULL,
@@ -727,7 +739,7 @@ def release_serial_lookup_lease(terminal):
   return
  try:
   init_serial_lookup_db()
-  with central_control_db() as conn:
+  with serial_lookup_db() as conn:
    with conn.cursor() as cur:
     cur.execute("""DELETE FROM serial_lookup_terminal_sessions
       WHERE terminal_id=%s AND session_token=%s""",
@@ -740,7 +752,7 @@ def serial_lookup_lease_is_current(terminal,renew=False):
  if not isinstance(terminal,dict) or not terminal.get("terminal_id") or not terminal.get("session_token"):
   return False
  init_serial_lookup_db()
- with central_control_db() as conn:
+ with serial_lookup_db() as conn:
   with conn.cursor() as cur:
    if renew:
     cur.execute("""UPDATE serial_lookup_terminal_sessions SET last_seen=NOW()
@@ -6546,7 +6558,7 @@ def id_serial_lookup():
   except Exception as exc:
    app.logger.exception("Serial Lookup lease validation failed")
    session.pop("serial_lookup_terminal",None);lookup_terminal=None
-   error="The exclusive lookup-terminal service is temporarily unavailable: "+str(exc)
+   error="The exclusive lookup-terminal service is temporarily unavailable. Ask the administrator to verify SERIAL_LOOKUP_DATABASE_URL or MASTER_REGISTER_DATABASE_URL on Render."
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
@@ -6583,7 +6595,7 @@ def id_serial_lookup():
      }
      try:
       init_serial_lookup_db()
-      with central_control_db() as conn:
+      with serial_lookup_db() as conn:
        with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("serial-lookup:"+terminal_id,))
         cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
@@ -6610,7 +6622,7 @@ def id_serial_lookup():
      except Exception as exc:
       app.logger.exception("Serial Lookup terminal lease could not be reserved")
       lookup_terminal=None
-      error="Unable to reserve this Serial Lookup terminal: "+str(exc)
+      error="Unable to reserve this Serial Lookup terminal because its shared session database is unavailable. Ask the administrator to verify SERIAL_LOOKUP_DATABASE_URL or MASTER_REGISTER_DATABASE_URL on Render."
   else:
    national_id=clean_national_id(request.form.get("national_id"))
    if not re.fullmatch(r"\d{7,8}",national_id):
@@ -6654,7 +6666,7 @@ def id_serial_lookup_keepalive():
  try:
   current=serial_lookup_lease_is_current(terminal,renew=True)
  except Exception as exc:
-  return jsonify({"ok":False,"error":"Lookup-terminal lease is temporarily unavailable: "+str(exc)}),503
+  return jsonify({"ok":False,"error":"The lookup-terminal session database is temporarily unavailable."}),503
  if not current:
   session.pop("serial_lookup_terminal",None)
   return jsonify({"ok":False,"error":"This Serial Lookup login is no longer active."}),409
