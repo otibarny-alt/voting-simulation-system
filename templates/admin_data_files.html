@@ -57,6 +57,14 @@
   </table></div>
   {% else %}<div class="closed-stream-empty" style="margin-top:16px">No master-register import batches have been created yet.</div>{% endif %}
  </section>
+ <section class="data-panel" id="test-phone-backfill">
+  <h2>Fill Missing Test Phone Numbers</h2>
+  <p>Fill blank phone fields in both the active PostgreSQL master register and the Kobo membership CSV. Each generated test value is <b>07 + National ID</b>. Existing phone numbers are never changed.</p>
+  <form method="post" action="{{ url_for('admin_backfill_test_phones') }}" onsubmit="return confirm('Fill every blank test phone field in PostgreSQL and Kobo using 07 + National ID? Existing phone numbers will not be changed.');">
+   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+   <button class="master-action" type="submit">Fill Missing Test Phones</button>
+  </form>
+ </section>
  <section class="data-panel">
   <h2>Voter Polling Centre Lookup</h2>
   <p>Open the independent National ID search page. It displays only the voter's name and assigned polling centre and provides no access to administration pages.</p>

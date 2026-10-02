@@ -194,6 +194,47 @@ def phone_owner(phone, exclude_national_id=""):
             return row.get("national_id") if row else None
 
 
+def backfill_missing_test_phones():
+    """Fill blank active-member phones with 07 + National ID."""
+    ensure_schema()
+    updated = skipped_invalid_id = skipped_conflict = 0
+    with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT national_id,phone FROM master_voters WHERE active FOR UPDATE")
+            rows = list(cur.fetchall())
+            occupied = set()
+            for row in rows:
+                phone = _digits(row.get("phone"))
+                if phone.startswith("254") and len(phone) == 12:
+                    phone = "0" + phone[3:]
+                elif len(phone) == 9:
+                    phone = "0" + phone
+                if phone:
+                    occupied.add(phone)
+            for row in rows:
+                if str(row.get("phone") or "").strip():
+                    continue
+                national_id = _digits(row.get("national_id"))
+                if not re.fullmatch(r"\d{7,8}", national_id):
+                    skipped_invalid_id += 1
+                    continue
+                generated = "07" + national_id
+                if generated in occupied:
+                    skipped_conflict += 1
+                    continue
+                cur.execute(
+                    "UPDATE master_voters SET phone=%s,updated_at=NOW() "
+                    "WHERE active AND national_id=%s AND NULLIF(BTRIM(phone),'') IS NULL",
+                    (generated, national_id),
+                )
+                if cur.rowcount:
+                    occupied.add(generated)
+                    updated += cur.rowcount
+        conn.commit()
+    return {"updated": updated, "skipped_invalid_id": skipped_invalid_id,
+            "skipped_conflict": skipped_conflict}
+
+
 def apply_membership_change(national_id, request_type, updates, request_id=None):
     """Apply an approved self-service membership request to the master register."""
     ensure_schema()
@@ -339,7 +380,7 @@ def voters_register_rows(filters=None, limit=None):
     """Return active register rows without consulting Kobo or the fallback CSV."""
     ensure_schema()
     where, params = _register_where(filters)
-    sql = f"""SELECT national_id AS member_id, serial_no,
+    sql = f"""SELECT national_id AS member_id, serial_no,phone AS phone_no,
                      CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
                      party_membership_number AS odm_registration_no,
                      county,constituency,ward,polling_station
@@ -361,7 +402,7 @@ def iter_voters_register_rows(filters=None):
     """Stream a complete filtered register without holding it in web-worker memory."""
     ensure_schema()
     where, params = _register_where(filters)
-    sql = f"""SELECT national_id AS member_id, serial_no,
+    sql = f"""SELECT national_id AS member_id, serial_no,phone AS phone_no,
                      CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
                      party_membership_number AS odm_registration_no,
                      county,constituency,ward,polling_station

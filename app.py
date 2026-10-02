@@ -5426,6 +5426,46 @@ def replace_kobo_membership_csv(path):
  _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
  return []
 
+def backfill_kobo_membership_csv_test_phones():
+ """Backfill blank phone_no cells in the actual Kobo membership media CSV."""
+ media=current_membership_csv_media()
+ if not media or not media.get("content"):
+  raise RuntimeError(f"{MEMBERSHIP_CSV_FILENAME} is missing from Kobo media.")
+ response=requests.get(media["content"],headers=kobo_headers(),timeout=90)
+ response.raise_for_status()
+ text=response.content.decode("utf-8-sig",errors="strict")
+ reader=csv.DictReader(StringIO(text));headers=list(reader.fieldnames or [])
+ missing=MEMBERSHIP_CSV_REQUIRED-set(headers)
+ if missing:
+  raise ValueError("Current Kobo membership CSV is missing required columns: "+", ".join(sorted(missing)))
+ rows=[];occupied=set();updated=0;skipped_invalid=0;skipped_conflict=0
+ for source_row in reader:
+  row={key:("" if value is None else str(value)) for key,value in source_row.items()}
+  phone=clean_phone(row.get("phone_no"))
+  if phone:occupied.add(phone)
+  rows.append(row)
+ for row in rows:
+  if str(row.get("phone_no") or "").strip():continue
+  national_id=clean_national_id(row.get("national_id_no"))
+  if not re.fullmatch(r"\d{7,8}",national_id):
+   skipped_invalid+=1;continue
+  generated="07"+national_id
+  if generated in occupied:
+   skipped_conflict+=1;continue
+  row["phone_no"]=generated;occupied.add(generated);updated+=1
+ if not updated:
+  return {"updated":0,"skipped_invalid_id":skipped_invalid,"skipped_conflict":skipped_conflict}
+ output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=headers,extrasaction="ignore")
+ writer.writeheader();writer.writerows(rows)
+ fd,temp_path=tempfile.mkstemp(prefix="membership-phone-backfill-",suffix=".csv");os.close(fd)
+ try:
+  with open(temp_path,"wb") as target:target.write(output.getvalue().encode("utf-8-sig"))
+  validate_membership_csv(temp_path)
+  replace_kobo_membership_csv(temp_path)
+ finally:
+  if os.path.exists(temp_path):os.unlink(temp_path)
+ return {"updated":updated,"skipped_invalid_id":skipped_invalid,"skipped_conflict":skipped_conflict}
+
 def _all_kobo_membership_submissions():
  if not MEMBERSHIP_ASSET_UID or not KOBO_API_TOKEN:
   raise RuntimeError("MEMBERSHIP_ASSET_UID and KOBO_API_TOKEN must be configured.")
@@ -5471,6 +5511,7 @@ def _register_member_from_kobo(row):
  return {"member_id":field(row,"basics/national_id_no","national_id_no"),
   "serial_no":field(row,MEMBERSHIP_SERIAL_FIELD,"basics/serial_number","serial_no","serial_number","serial"),"full_name":full_name,
   "odm_registration_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed","odm_membership_no"),
+  "phone_no":field(row,"members_particulars/phone_no","basics/phone_no","phone_no","phone"),
   "county":field(row,"electorals_units/county","electorals_units/selected_county","electorals_units/selected_county1","electorals_units/county_name","particulars_confirmation/selected_county1_confirmation","stored_particulars_confirmed/selected_county1_confirmed","county"),
   "constituency":field(row,"electorals_units/constituency","electorals_units/selected_constituency","electorals_units/selected_constituency1","particulars_confirmation/selected_constituency1_confirmation","stored_particulars_confirmed/selected_constituency1_confirmed","constituency"),
   "ward":field(row,"electorals_units/ward","electorals_units/selected_ward","electorals_units/selected_ward1","particulars_confirmation/selected_ward1_confirmation","stored_particulars_confirmed/selected_ward1_confirmed","ward"),
@@ -5481,7 +5522,7 @@ def _register_member_from_csv(row):
  return {"member_id":str(row.get("national_id_no") or "").strip(),
   "serial_no":str(row.get("serial_no") or row.get("serial_number") or row.get("serial") or "").strip(),
   "full_name":" ".join(str(row.get(key) or "").strip() for key in ("first_name","middle_name","surname") if str(row.get(key) or "").strip()),
-  "odm_registration_no":str(row.get("odm_membership_no") or "").strip(),"county":str(row.get("county") or "").strip(),
+  "odm_registration_no":str(row.get("odm_membership_no") or "").strip(),"phone_no":str(row.get("phone_no") or "").strip(),"county":str(row.get("county") or "").strip(),
   "constituency":str(row.get("constituency") or "").strip(),"ward":str(row.get("ward") or "").strip(),
   "polling_station":str(row.get("poll_station") or "").strip(),"submission_time":"","source":MEMBERSHIP_CSV_FILENAME}
 
@@ -5567,7 +5608,7 @@ def combined_voters_register(filters=None,limit=None):
   csv_member=_register_member_from_csv(raw)
   if member_id not in newest: newest[member_id]=csv_member; csv_added+=1
   else:
-   for key in ("serial_no","full_name","odm_registration_no","county","constituency","ward","polling_station"):
+   for key in ("serial_no","full_name","odm_registration_no","phone_no","county","constituency","ward","polling_station"):
     if not str(newest[member_id].get(key) or "").strip() and str(csv_member.get(key) or "").strip():
      newest[member_id][key]=csv_member[key]; csv_fields_filled+=1
  members=[_enrich_register_geography(member) for member in newest.values()]
@@ -5903,11 +5944,11 @@ def _register_pdf(members,filters):
  for index,(area,station_members) in enumerate(groups):
   county,constituency,ward,polling_station=area
   story.extend([Paragraph("ODM VOTERS REGISTER",title_style),Paragraph(f"Polling Station: {escape(polling_station or 'Not specified')}",station_style),Paragraph(f"County: {escape(county or 'Not specified')} &nbsp;&nbsp; Constituency: {escape(constituency or 'Not specified')} &nbsp;&nbsp; Ward: {escape(ward or 'Not specified')} &nbsp;&nbsp; Registered members: {len(station_members):,}",small),Spacer(1,4*mm)])
-  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","County","Constituency","Ward","Polling station","Voting status","Checked")]]
+  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","Phone number","County","Constituency","Ward","Polling station","Voting status","Checked")]]
   for number,member in enumerate(station_members,1):
-   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member["county"],member["constituency"],member["ward"],member["polling_station"],member.get("voting_status","Not Voted"),"")
+   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member.get("phone_no",""),member["county"],member["constituency"],member["ward"],member["polling_station"],member.get("voting_status","Not Voted"),"")
    data.append([Paragraph(escape(str(value or "")),small) for value in values])
-  table=Table(data,colWidths=[9*mm,18*mm,38*mm,27*mm,21*mm,29*mm,25*mm,42*mm,23*mm,12*mm],repeatRows=1,hAlign="LEFT")
+  table=Table(data,colWidths=[8*mm,17*mm,31*mm,24*mm,23*mm,18*mm,25*mm,21*mm,35*mm,20*mm,11*mm],repeatRows=1,hAlign="LEFT")
   table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#9a9a9a")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")])]))
   story.append(table)
   if index<len(groups)-1: story.append(PageBreak())
@@ -5991,6 +6032,38 @@ def validate_master_register_admin_post():
  supplied=request.form.get("csrf_token","")
  token=session.get("data_files_csrf","")
  return bool(supplied and token and hmac.compare_digest(supplied,token))
+
+
+@app.post("/admin/data-files/backfill-test-phones")
+def admin_backfill_test_phones():
+ """Admin-only, idempotent phone backfill for PostgreSQL and Kobo test data."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_data_files")))
+ if not validate_master_register_admin_post():
+  session["data_files_error"]="Security token expired. Reload the page and try again."
+  return redirect(url_for("admin_data_files")+"#test-phone-backfill")
+ results=[];errors=[]
+ if master_register.configured():
+  try:
+   result=master_register.backfill_missing_test_phones()
+   results.append(f"PostgreSQL: {result['updated']:,} blank phone fields filled")
+   if result["skipped_invalid_id"] or result["skipped_conflict"]:
+    results.append(f"PostgreSQL skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+  except Exception as exc:
+   app.logger.exception("PostgreSQL test-phone backfill failed");errors.append("PostgreSQL: "+str(exc))
+ else:
+  errors.append("PostgreSQL: MASTER_REGISTER_DATABASE_URL is not configured")
+ try:
+  result=backfill_kobo_membership_csv_test_phones()
+  results.append(f"Kobo CSV: {result['updated']:,} blank phone fields filled")
+  if result["skipped_invalid_id"] or result["skipped_conflict"]:
+   results.append(f"Kobo CSV skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+ except Exception as exc:
+  app.logger.exception("Kobo test-phone backfill failed");errors.append("Kobo CSV: "+str(exc))
+ _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
+ if errors:session["data_files_error"]="; ".join(errors)
+ if results:session["data_files_message"]=". ".join(results)+". Existing phone numbers were preserved."
+ return redirect(url_for("admin_data_files")+"#test-phone-backfill")
 
 
 @app.post("/admin/data-files/reset-test-data")
@@ -6885,7 +6958,7 @@ def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  columns=["member_id","full_name","odm_registration_no","county","constituency","ward","polling_station","voting_status"]
+  columns=["member_id","full_name","odm_registration_no","phone_no","county","constituency","ward","polling_station","voting_status"]
   members,_=combined_voters_register(filters);attach_voting_status(members);output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
   for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
