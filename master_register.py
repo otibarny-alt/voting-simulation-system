@@ -197,7 +197,10 @@ def phone_owner(phone, exclude_national_id=""):
 def backfill_missing_test_phones():
     """Permanently fill blank active-member phones with one set-based update."""
     ensure_schema()
-    with connect(statement_timeout_ms=0, lock_timeout_ms=30000) as conn:
+    # This is a background maintenance job. Disable the lock timeout so an
+    # active candidate-registration or membership transaction cannot turn a
+    # temporary row lock into a failed backfill. The browser is not held open.
+    with connect(statement_timeout_ms=0, lock_timeout_ms=0) as conn:
         with conn.cursor() as cur:
             cur.execute(r"""
                 WITH source AS (

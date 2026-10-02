@@ -6057,30 +6057,32 @@ def admin_backfill_test_phones():
 
 def phone_backfill_worker():
  """Persist generated phones, then synchronize the Kobo membership media CSV."""
- messages=[];errors=[]
+ messages=[];errors=[];failed_progress=None
  try:
-  _PHONE_BACKFILL_STATE.update(message="Permanently updating PostgreSQL phone fields…",progress=15,phase="postgresql")
-  result=master_register.backfill_missing_test_phones()
-  messages.append(f"PostgreSQL permanently updated {result['updated']:,} voters")
-  _PHONE_BACKFILL_STATE.update(message=messages[-1]+". Preparing Kobo synchronization…",progress=55,phase="postgresql_complete")
-  if result["skipped_invalid_id"] or result["skipped_conflict"]:
-   messages.append(f"PostgreSQL skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
- except Exception as exc:
-  app.logger.exception("Permanent PostgreSQL phone backfill failed");errors.append("PostgreSQL: "+str(exc))
- try:
-  _PHONE_BACKFILL_STATE.update(message="Synchronizing missing phone numbers to the Kobo membership CSV…",progress=65,phase="kobo")
-  result=backfill_kobo_membership_csv_test_phones()
-  messages.append(f"Kobo CSV updated {result['updated']:,} voters")
-  _PHONE_BACKFILL_STATE.update(message=messages[-1]+". Finalizing caches…",progress=95,phase="finalizing")
-  if result["skipped_invalid_id"] or result["skipped_conflict"]:
-   messages.append(f"Kobo CSV skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
- except Exception as exc:
-  app.logger.exception("Background Kobo phone backfill failed");errors.append("Kobo CSV: "+str(exc))
+  try:
+   _PHONE_BACKFILL_STATE.update(message="Waiting for PostgreSQL locks and permanently updating phone fields…",progress=15,phase="postgresql")
+   result=master_register.backfill_missing_test_phones()
+   messages.append(f"PostgreSQL permanently updated {result['updated']:,} voters")
+   _PHONE_BACKFILL_STATE.update(message=messages[-1]+". Preparing Kobo synchronization…",progress=55,phase="postgresql_complete")
+   if result["skipped_invalid_id"] or result["skipped_conflict"]:
+    messages.append(f"PostgreSQL skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+  except Exception as exc:
+   app.logger.exception("Permanent PostgreSQL phone backfill failed");errors.append("PostgreSQL: "+str(exc));failed_progress=15
+  if not errors:
+   try:
+    _PHONE_BACKFILL_STATE.update(message="Synchronizing missing phone numbers to the Kobo membership CSV…",progress=65,phase="kobo")
+    result=backfill_kobo_membership_csv_test_phones()
+    messages.append(f"Kobo CSV updated {result['updated']:,} voters")
+    _PHONE_BACKFILL_STATE.update(message=messages[-1]+". Finalizing caches…",progress=95,phase="finalizing")
+    if result["skipped_invalid_id"] or result["skipped_conflict"]:
+     messages.append(f"Kobo CSV skipped {result['skipped_invalid_id']:,} invalid IDs and {result['skipped_conflict']:,} conflicting generated phones")
+   except Exception as exc:
+    app.logger.exception("Background Kobo phone backfill failed");errors.append("Kobo CSV: "+str(exc));failed_progress=65
  finally:
   _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
   _PHONE_BACKFILL_STATE["error"]="; ".join(errors)
   _PHONE_BACKFILL_STATE["message"]=(". ".join(messages)+". Existing phone numbers were preserved.") if messages else ""
-  _PHONE_BACKFILL_STATE["progress"]=100
+  _PHONE_BACKFILL_STATE["progress"]=failed_progress if errors else 100
   _PHONE_BACKFILL_STATE["phase"]="failed" if errors else "complete"
   _PHONE_BACKFILL_STATE["running"]=False
   _PHONE_BACKFILL_LOCK.release()

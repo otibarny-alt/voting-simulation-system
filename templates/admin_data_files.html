@@ -61,9 +61,7 @@
  <section class="data-panel" id="test-phone-backfill">
   <h2>Permanently Fill Missing Test Phone Numbers</h2>
   <p>Permanently store generated phones in the active PostgreSQL <code>master_voters.phone</code> field, then synchronize the Kobo membership CSV. Each generated value is <b>07 + National ID</b>. Existing phone numbers are never changed.</p>
-  {% if phone_backfill_state.running %}<div class="data-warning"><b>Background update running:</b> {{ phone_backfill_state.message }} Started {{ phone_backfill_state.started_at }}. You may leave this page and reload it later.</div>
-  {% elif phone_backfill_state.error %}<div class="data-message data-error">{{ phone_backfill_state.error }}</div>
-  {% elif phone_backfill_state.message %}<div class="data-message data-success">{{ phone_backfill_state.message }}</div>{% endif %}
+  <div id="phone-status-box" class="{{ 'data-warning' if phone_backfill_state.running else 'data-message data-error' if phone_backfill_state.error else 'data-message data-success' if phone_backfill_state.message else '' }}" {% if not phone_backfill_state.running and not phone_backfill_state.error and not phone_backfill_state.message %}hidden{% endif %}>{% if phone_backfill_state.running %}<b>Background update running:</b> {{ phone_backfill_state.message }} Started {{ phone_backfill_state.started_at }}. You may leave this page and reload it later.{% elif phone_backfill_state.error %}{{ phone_backfill_state.error }}{% else %}{{ phone_backfill_state.message }}{% endif %}</div>
   <div class="phone-progress" id="phone-progress" aria-live="polite">
    <div class="phone-progress-track" role="progressbar" aria-label="Permanent phone update progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ phone_backfill_state.progress or 0 }}">
     <div class="phone-progress-fill {{ 'failed' if phone_backfill_state.phase == 'failed' else 'complete' if phone_backfill_state.phase == 'complete' else '' }}" id="phone-progress-fill" style="width:{{ phone_backfill_state.progress or 0 }}%"></div>
@@ -73,7 +71,7 @@
   </div>
   <form method="post" action="{{ url_for('admin_backfill_test_phones') }}" onsubmit="return confirm('Fill every blank test phone field in PostgreSQL and Kobo using 07 + National ID? Existing phone numbers will not be changed.');">
    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-   <button class="master-action" type="submit" {% if phone_backfill_state.running or not master_register_configured %}disabled{% endif %}>Permanently Fill Missing Test Phones</button>
+   <button class="master-action" id="phone-backfill-button" type="submit" {% if phone_backfill_state.running or not master_register_configured %}disabled{% endif %}>Permanently Fill Missing Test Phones</button>
   </form>
   <script>
   (function(){
@@ -82,6 +80,8 @@
    const percent=document.getElementById('phone-progress-percent');
    const phase=document.getElementById('phone-progress-phase');
    const message=document.getElementById('phone-progress-message');
+   const statusBox=document.getElementById('phone-status-box');
+   const button=document.getElementById('phone-backfill-button');
    function title(value){return String(value||'idle').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());}
    async function refresh(){
     try{
@@ -90,6 +90,9 @@
      const value=Math.max(0,Math.min(100,Number(data.progress)||0));
      fill.style.width=value+'%';track.setAttribute('aria-valuenow',value);percent.textContent=value+'%';phase.textContent=title(data.phase);message.textContent=data.error||data.message||'Ready to permanently fill missing phone numbers.';
      fill.classList.toggle('complete',data.phase==='complete');fill.classList.toggle('failed',data.phase==='failed');
+     button.disabled=Boolean(data.running);
+     statusBox.hidden=false;statusBox.className=data.running?'data-warning':data.error?'data-message data-error':'data-message data-success';
+     statusBox.textContent=data.running?('Background update running: '+(data.message||'Please wait.')):(data.error||data.message||'Ready.');
      if(data.running)setTimeout(refresh,2000);
     }catch(error){if({{ 'true' if phone_backfill_state.running else 'false' }})setTimeout(refresh,4000);}
    }
