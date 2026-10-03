@@ -51,6 +51,7 @@ def ensure_schema():
                     surname TEXT,
                     full_name TEXT,
                     phone TEXT,
+                    membership_type TEXT NOT NULL DEFAULT 'Ordinary Member',
                     gender TEXT,
                     date_of_birth TEXT,
                     county TEXT,
@@ -68,6 +69,7 @@ def ensure_schema():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("ALTER TABLE master_voters ADD COLUMN IF NOT EXISTS membership_type TEXT NOT NULL DEFAULT 'Ordinary Member'")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_master_voters_serial_ci ON master_voters (LOWER(serial_no))")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_master_voters_membership_ci ON master_voters (LOWER(party_membership_number)) WHERE NULLIF(party_membership_number, '') IS NOT NULL")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_master_voters_geo ON master_voters (LOWER(county), LOWER(constituency), LOWER(ward)) WHERE active")
@@ -392,6 +394,7 @@ def voters_register_rows(filters=None, limit=None):
     ensure_schema()
     where, params = _register_where(filters)
     sql = f"""SELECT national_id AS member_id, serial_no,phone AS phone_no,
+                     COALESCE(NULLIF(membership_type,''),'Ordinary Member') AS membership_type,
                      CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
                      party_membership_number AS odm_registration_no,
                      county,constituency,ward,polling_station
@@ -414,6 +417,7 @@ def iter_voters_register_rows(filters=None):
     ensure_schema()
     where, params = _register_where(filters)
     sql = f"""SELECT national_id AS member_id, serial_no,phone AS phone_no,
+                     COALESCE(NULLIF(membership_type,''),'Ordinary Member') AS membership_type,
                      CONCAT_WS(' ',first_name,middle_name,surname) AS full_name,
                      party_membership_number AS odm_registration_no,
                      county,constituency,ward,polling_station

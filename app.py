@@ -5511,6 +5511,7 @@ def _register_member_from_kobo(row):
  surname=field(row,"members_particulars/surname","members_particulars/surname1","basics/surname","surname")
  full_name=" ".join(value for value in (first,middle,surname) if value).strip() or field(row,"stored_particulars_confirmed/full_name","full_name","name")
  return {"member_id":field(row,"basics/national_id_no","national_id_no"),
+  "membership_type":"Ordinary Member",
   "serial_no":field(row,MEMBERSHIP_SERIAL_FIELD,"basics/serial_number","serial_no","serial_number","serial"),"full_name":full_name,
   "odm_registration_no":field(row,"members_particulars/odm_membership_no","stored_particulars_confirmed/odm_membership_no_confirmed","odm_membership_no"),
   "phone_no":field(row,"members_particulars/phone_no","basics/phone_no","phone_no","phone"),
@@ -5522,6 +5523,7 @@ def _register_member_from_kobo(row):
 
 def _register_member_from_csv(row):
  return {"member_id":str(row.get("national_id_no") or "").strip(),
+  "membership_type":str(row.get("membership_type") or "Ordinary Member").strip() or "Ordinary Member",
   "serial_no":str(row.get("serial_no") or row.get("serial_number") or row.get("serial") or "").strip(),
   "full_name":" ".join(str(row.get(key) or "").strip() for key in ("first_name","middle_name","surname") if str(row.get(key) or "").strip()),
   "odm_registration_no":str(row.get("odm_membership_no") or "").strip(),"phone_no":str(row.get("phone_no") or "").strip(),"county":str(row.get("county") or "").strip(),
@@ -5610,7 +5612,7 @@ def combined_voters_register(filters=None,limit=None):
   csv_member=_register_member_from_csv(raw)
   if member_id not in newest: newest[member_id]=csv_member; csv_added+=1
   else:
-   for key in ("serial_no","full_name","odm_registration_no","phone_no","county","constituency","ward","polling_station"):
+   for key in ("serial_no","full_name","odm_registration_no","phone_no","membership_type","county","constituency","ward","polling_station"):
     if not str(newest[member_id].get(key) or "").strip() and str(csv_member.get(key) or "").strip():
      newest[member_id][key]=csv_member[key]; csv_fields_filled+=1
  members=[_enrich_register_geography(member) for member in newest.values()]
@@ -5946,11 +5948,11 @@ def _register_pdf(members,filters):
  for index,(area,station_members) in enumerate(groups):
   county,constituency,ward,polling_station=area
   story.extend([Paragraph("ODM VOTERS REGISTER",title_style),Paragraph(f"Polling Station: {escape(polling_station or 'Not specified')}",station_style),Paragraph(f"County: {escape(county or 'Not specified')} &nbsp;&nbsp; Constituency: {escape(constituency or 'Not specified')} &nbsp;&nbsp; Ward: {escape(ward or 'Not specified')} &nbsp;&nbsp; Registered members: {len(station_members):,}",small),Spacer(1,4*mm)])
-  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","Phone number","County","Constituency","Ward","Polling station","Voting status","Checked")]]
+  data=[[Paragraph(value,header) for value in ("No.","Member ID","Full name","ODM registration no.","Phone number","Membership Type","County","Constituency","Ward","Polling station","Voting status","Checked")]]
   for number,member in enumerate(station_members,1):
-   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member.get("phone_no",""),member["county"],member["constituency"],member["ward"],member["polling_station"],member.get("voting_status","Not Voted"),"")
+   values=(str(number),member["member_id"],member["full_name"],member["odm_registration_no"],member.get("phone_no",""),member.get("membership_type","Ordinary Member"),member["county"],member["constituency"],member["ward"],member["polling_station"],member.get("voting_status","Not Voted"),"")
    data.append([Paragraph(escape(str(value or "")),small) for value in values])
-  table=Table(data,colWidths=[8*mm,17*mm,31*mm,24*mm,23*mm,18*mm,25*mm,21*mm,35*mm,20*mm,11*mm],repeatRows=1,hAlign="LEFT")
+  table=Table(data,colWidths=[7*mm,15*mm,27*mm,21*mm,20*mm,22*mm,16*mm,21*mm,18*mm,29*mm,18*mm,9*mm],repeatRows=1,hAlign="LEFT")
   table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#9a9a9a")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")])]))
   story.append(table)
   if index<len(groups)-1: story.append(PageBreak())
@@ -6991,7 +6993,7 @@ def download_voters_register_csv():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  try:
-  columns=["member_id","full_name","odm_registration_no","phone_no","county","constituency","ward","polling_station","voting_status"]
+  columns=["member_id","full_name","odm_registration_no","phone_no","membership_type","county","constituency","ward","polling_station","voting_status"]
   members,_=combined_voters_register(filters);attach_voting_status(members);output=StringIO(newline="");writer=csv.DictWriter(output,fieldnames=columns);writer.writeheader()
   for member in members:writer.writerow({key:member.get(key,"") for key in columns})
   return Response("\ufeff"+output.getvalue(),mimetype="text/csv; charset=utf-8",headers={"Content-Disposition":f'attachment; filename="{_safe_register_filename(filters,"csv")}"',"Cache-Control":"no-store"})
