@@ -172,9 +172,9 @@
  </section>
  <section class="data-panel">
   <h2>Membership Self-Service Administration</h2>
-  <p>Review additions and corrections submitted by members. Only approved requests are written into the Kobo membership registration CSV.</p>
+  <p>View the audit history of membership additions and corrections. New registrations and permitted edits are applied to the active voters register immediately after saving.</p>
   <div class="verification-admin-actions">
-   <a class="verification-admin-link" href="{{ url_for('admin_membership_requests') }}">Review Membership Requests</a>
+   <a class="verification-admin-link" href="{{ url_for('admin_membership_requests',status='all') }}">Membership Change History</a>
    <a class="verification-admin-link" href="{{ url_for('membership_portal') }}" target="_blank" rel="noopener">Open Public Membership Portal</a>
   </div>
  </section>

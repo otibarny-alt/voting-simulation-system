@@ -6429,7 +6429,6 @@ def membership_application():
  token=session.get("membership_csrf") or secrets.token_urlsafe(32)
  session["membership_csrf"]=token
  message=session.pop("membership_message",None); error=None
- pending=bool(latest and latest.get("status")=="pending")
  candidate_locked=False; candidate_lock_error=None
  if current:
   candidate_locked,candidate_lock_error=candidate_registration_lock(national_id)
@@ -6447,8 +6446,6 @@ def membership_application():
    error="Membership changes are not permitted because this National ID has registered as a candidate."
   elif candidate_lock_error:
    error=candidate_lock_error
-  elif pending:
-   error="Your previous request is still pending administrator review."
   else:
    accepted_fields=MEMBERSHIP_EXISTING_EDITABLE_FIELDS if current else MEMBERSHIP_SELF_SERVICE_FIELDS
    submitted={key:str(request.form.get(key) or "").strip() for key in accepted_fields if key not in MEMBERSHIP_IMAGE_FIELDS}
@@ -6486,22 +6483,26 @@ def membership_application():
      request_type="edit" if current else "new"
      with membership_request_db() as conn:
       with conn.cursor() as cur:
-       # One serialized check is sufficient: the advisory transaction lock is
-       # retained until this request has been inserted and committed.
+       # Validate and reserve the phone/serial before recording the change.
+       # The request row remains as an audit trail, but it is applied
+       # automatically immediately after this transaction commits.
        assert_membership_phone_available(cur,submitted["phone_no"],national_id)
        if request_type=="new":
         submitted["serial_no"]=generate_unique_membership_serial(cur)
        cur.execute("""INSERT INTO membership_change_requests
         (national_id,request_type,request_data,original_data,status)
-        VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending')""",
+        VALUES(%s,%s,%s::jsonb,%s::jsonb,'pending') RETURNING id""",
         (national_id,request_type,json.dumps(submitted),json.dumps(current or {})))
+       request_id=int(cur.fetchone()["id"])
       conn.commit()
+     approval_target=approve_membership_request(request_id,"automatic membership registration")
      serial_note=(" Your membership serial number is "+submitted["serial_no"]+".") if request_type=="new" else ""
-     session["membership_message"]="Your membership request, ID photo and passport photo were submitted and are pending administrator approval."+serial_note
+     destination=("active voters register" if approval_target=="postgresql_master_register" else "membership register")
+     session["membership_message"]="Your membership details were saved and are now active in the "+destination+"."+serial_note
      return redirect(url_for("membership_application"))
     except Exception as exc:
      app.logger.exception("Membership request submission failed")
-     error="Membership request was not saved. The approval database returned: "+str(exc)
+     error="Membership details were not saved: "+str(exc)
  return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error)
 
 
