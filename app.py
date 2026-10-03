@@ -5633,6 +5633,8 @@ def combined_voters_register(filters=None,limit=None):
 def _register_filters():
  filters={key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","polling_station")}
  filters["national_id"]=clean_national_id(request.args.get("national_id"))
+ membership_type=(request.args.get("membership_type") or "").strip()
+ filters["membership_type"]=membership_type if membership_type in {"Ordinary Member","Life Member","Election Official"} else ""
  return filters
 
 def _register_hierarchy_options(filters):
@@ -5653,6 +5655,8 @@ def _register_hierarchy_options(filters):
 def _filter_register(members,filters):
  def matches(member):
   if filters.get("national_id") and clean_national_id(member.get("member_id"))!=filters["national_id"]:
+   return False
+  if filters.get("membership_type") and str(member.get("membership_type") or "Ordinary Member").strip()!=filters["membership_type"]:
    return False
   return all(not filters.get(key) or station_key(member.get(key))==station_key(filters[key])
              for key in ("county","constituency","ward","polling_station"))
@@ -5814,7 +5818,9 @@ def resolve_terminal_credentials():
 def _safe_register_filename(filters,extension):
  area=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
  area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "National"
- return f"Voters_Register_{area}.{extension}"
+ member_type=re.sub(r"[^A-Za-z0-9_-]+","_",filters.get("membership_type") or "").strip("_")
+ suffix=f"_{member_type}" if member_type else ""
+ return f"Voters_Register_{area}{suffix}.{extension}"
 
 WINNERS_REPORT_ELECTIONS=(
  ("president","President",()),
