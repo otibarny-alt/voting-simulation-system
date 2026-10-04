@@ -154,6 +154,26 @@ AGENT_SSO_MAX_AGE_SECONDS = int(os.getenv("AGENT_SSO_MAX_AGE_SECONDS", "300") or
 AGENT_SESSION_HOURS = int(os.getenv("AGENT_SESSION_HOURS", "12") or 12)
 VOTING_TERMINAL_ACCESS_COOKIE="odm_voting_terminal_access"
 
+# V23.157: one shared party-branding choice for every page and connected service.
+# The database record intentionally contains display-only settings. Election data,
+# credentials and member identifiers are never rewritten when the party changes.
+PARTY_BRANDS={
+ "ODM":{
+  "code":"ODM","name":"Orange Democratic Movement","abbreviation":"ODM",
+  "slogan":"Tuko Tayari","membership_prefix":"ODM",
+  "primary":"#ef7d00","secondary":"#111111","accent":"#fff2df",
+  "header_file":"brand_odm_header.png"
+ },
+ "UDA":{
+  "code":"UDA","name":"United Democratic Alliance","abbreviation":"UDA",
+  "slogan":"Kazi ni Kazi","membership_prefix":"UDA",
+  "primary":"#078b37","secondary":"#ffd20a","accent":"#f2ffe9",
+  "header_file":"brand_uda_header.png"
+ }
+}
+_PARTY_BRAND_CACHE={"loaded_at":0.0,"value":dict(PARTY_BRANDS["ODM"])}
+_PARTY_BRAND_LOCK=threading.Lock()
+
 def voting_terminal_access_serializer():
  return URLSafeTimedSerializer(app.secret_key,salt="voting-terminal-access-backup-v1")
 
@@ -289,7 +309,7 @@ def stream_control_access_required(fn):
 
 @app.context_processor
 def inject_voting_agent_access():
- return {"agent_access":current_agent_access()}
+ return {"agent_access":current_agent_access(),"party_brand":active_party_brand()}
 
 
 def managed_data_file(configured_name):
@@ -306,6 +326,128 @@ def managed_data_file(configured_name):
 
 def repository_admin_logged_in():
  return bool(session.get("repository_admin"))
+
+
+def init_party_branding_db():
+ if not DATABASE_URL:return
+ with psycopg.connect(pg_url(),connect_timeout=5,options="-c statement_timeout=10000") as conn:
+  with conn.cursor() as cur:
+   cur.execute("""CREATE TABLE IF NOT EXISTS app_party_branding(
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
+    party_code TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+   cur.execute("""INSERT INTO app_party_branding(singleton,party_code)
+    VALUES(TRUE,'ODM') ON CONFLICT(singleton) DO NOTHING""")
+
+
+def active_party_brand(force=False):
+ now=time.time()
+ if not force and now-float(_PARTY_BRAND_CACHE.get("loaded_at") or 0)<10:
+  return dict(_PARTY_BRAND_CACHE["value"])
+ with _PARTY_BRAND_LOCK:
+  now=time.time()
+  if not force and now-float(_PARTY_BRAND_CACHE.get("loaded_at") or 0)<10:
+   return dict(_PARTY_BRAND_CACHE["value"])
+  code="ODM"
+  if DATABASE_URL:
+   try:
+    init_party_branding_db()
+    with psycopg.connect(pg_url(),row_factory=dict_row,connect_timeout=5,
+                         options="-c statement_timeout=8000") as conn:
+     row=conn.execute("SELECT party_code FROM app_party_branding WHERE singleton=TRUE").fetchone()
+     if row:code=str(row.get("party_code") or "ODM").upper()
+   except Exception:
+    app.logger.exception("Unable to load shared party branding; using last known setting")
+    code=str((_PARTY_BRAND_CACHE.get("value") or {}).get("code") or "ODM")
+  value=dict(PARTY_BRANDS.get(code,PARTY_BRANDS["ODM"]))
+  _PARTY_BRAND_CACHE.update(loaded_at=now,value=value)
+  return dict(value)
+
+
+def active_brand_asset_path():
+ brand=active_party_brand()
+ return os.path.join(app.root_path,"static",brand["header_file"])
+
+
+def active_brand_header_url():
+ return url_for("party_brand_asset",kind="header",v=active_party_brand()["code"])
+
+
+@app.get("/api/party-branding")
+def party_branding_api():
+ """Public, read-only configuration consumed by the other nomination services."""
+ brand=active_party_brand()
+ return jsonify({"ok":True,"brand":brand,
+                 "header_url":urljoin(request.url_root,active_brand_header_url().lstrip("/"))})
+
+
+@app.get("/party-brand/asset/<kind>")
+def party_brand_asset(kind):
+ if kind not in {"header","screen","report","pdf"}:return Response("Not found",status=404)
+ return send_file(active_brand_asset_path(),max_age=60,conditional=True)
+
+
+@app.route("/admin/party-branding",methods=["GET","POST"])
+def admin_party_branding():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_party_branding")))
+ token=session.get("data_files_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32);session["data_files_csrf"]=token
+ message=error=None
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,token):
+   error="Security token expired. Reload the page and try again."
+  else:
+   code=str(request.form.get("party_code") or "").upper()
+   if code not in PARTY_BRANDS:
+    error="Select ODM or UDA."
+   elif not DATABASE_URL:
+    error="DATABASE_URL is required so all deployed services can share one party setting."
+   else:
+    try:
+     init_party_branding_db()
+     with psycopg.connect(pg_url(),connect_timeout=5,options="-c statement_timeout=10000") as conn:
+      conn.execute("""INSERT INTO app_party_branding(singleton,party_code,updated_at)
+       VALUES(TRUE,%s,NOW()) ON CONFLICT(singleton) DO UPDATE
+       SET party_code=EXCLUDED.party_code,updated_at=NOW()""",(code,))
+     _PARTY_BRAND_CACHE.update(loaded_at=0.0,value=dict(PARTY_BRANDS[code]))
+     message=f"{PARTY_BRANDS[code]['name']} branding is now active throughout the system."
+    except Exception as exc:
+     app.logger.exception("Party branding update failed")
+     error=f"Branding could not be updated: {exc}"
+ return render_template("admin_party_branding.html",brands=PARTY_BRANDS,
+                        active=active_party_brand(force=bool(message)),csrf_token=token,
+                        message=message,error=error)
+
+
+@app.after_request
+def apply_party_branding_to_html(response):
+ """Apply branding even to legacy templates while preserving field/API names."""
+ ctype=str(response.headers.get("Content-Type") or "").lower()
+ if response.direct_passthrough or "text/html" not in ctype:return response
+ try:
+  brand=active_party_brand()
+  html=response.get_data(as_text=True)
+  for old in ("/static/odm_screen_header.png","/static/odm_report_header.png","/static/odm_pdf_header.jpg"):
+   html=html.replace(old,active_brand_header_url())
+  # Text-node replacement avoids renaming stable form fields such as
+  # odm_membership_no, which remain part of the database/API contract.
+  payload=json.dumps({
+   "Orange Democratic Movement":brand["name"],"ODM Membership":brand["abbreviation"]+" Membership",
+   "ODM membership":brand["abbreviation"]+" membership","ODM registration":brand["abbreviation"]+" registration",
+   "ODM 2027":brand["abbreviation"]+" 2027","Tuko Tayari":brand["slogan"]
+  })
+  addon=f'''<style id="party-brand-theme">:root{{--party-primary:{brand['primary']};--party-secondary:{brand['secondary']};--party-accent:{brand['accent']}}}
+  header{{border-bottom-color:var(--party-primary)!important}} a.button,button,.btn,.save,.master-action,.verification-admin-link{{border-color:var(--party-primary)}}
+  .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}</style>
+  <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>'''
+  html=html.replace("</head>",addon+"</head>")
+  response.set_data(html)
+  response.headers["Content-Length"]=str(len(response.get_data()))
+ except Exception:
+  app.logger.exception("Unable to apply party branding to response")
+ return response
 
 
 @app.get("/agent-access")
@@ -4678,7 +4820,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  # odm_report_header.png in an older build was truncated. Use the validated
  # screen header and verify it before ReportLab receives it; branding must
  # never be allowed to abort all six report deposits.
- header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+ header_path=active_brand_asset_path()
  try:
   with PILImage.open(header_path) as header_check:header_check.verify()
   story.extend([RLImage(header_path,width=190*mm,height=31*mm,kind="proportional"),Spacer(1,2*mm)])
@@ -4797,7 +4939,7 @@ def render_tally_pdf(report_html, ref=None):
  """
  pdf_header_html=""
  try:
-  header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+  header_path=active_brand_asset_path()
   if os.path.isfile(header_path):
    import base64
    with open(header_path,"rb") as f: header_b64=base64.b64encode(f.read()).decode("ascii")
@@ -5091,7 +5233,7 @@ def upload_membership_image(upload,national_id,kind):
  endpoint=f"{KOBO_BASE_URL}/api/v2/assets/{MEMBERSHIP_ASSET_UID}/files.json"
  response=requests.post(endpoint,headers=kobo_headers(),data={
   "file_type":"form_media",
-  "description":f"ODM membership {kind.replace('_',' ')} for National ID {national_id}",
+  "description":f"{active_party_brand()['abbreviation']} membership {kind.replace('_',' ')} for National ID {national_id}",
   "metadata":json.dumps({"filename":filename}),
  },files={"content":(filename,BytesIO(content),allowed[extension])},timeout=90)
  if not response.ok:
@@ -5227,7 +5369,7 @@ def approve_membership_request(request_id,reviewer):
    if master_register.configured():
     updates=request_row.get("request_data") or {}
     if request_row["request_type"]=="new":
-     updates["odm_membership_no"]="ODM"+request_row["national_id"]
+     updates["odm_membership_no"]=active_party_brand()["membership_prefix"]+request_row["national_id"]
     master_register.apply_membership_change(
      request_row["national_id"],request_row["request_type"],updates,request_id=request_id)
     cur.execute("""UPDATE membership_change_requests
@@ -5248,7 +5390,7 @@ def approve_membership_request(request_id,reviewer):
    rows=[]; matched=False; national_id=request_row["national_id"]
    updates=request_row.get("request_data") or {}
    if request_row["request_type"]=="new":
-    updates["odm_membership_no"]="ODM"+national_id
+    updates["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
     if not str(updates.get("serial_no") or "").strip():
      raise ValueError("This new membership request has no generated serial number.")
    for source_row in reader:
@@ -6445,7 +6587,7 @@ def membership_application():
   values.update(latest["request_data"])
  values.setdefault("phone_no",session.get("membership_member_phone",""))
  if not current:
-  values["odm_membership_no"]="ODM"+national_id
+  values["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
@@ -6464,7 +6606,7 @@ def membership_application():
      submitted[key]=str(current.get(key) or "").strip()
    submitted["phone_no"]=clean_phone(submitted["phone_no"])
    if not current:
-    submitted["odm_membership_no"]="ODM"+national_id
+    submitted["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
    values.update(submitted)
    required_labels={
     "phone_no":"Phone number","odm_membership_no":"ODM registration number",
@@ -6884,7 +7026,7 @@ def terminal_credentials_pdf(assignments,filters):
  secret_style=ParagraphStyle("CredentialSecret",parent=cell_style,fontName="Courier-Bold",fontSize=6.4)
  header_style=ParagraphStyle("CredentialHeader",parent=cell_style,fontName="Helvetica-Bold",
                              textColor=colors.white,alignment=TA_CENTER)
- header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
+ header_path=active_brand_asset_path()
  def page_header_footer(canvas,doc):
   canvas.saveState()
   if os.path.isfile(header_path):
@@ -7341,9 +7483,7 @@ def render_opening_report_pdf(row,position_rows):
  warning_style=ParagraphStyle("OpeningWarning",parent=styles["BodyText"],fontSize=10,
                               leading=13,alignment=TA_CENTER,textColor=colors.HexColor("#a84c00"),spaceAfter=10)
  story=[]
- header_path=os.path.join(app.root_path,"static","odm_pdf_header.jpg")
- if not os.path.isfile(header_path):
-  header_path=os.path.join(app.root_path,"static","odm_screen_header.png")
+ header_path=active_brand_asset_path()
  if os.path.isfile(header_path):
   try:
    story.extend([RLImage(header_path,width=181*mm,height=31*mm,kind="proportional"),Spacer(1,4*mm)])

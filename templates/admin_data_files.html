@@ -14,10 +14,15 @@
  </style>
 </head>
 <body>
-<header><b>Simulation Administration</b><a href="/">Training Ballot</a><a href="/report-repository">Report Repository</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
+<header><b>Simulation Administration</b><a href="/">Training Ballot</a><a href="/report-repository">Report Repository</a><a href="{{ url_for('admin_party_branding') }}">Party Branding</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
 <main class="data-admin">
  <h1>Admin Data Files</h1>
  <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
+ <section class="data-panel" id="party-branding">
+  <h2>Universal Party Branding</h2>
+  <p>Change the logos, colour theme, party name, abbreviation, slogan and visible membership wording for every connected nomination service.</p>
+  <div class="verification-admin-actions"><a class="verification-admin-link" href="{{ url_for('admin_party_branding') }}">Open Party Branding</a></div>
+ </section>
  <section class="data-panel reset-danger" id="clean-test-reset">
   <h2>Clean Testing Reset</h2>
   <p><b>This permanently deletes votes, voter voting status, stream locks, certified tallies, and opening/closing reports.</b></p>

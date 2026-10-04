@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Party Branding Administration</title>
+ <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+ <style>
+ body{background:#f4f6f8}.brand-admin{max-width:980px;margin:30px auto;padding:0 18px}.brand-panel{background:#fff;border:1px solid #ddd;border-radius:16px;padding:24px;box-shadow:0 5px 22px #0001}.brand-grid{display:grid;grid-template-columns:repeat(2,minmax(280px,1fr));gap:18px;margin:22px 0}.brand-choice{display:block;border:3px solid #d1d5db;border-radius:14px;padding:17px;cursor:pointer;background:#fff}.brand-choice:has(input:checked){border-color:var(--party-primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--party-primary) 20%,transparent)}.brand-choice input{width:22px;height:22px;vertical-align:middle}.brand-banner{display:block;width:100%;height:120px;object-fit:contain;background:#fff;border:1px solid #eee;margin:13px 0}.swatches{display:flex;gap:8px}.swatch{width:38px;height:30px;border:1px solid #777;border-radius:5px}.current{padding:14px;background:var(--party-accent);border-left:7px solid var(--party-primary);border-radius:8px}.save-brand{padding:13px 24px;border:3px solid var(--party-primary);border-radius:9px;background:#111;color:#fff;font-size:17px;font-weight:900;cursor:pointer}.message{padding:13px;border-radius:8px;margin:14px 0}.success{background:#e8f7ec;border:1px solid #4f9a61}.error{background:#fdecec;border:1px solid #c75b5b}@media(max-width:720px){.brand-grid{grid-template-columns:1fr}}
+ </style>
+</head>
+<body>
+<header><b>Simulation Administration</b><a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><a href="{{ url_for('report_repository') }}">Report Repository</a><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form></header>
+<main class="brand-admin">
+ <h1>Universal Party Branding</h1>
+ <p>Choose the political party running the nomination. The selection is stored centrally and updates logos, colours, party name, abbreviation, slogan and visible membership wording across connected services.</p>
+ {% if message %}<div class="message success">{{ message }}</div>{% endif %}
+ {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+ <div class="current"><b>Currently active:</b> {{ active.name }} ({{ active.abbreviation }}) — {{ active.slogan }}</div>
+ <form method="post" onsubmit="return confirm('Change the branding used throughout the nomination system? Election records and credentials will not be changed.');">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="brand-grid">
+  {% for code,brand in brands.items() %}
+   <label class="brand-choice">
+    <input type="radio" name="party_code" value="{{ code }}" {% if active.code==code %}checked{% endif %} required> <b>{{ brand.name }} ({{ brand.abbreviation }})</b>
+    <img class="brand-banner" src="{{ url_for('static',filename=brand.header_file) }}" alt="{{ brand.name }} banner">
+    <div><b>Slogan:</b> {{ brand.slogan }}</div><div><b>Membership prefix:</b> {{ brand.membership_prefix }}</div>
+    <div class="swatches"><span class="swatch" style="background:{{ brand.primary }}"></span><span class="swatch" style="background:{{ brand.secondary }}"></span><span class="swatch" style="background:{{ brand.accent }}"></span></div>
+   </label>
+  {% endfor %}
+  </div>
+  <button class="save-brand" type="submit">Apply Selected Party Universally</button>
+ </form>
+ <p><small>The change does not alter historical votes, candidate records, login IDs, passwords or database field names.</small></p>
+</main>
+</body></html>
