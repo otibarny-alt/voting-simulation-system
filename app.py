@@ -5818,6 +5818,44 @@ def _register_geography_index():
  _REGISTER_GEO_INDEX=index
  return index
 
+def _csv_only_register_members(filters=None):
+ """Return filtered legacy-CSV members that do not exist in PostgreSQL."""
+ csv_rows=_load_membership_csv()
+ members=[]
+ for member_id,raw in csv_rows.items():
+  member=_enrich_register_geography(_register_member_from_csv(raw))
+  member["member_id"]=clean_national_id(member.get("member_id") or member_id)
+  if member["member_id"] and (not filters or _filter_register([member],filters)):
+   members.append(member)
+ if master_register.configured() and members:
+  existing=master_register.existing_active_national_ids(member["member_id"] for member in members)
+  members=[member for member in members if member["member_id"] not in existing]
+ return members
+
+_REGISTER_COUNT_CACHE={}
+_REGISTER_COUNT_LOCK=threading.Lock()
+
+def authoritative_voters_register_count(filters=None):
+ """Count PostgreSQL + legacy CSV without constructing display rows."""
+ filters=dict(filters or {})
+ cache_key=tuple((key,station_key(filters.get(key))) for key in
+                 ("national_id","membership_type","county","constituency","ward","polling_station"))
+ now=time.time();cached=_REGISTER_COUNT_CACHE.get(cache_key)
+ if cached and now-cached[0]<5:return cached[1],dict(cached[2])
+ if master_register.configured():
+  with _REGISTER_COUNT_LOCK:
+   now=time.time();cached=_REGISTER_COUNT_CACHE.get(cache_key)
+   if cached and now-cached[0]<5:return cached[1],dict(cached[2])
+   database_count=master_register.voters_register_count(filters)
+   legacy_count=len(_csv_only_register_members(filters))
+   stats={"source":"postgresql_master_register_plus_legacy_membership",
+          "database_records":database_count,"csv_added":legacy_count}
+   total=database_count+legacy_count
+   _REGISTER_COUNT_CACHE[cache_key]=(now,total,stats)
+   return total,dict(stats)
+ members,stats=combined_voters_register(filters,limit=0)
+ return int(stats.get("unique_members",len(members))),stats
+
 def combined_voters_register(filters=None,limit=None):
  """Merge master, live Kobo and CSV members by National ID.
 
@@ -5827,13 +5865,14 @@ def combined_voters_register(filters=None,limit=None):
  """
  newest={}; database_records=0
  if master_register.configured():
-  # Ward/station values can arrive as hierarchy keys, display labels or text
-  # with harmless spacing differences. Narrow safely by ID/county/constituency
-  # in PostgreSQL, then apply ward/station after canonicalization below.
+  # Browser filters submit canonical county_main display labels. Apply the
+  # complete hierarchy in PostgreSQL so ward/station requests do not first
+  # load and sort an entire constituency.
   master_filters=dict(filters or {})
-  master_filters.pop("ward",None)
-  master_filters.pop("polling_station",None)
-  master_members=master_register.voters_register_rows(master_filters)
+  # Bound interactive display queries. Loading an entire county into a single
+  # web worker caused Render gateway timeouts.
+  database_limit=(max(1,int(limit))+1) if limit is not None else None
+  master_members=master_register.voters_register_rows(master_filters,limit=database_limit)
   for member in master_members:
    member_id=re.sub(r"\D","",str(member.get("member_id") or ""))
    if member_id:
@@ -5871,6 +5910,10 @@ def combined_voters_register(filters=None,limit=None):
  if filters:members=_filter_register(members,filters)
  database_records=sum(1 for member in members if member.get("source")=="PostgreSQL master register")
  unique_total=len(members)
+ if limit is not None and master_register.configured():
+  unique_total,count_stats=authoritative_voters_register_count(filters)
+  database_records=count_stats.get("database_records",database_records)
+  csv_added=count_stats.get("csv_added",csv_added)
  if limit is not None:members=members[:int(limit)]
  return members,{"source":"postgresql_master_register_plus_legacy_membership" if master_register.configured() else "legacy_membership",
                  "database_records":database_records,"displayed_records":len(members),
@@ -6869,9 +6912,9 @@ def admin_voters_register():
  if not any(filters.values()):
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=None,prompt="Enter a National ID or select a county, then click Apply Filters to load the register.")
  try:
-  members,stats=combined_voters_register(filters,limit=5001)
-  truncated=len(members)>5000
-  if truncated:members=members[:5000]
+  members,stats=combined_voters_register(filters,limit=501)
+  truncated=stats.get("unique_members",len(members))>500
+  if len(members)>500:members=members[:500]
   attach_voting_status(members)
   groups=_register_station_groups(members)
   return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None,prompt=None)
@@ -6892,9 +6935,9 @@ def api_voters_register_count():
  filters={key:(request.args.get(key) or "").strip()
           for key in ("county","constituency","ward","polling_station")}
  try:
-  _rows,stats=combined_voters_register(filters,limit=0)
+  registered_voters,stats=authoritative_voters_register_count(filters)
   return jsonify({
-   "ok":True,"registered_voters":to_int(stats.get("unique_members")),
+   "ok":True,"registered_voters":to_int(registered_voters),
    "filters":filters,"source":stats.get("source"),
    "database_records":to_int(stats.get("database_records")),
    "legacy_records_added":to_int(stats.get("csv_added")),
