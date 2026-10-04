@@ -429,12 +429,17 @@ def apply_party_branding_to_html(response):
  try:
   brand=active_party_brand()
   html=response.get_data(as_text=True)
-  for old in ("/static/odm_screen_header.png","/static/odm_report_header.png","/static/odm_pdf_header.jpg"):
+  for old in ("/static/odm_screen_header.png","/static/odm_report_header.png","/static/odm_pdf_header.jpg",
+              "/static/voter_verification_logo.jpeg","/static/voter_verification_logo.jpg","/static/voter_verification_logo.png"):
    html=html.replace(old,active_brand_header_url())
+  html=re.sub(r'''(?i)(?:https?://[^"']+)?/static/[^"']*(?:odm|voter_verification_logo)[^"']*\.(?:png|jpe?g)(?:\?[^"']*)?''',
+              active_brand_header_url(),html)
   # Text-node replacement avoids renaming stable form fields such as
   # odm_membership_no, which remain part of the database/API contract.
   payload=json.dumps({
-   "Orange Democratic Movement":brand["name"],"ODM Membership":brand["abbreviation"]+" Membership",
+   "Orange Democratic Movement":brand["name"],"ODM Voter Verification":brand["abbreviation"]+" Voter Verification",
+   "ODM Internal Nominations":brand["abbreviation"]+" Internal Nominations",
+   "ODM Membership No.":brand["abbreviation"]+" Membership No.","ODM Membership":brand["abbreviation"]+" Membership",
    "ODM membership":brand["abbreviation"]+" membership","ODM registration":brand["abbreviation"]+" registration",
    "ODM 2027":brand["abbreviation"]+" 2027","Tuko Tayari":brand["slogan"]
   })
