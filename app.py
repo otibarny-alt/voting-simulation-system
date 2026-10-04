@@ -6842,7 +6842,9 @@ def admin_terminal_assignments():
 
 @app.get("/terminal-credentials-lookup")
 def terminal_credentials_lookup():
- """Standalone area credential lookup, isolated from administration."""
+ """Administrator-protected area credential lookup."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters()
  selected={key:value for key,value in filters.items() if value}
  complete=bool(filters.get("county"))
@@ -6918,6 +6920,8 @@ def terminal_credentials_pdf(assignments,filters):
 
 @app.get("/terminal-credentials-lookup.pdf")
 def terminal_credentials_lookup_pdf():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters();selected={key:value for key,value in filters.items() if value}
  if not filters.get("county"):return Response("Select at least a county before creating the PDF.",status=400,mimetype="text/plain")
  try:
@@ -6934,6 +6938,8 @@ def terminal_credentials_lookup_pdf():
 @app.get("/terminal-credentials-lookup.csv")
 def terminal_credentials_lookup_csv():
  """Download exactly the filtered terminal credential assignments as CSV."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_register_filters();selected={key:value for key,value in filters.items() if value}
  if not filters.get("county"):
   return Response("Select at least a county before downloading the CSV.",status=400,mimetype="text/plain")
@@ -6957,6 +6963,8 @@ def terminal_credentials_lookup_csv():
 @app.post("/api/terminal-credentials/email")
 def email_terminal_credentials():
  """Email the selected county/constituency/ward/station credentials as PDF."""
+ if not repository_admin_logged_in():
+  return jsonify({"ok":False,"error":"Administrator login required."}),403
  data=request.get_json(silent=True) or {}
  supplied=str(data.get("csrf_token") or "")
  expected=str(session.get("terminal_credentials_csrf") or "")
