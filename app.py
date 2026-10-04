@@ -5858,26 +5858,23 @@ def authoritative_voters_register_count(filters=None):
  members,stats=combined_voters_register(filters,limit=0)
  return int(stats.get("unique_members",len(members))),stats
 
-def _full_filter_voted_count(national_ids):
- ids=sorted({clean_national_id(value) for value in national_ids if clean_national_id(value)})
- if not ids:return 0
+def _all_voted_national_ids():
+ """Fetch only voters who have voted; never send the whole register to SQL."""
  try:
   init_voter_access_db()
   with central_control_db() as conn:
    with conn.cursor() as cur:
-    cur.execute("""SELECT COUNT(DISTINCT national_id) AS n FROM voter_status
-                   WHERE election_id=%s AND national_id=ANY(%s)
-                     AND voted_at IS NOT NULL""",(ELECTION_ID,ids))
-    return to_int(cur.fetchone().get("n"))
+    cur.execute("""SELECT DISTINCT national_id FROM voter_status
+                   WHERE election_id=%s AND voted_at IS NOT NULL""",(ELECTION_ID,))
+    return {clean_national_id(row.get("national_id")) for row in cur.fetchall()
+            if clean_national_id(row.get("national_id"))}
  except Exception:
-  app.logger.warning("Full-filter central voting count failed; using local votes",exc_info=True)
-  voted=set();c=con()
+  app.logger.warning("Central voted-ID query failed; using local votes",exc_info=True)
+  c=con()
   try:
-   for start in range(0,len(ids),500):
-    batch=ids[start:start+500];marks=",".join("?" for _ in batch)
-    rows=c.execute(f"SELECT DISTINCT voter_session FROM demo_votes WHERE voter_session IN ({marks})",batch).fetchall()
-    voted.update(clean_national_id(row["voter_session"]) for row in rows)
-   return len(voted)
+   rows=c.execute("SELECT DISTINCT voter_session FROM demo_votes").fetchall()
+   return {clean_national_id(row["voter_session"]) for row in rows
+           if clean_national_id(row["voter_session"])}
   finally:c.close()
 
 def authoritative_voters_register_summary(filters=None):
@@ -5886,21 +5883,30 @@ def authoritative_voters_register_summary(filters=None):
  cache_key=tuple((key,station_key(filters.get(key))) for key in
                  ("national_id","membership_type","county","constituency","ward","polling_station"))
  now=time.time();cached=_REGISTER_SUMMARY_CACHE.get(cache_key)
- if cached and now-cached[0]<5:return dict(cached[1])
+ if cached and now-cached[0]<30:return dict(cached[1])
  with _REGISTER_SUMMARY_LOCK:
   now=time.time();cached=_REGISTER_SUMMARY_CACHE.get(cache_key)
-  if cached and now-cached[0]<5:return dict(cached[1])
+  if cached and now-cached[0]<30:return dict(cached[1])
   if master_register.configured():
-   rows=master_register.voters_register_summary_rows(filters)
    legacy=_csv_only_register_members(filters)
-   rows.extend(legacy)
+   database_total=master_register.voters_register_count(filters)
+   database_stations=master_register.voters_register_distinct_stations(filters)
+   total=database_total+len(legacy)
+   voted_ids=_all_voted_national_ids()
+   database_voted=master_register.matching_active_national_ids(voted_ids,filters)
+   legacy_voted={clean_national_id(member.get("member_id")) for member in legacy} & voted_ids
+   voted=len(database_voted|legacy_voted)
+   station_rows=[*database_stations,*legacy]
   else:
    rows,_stats=combined_voters_register(filters,limit=None)
-  ids=[member.get("member_id") for member in rows]
+   total=len({clean_national_id(member.get("member_id")) for member in rows
+              if clean_national_id(member.get("member_id"))})
+   voted_ids=_all_voted_national_ids()
+   voted=len({clean_national_id(member.get("member_id")) for member in rows} & voted_ids)
+   station_rows=rows
   stations={tuple(station_key(member.get(key)) for key in
                   ("county","constituency","ward","polling_station"))
-            for member in rows if station_key(member.get("polling_station"))}
-  voted=_full_filter_voted_count(ids);total=len({clean_national_id(value) for value in ids if clean_national_id(value)})
+            for member in station_rows if station_key(member.get("polling_station"))}
   summary={"total":total,"polling_stations":len(stations),"voted":voted,
            "not_voted":max(0,total-voted)}
   _REGISTER_SUMMARY_CACHE[cache_key]=(now,summary)

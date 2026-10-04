@@ -402,6 +402,36 @@ def voters_register_summary_rows(filters=None):
             return [dict(row) for row in cur.fetchall()]
 
 
+def voters_register_distinct_stations(filters=None):
+    """Return distinct filtered station keys without loading voter rows."""
+    ensure_schema()
+    where, params = _register_where(filters)
+    with connect(statement_timeout_ms=30000) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT DISTINCT county,constituency,ward,polling_station
+                              FROM master_voters WHERE {where}
+                                AND COALESCE(polling_station,'')<>''""", params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def matching_active_national_ids(national_ids, filters=None, batch_size=2000):
+    """Return voted IDs that belong to the selected register filter."""
+    ids=sorted({str(value or '').strip() for value in national_ids if str(value or '').strip()})
+    if not ids:
+        return set()
+    ensure_schema()
+    where, base_params=_register_where(filters)
+    found=set()
+    with connect(statement_timeout_ms=30000) as conn:
+        with conn.cursor() as cur:
+            for start in range(0,len(ids),max(1,int(batch_size))):
+                batch=ids[start:start+max(1,int(batch_size))]
+                cur.execute(f"SELECT national_id FROM master_voters WHERE {where} AND national_id=ANY(%s)",
+                            [*base_params,batch])
+                found.update(str(row['national_id'] or '').strip() for row in cur.fetchall())
+    return found
+
+
 def voters_register_rows(filters=None, limit=None):
     """Return active register rows without consulting Kobo or the fallback CSV."""
     ensure_schema()
