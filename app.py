@@ -7058,6 +7058,8 @@ def repository_admin_logout():
 
 @app.get("/report-repository")
 def report_repository():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
  counts={}; error=''
  if not DATABASE_URL:
@@ -7114,6 +7116,8 @@ def opening_repository_data(filters,page=1,per_page=50):
 
 @app.get("/opening-report-repository")
 def opening_report_repository():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  filters={key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","poll_station","stream")}
  try:page=max(1,int(request.args.get("page","1")))
  except Exception:page=1
@@ -7139,6 +7143,8 @@ def opening_report_repository():
 
 @app.get("/opening-report-repository/pdf/<int:report_id>")
 def opening_repository_pdf(report_id):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  if not DATABASE_URL:return Response("Repository unavailable",status=503)
  init_repository_db()
  with repository_db() as conn:
@@ -7150,6 +7156,8 @@ def opening_repository_pdf(report_id):
 
 @app.get("/opening-report-repository/download/<int:report_id>")
 def opening_repository_download(report_id):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  if not DATABASE_URL:return Response("Repository unavailable",status=503)
  init_repository_db()
  with repository_db() as conn:
@@ -7228,6 +7236,8 @@ def opening_repository_delete(report_id):
 
 @app.get("/report-repository/<election>")
 def report_repository_category(election):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed:return Response('Report category not found',status=404)
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
@@ -7271,6 +7281,8 @@ def repository_delete(report_id):
 
 @app.get("/report-repository/pdf/<int:report_id>")
 def repository_pdf(report_id):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
  init_repository_db()
  with repository_db() as conn:
@@ -7283,6 +7295,8 @@ def repository_pdf(report_id):
 
 @app.get("/report-repository/download/<int:report_id>")
 def repository_download(report_id):
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
  init_repository_db()
  with repository_db() as conn:
