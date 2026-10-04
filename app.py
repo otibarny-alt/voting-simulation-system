@@ -1650,8 +1650,14 @@ def publish_membership_change_to_dashboard_tallies(request_row):
  new_data=dict(request_row.get("request_data") or {})
  old_data=dict(request_row.get("original_data") or {})
  fields=("county","constituency","ward")
- new_geo=tuple(str(new_data.get(key) or "").strip() for key in fields)
- old_geo=tuple(str(old_data.get(key) or "").strip() for key in fields)
+ # Canonicalize through the same county_main hierarchy used by the register.
+ # Polling station/ward can therefore recover a blank or legacy county label.
+ new_member=_enrich_register_geography({key:new_data.get(key,"") for key in
+  ("county","constituency","ward","polling_station")})
+ old_member=_enrich_register_geography({key:old_data.get(key,"") for key in
+  ("county","constituency","ward","polling_station")})
+ new_geo=tuple(str(new_member.get(key) or "").strip() for key in fields)
+ old_geo=tuple(str(old_member.get(key) or "").strip() for key in fields)
  if request_type=="edit" and tuple(norm_key(x) for x in old_geo)==tuple(norm_key(x) for x in new_geo):
   invalidate_registered_dashboard_payloads()
   return True
@@ -1699,6 +1705,29 @@ def membership_registered_breakdown():
  the database. Ward is the dashboards' finest electorate filter; excluding
  polling stations keeps national dashboard responses compact.
  """
+ # Use the exact same merged and county_main-enriched rows displayed by the
+ # voters-register page. The former SQL-only grouping used raw geography and
+ # could omit records whose county was recovered from ward/polling station.
+ try:
+  members,stats=combined_voters_register()
+  exact_grouped={}
+  for member in members:
+   geo=tuple(str(member.get(key) or "").strip() for key in ("county","constituency","ward"))
+   exact_grouped[geo]=exact_grouped.get(geo,0)+1
+  exact_breakdown=[{"county":geo[0],"constituency":geo[1],"ward":geo[2],"registered_voters":count}
+                   for geo,count in exact_grouped.items()]
+  exact_breakdown.sort(key=lambda item:tuple(norm_key(item[key]) for key in ("county","constituency","ward")))
+  database_records=to_int(stats.get("database_records"))
+  csv_records=to_int(stats.get("csv_records"))
+  csv_added=to_int(stats.get("csv_added"))
+  _REGISTERED_TOTAL_CACHE.update(signature=("exact_combined_register",time.time()),loaded_at=time.monotonic(),
+   value=len(members),breakdown=exact_breakdown,database_records=database_records,
+   kobo_records=csv_records,overlap_records=max(0,csv_records-csv_added),
+   kobo_only_records=csv_added,errors=[])
+  save_registered_tally_cache()
+  return list(exact_breakdown)
+ except Exception as exact_exc:
+  app.logger.warning("Exact voters-register dashboard tally unavailable; using legacy fallback: %s",exact_exc)
  source_errors=[]
  grouped={}
  database_ids=set()
