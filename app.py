@@ -6879,6 +6879,33 @@ def admin_voters_register():
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
 
 
+@app.get("/api/voters-register/count")
+def api_voters_register_count():
+ """Return the exact count used by the protected voters-register page.
+
+ Results dashboards must call this endpoint instead of maintaining an
+ independent electorate total. A source failure returns 503; it never returns
+ a guessed, cached, or partially reconstructed count.
+ """
+ if not dashboard_api_authorized():
+  return jsonify({"ok":False,"error":"Unauthorized"}),401
+ filters={key:(request.args.get(key) or "").strip()
+          for key in ("county","constituency","ward","polling_station")}
+ try:
+  _rows,stats=combined_voters_register(filters,limit=0)
+  return jsonify({
+   "ok":True,"registered_voters":to_int(stats.get("unique_members")),
+   "filters":filters,"source":stats.get("source"),
+   "database_records":to_int(stats.get("database_records")),
+   "legacy_records_added":to_int(stats.get("csv_added")),
+   "generated_at":kenya_now().isoformat(timespec="seconds")
+  })
+ except Exception as exc:
+  app.logger.exception("Authoritative voters-register count failed")
+  return jsonify({"ok":False,"error":"The authoritative voters register could not be counted: "+str(exc)}),503
+
+
+
 @app.post("/admin/voters-register/voting-status")
 def admin_voters_register_voting_status():
  if not repository_admin_logged_in():return jsonify({"ok":False,"error":"Administrator login required."}),403
