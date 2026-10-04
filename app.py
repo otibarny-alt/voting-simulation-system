@@ -5834,6 +5834,8 @@ def _csv_only_register_members(filters=None):
 
 _REGISTER_COUNT_CACHE={}
 _REGISTER_COUNT_LOCK=threading.Lock()
+_REGISTER_SUMMARY_CACHE={}
+_REGISTER_SUMMARY_LOCK=threading.Lock()
 
 def authoritative_voters_register_count(filters=None):
  """Count PostgreSQL + legacy CSV without constructing display rows."""
@@ -5855,6 +5857,54 @@ def authoritative_voters_register_count(filters=None):
    return total,dict(stats)
  members,stats=combined_voters_register(filters,limit=0)
  return int(stats.get("unique_members",len(members))),stats
+
+def _full_filter_voted_count(national_ids):
+ ids=sorted({clean_national_id(value) for value in national_ids if clean_national_id(value)})
+ if not ids:return 0
+ try:
+  init_voter_access_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT COUNT(DISTINCT national_id) AS n FROM voter_status
+                   WHERE election_id=%s AND national_id=ANY(%s)
+                     AND voted_at IS NOT NULL""",(ELECTION_ID,ids))
+    return to_int(cur.fetchone().get("n"))
+ except Exception:
+  app.logger.warning("Full-filter central voting count failed; using local votes",exc_info=True)
+  voted=set();c=con()
+  try:
+   for start in range(0,len(ids),500):
+    batch=ids[start:start+500];marks=",".join("?" for _ in batch)
+    rows=c.execute(f"SELECT DISTINCT voter_session FROM demo_votes WHERE voter_session IN ({marks})",batch).fetchall()
+    voted.update(clean_national_id(row["voter_session"]) for row in rows)
+   return len(voted)
+  finally:c.close()
+
+def authoritative_voters_register_summary(filters=None):
+ """Return totals for every voter in the selected filter, not just the page."""
+ filters=dict(filters or {})
+ cache_key=tuple((key,station_key(filters.get(key))) for key in
+                 ("national_id","membership_type","county","constituency","ward","polling_station"))
+ now=time.time();cached=_REGISTER_SUMMARY_CACHE.get(cache_key)
+ if cached and now-cached[0]<5:return dict(cached[1])
+ with _REGISTER_SUMMARY_LOCK:
+  now=time.time();cached=_REGISTER_SUMMARY_CACHE.get(cache_key)
+  if cached and now-cached[0]<5:return dict(cached[1])
+  if master_register.configured():
+   rows=master_register.voters_register_summary_rows(filters)
+   legacy=_csv_only_register_members(filters)
+   rows.extend(legacy)
+  else:
+   rows,_stats=combined_voters_register(filters,limit=None)
+  ids=[member.get("member_id") for member in rows]
+  stations={tuple(station_key(member.get(key)) for key in
+                  ("county","constituency","ward","polling_station"))
+            for member in rows if station_key(member.get("polling_station"))}
+  voted=_full_filter_voted_count(ids);total=len({clean_national_id(value) for value in ids if clean_national_id(value)})
+  summary={"total":total,"polling_stations":len(stations),"voted":voted,
+           "not_voted":max(0,total-voted)}
+  _REGISTER_SUMMARY_CACHE[cache_key]=(now,summary)
+  return dict(summary)
 
 def combined_voters_register(filters=None,limit=None):
  """Merge master, live Kobo and CSV members by National ID.
@@ -5959,6 +6009,13 @@ def _register_station_groups(members):
   if not groups or groups[-1][0]!=key: groups.append((key,[]))
   groups[-1][1].append(member)
  return groups
+
+def _register_scope_label(filters):
+ if filters.get("polling_station"):return "at "+filters["polling_station"]
+ if filters.get("ward"):return "in "+filters["ward"]+" Ward"
+ if filters.get("constituency"):return "in "+filters["constituency"]+" Constituency"
+ if filters.get("county"):return "in "+filters["county"]+" County"
+ return "in the selected register"
 
 
 def voter_participation_status(national_ids):
@@ -6916,8 +6973,10 @@ def admin_voters_register():
   truncated=stats.get("unique_members",len(members))>500
   if len(members)>500:members=members[:500]
   attach_voting_status(members)
+  summary=authoritative_voters_register_summary(filters)
+  stats["unique_members"]=summary["total"]
   groups=_register_station_groups(members)
-  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=stats.get("unique_members",len(members)),displayed=len(members),truncated=truncated,error=None,prompt=None)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=summary["total"],summary=summary,scope_label=_register_scope_label(filters),displayed=len(members),truncated=truncated,error=None,prompt=None)
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
 
@@ -6961,6 +7020,16 @@ def admin_voters_register_voting_status():
                   "updated_at":kenya_now().isoformat(timespec="seconds")})
  except Exception as exc:
   return jsonify({"ok":False,"error":"Voting status is temporarily unavailable: "+str(exc)}),503
+
+@app.get("/admin/voters-register/summary")
+def admin_voters_register_summary():
+ if not repository_admin_logged_in():return jsonify({"ok":False,"error":"Administrator login required."}),403
+ try:
+  summary=authoritative_voters_register_summary(_register_filters())
+  return jsonify({"ok":True,**summary,"updated_at":kenya_now().isoformat(timespec="seconds")})
+ except Exception as exc:
+  app.logger.exception("Full voters-register summary failed")
+  return jsonify({"ok":False,"error":"Full register summary is temporarily unavailable: "+str(exc)}),503
 
 
 @app.get("/admin/data-files/id-serial-lookup")

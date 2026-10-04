@@ -390,6 +390,18 @@ def voters_register_count(filters=None):
             return int(cur.fetchone()["n"] or 0)
 
 
+def voters_register_summary_rows(filters=None):
+    """Return only the fields needed for full-filter station/voting totals."""
+    ensure_schema()
+    where, params = _register_where(filters)
+    with connect(statement_timeout_ms=30000) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT national_id AS member_id,county,constituency,
+                                     ward,polling_station
+                              FROM master_voters WHERE {where}""", params)
+            return [dict(row) for row in cur.fetchall()]
+
+
 def voters_register_rows(filters=None, limit=None):
     """Return active register rows without consulting Kobo or the fallback CSV."""
     ensure_schema()
