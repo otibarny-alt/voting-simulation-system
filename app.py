@@ -1638,6 +1638,59 @@ def save_registered_tally_cache():
  except Exception as exc:
   app.logger.warning("Could not persist registered-voter tally cache: %s",exc)
 
+def publish_membership_change_to_dashboard_tallies(request_row):
+ """Make an approved master-register change visible to every dashboard worker.
+
+ The voters-register write and this small durable aggregate update occur in the
+ same request. This avoids waiting for the slower PostgreSQL + Kobo reconciliation
+ job before a new member appears in county/constituency/ward dashboard totals.
+ """
+ if not DATABASE_URL or not request_row:return False
+ request_type=str(request_row.get("request_type") or "").strip().lower()
+ new_data=dict(request_row.get("request_data") or {})
+ old_data=dict(request_row.get("original_data") or {})
+ fields=("county","constituency","ward")
+ new_geo=tuple(str(new_data.get(key) or "").strip() for key in fields)
+ old_geo=tuple(str(old_data.get(key) or "").strip() for key in fields)
+ if request_type=="edit" and tuple(norm_key(x) for x in old_geo)==tuple(norm_key(x) for x in new_geo):
+  invalidate_registered_dashboard_payloads()
+  return True
+ try:
+  init_registered_tally_cache_db()
+  with central_control_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("SELECT COUNT(*) AS n FROM simulation_registered_voter_tallies")
+    if to_int(cur.fetchone().get("n"))<=0:return False
+    if request_type=="edit" and any(old_geo):
+     cur.execute("""UPDATE simulation_registered_voter_tallies
+                    SET registered_voters=GREATEST(0,registered_voters-1),updated_at=NOW()
+                    WHERE county=%s AND constituency=%s AND ward=%s""",old_geo)
+    if request_type=="new" or (request_type=="edit" and new_geo!=old_geo):
+     cur.execute("""INSERT INTO simulation_registered_voter_tallies
+                    (county,constituency,ward,registered_voters,updated_at)
+                    VALUES(%s,%s,%s,1,NOW())
+                    ON CONFLICT(county,constituency,ward) DO UPDATE SET
+                    registered_voters=simulation_registered_voter_tallies.registered_voters+1,
+                    updated_at=NOW()""",new_geo)
+    if request_type=="new":
+     cur.execute("SELECT COALESCE(SUM(registered_voters),0) AS n FROM simulation_registered_voter_tallies")
+     combined_total=to_int(cur.fetchone().get("n"))
+     cur.execute("SELECT components FROM simulation_registered_voter_tally_state WHERE cache_key='combined_register' FOR UPDATE")
+     state=cur.fetchone();components=dict((state or {}).get("components") or {})
+     components["database_records"]=to_int(components.get("database_records"))+1
+     components["combined_unique_records"]=combined_total
+     cur.execute("""INSERT INTO simulation_registered_voter_tally_state(cache_key,components,updated_at)
+                    VALUES('combined_register',%s::jsonb,NOW())
+                    ON CONFLICT(cache_key) DO UPDATE SET components=EXCLUDED.components,updated_at=NOW()""",
+                 (json.dumps(components),))
+   conn.commit()
+  load_registered_tally_cache()
+  invalidate_registered_dashboard_payloads()
+  return True
+ except Exception as exc:
+  app.logger.warning("Immediate dashboard register tally update failed: %s",exc)
+  return False
+
 def membership_registered_breakdown():
  """Count the deduplicated database + Kobo electorate by geography.
 
@@ -3657,6 +3710,9 @@ def dashboard_api_authorized():
  return bool(DASHBOARD_API_KEY and supplied and hmac.compare_digest(supplied,DASHBOARD_API_KEY))
 
 def dashboard_registered_metadata():
+ # Reload the small durable aggregate on every dashboard snapshot so all
+ # Gunicorn workers see membership additions/edits committed by another worker.
+ load_registered_tally_cache()
  # Cold Render workers begin loading the two registers immediately. Dashboard
  # requests use the last good tally while that refresh runs.
  if not _REGISTERED_TOTAL_CACHE.get("breakdown"):
@@ -3676,6 +3732,19 @@ def dashboard_registered_metadata():
   "expected_streams_source":"voting_system_county_main_csv",
   "expected_streams_total":sum(len(rows) for rows in _hierarchy_cache()["streams"].values()),
  }
+
+def with_current_registered_metadata(payload):
+ """Refresh only register totals inside a cached vote payload.
+
+ Vote aggregation remains cached for speed, but electorate counts must always
+ match the current voters register, including changes made by another worker.
+ """
+ result=copy.deepcopy(payload or {})
+ result.update(dashboard_registered_metadata())
+ totals=dict(result.get("totals") or {})
+ totals["registered_voters"]=authoritative_registered_total()
+ result["totals"]=totals
+ return result
 
 # Very short cache for the gubernatorial feed. This prevents several dashboard browser
 # requests from repeating the same PostgreSQL aggregation at the same moment.
@@ -3851,7 +3920,7 @@ def api_dashboard_woman_rep():
  now_ts=time.time()
  cached=_WOMAN_REP_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_WOMAN_REP_DASHBOARD_CACHE.get("at") or 0)<WOMAN_REP_DASHBOARD_CACHE_SECONDS:
-  return jsonify(cached)
+  return jsonify(with_current_registered_metadata(cached))
  payload=_build_woman_rep_dashboard_payload()
  with _WOMAN_REP_DASHBOARD_CACHE_LOCK:
   _WOMAN_REP_DASHBOARD_CACHE["payload"]=payload
@@ -3870,7 +3939,7 @@ def api_dashboard_president():
  now_ts=time.time()
  cached=_PRES_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_PRES_DASHBOARD_CACHE.get("at") or 0)<PRES_DASHBOARD_CACHE_SECONDS:
-  return jsonify(cached)
+  return jsonify(with_current_registered_metadata(cached))
 
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
@@ -4024,7 +4093,7 @@ def api_dashboard_governor():
  now_ts=time.time()
  cached=_GOV_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_GOV_DASHBOARD_CACHE.get("at") or 0)<GOV_DASHBOARD_CACHE_SECONDS:
-  return jsonify(cached)
+  return jsonify(with_current_registered_metadata(cached))
 
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
@@ -4183,7 +4252,7 @@ def api_dashboard_senator():
  now_ts=time.time()
  cached=_SEN_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_SEN_DASHBOARD_CACHE.get("at") or 0)<SEN_DASHBOARD_CACHE_SECONDS:
-  return jsonify(cached)
+  return jsonify(with_current_registered_metadata(cached))
 
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
@@ -4443,7 +4512,7 @@ def api_dashboard_mna():
  now_ts=time.time()
  cached=_MNA_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_MNA_DASHBOARD_CACHE.get("at") or 0)<MNA_DASHBOARD_CACHE_SECONDS:
-  return jsonify(cached)
+  return jsonify(with_current_registered_metadata(cached))
  payload=_build_mna_dashboard_payload()
  with _MNA_DASHBOARD_CACHE_LOCK:
   _MNA_DASHBOARD_CACHE["payload"]=payload
@@ -4540,7 +4609,7 @@ def api_dashboard_mca():
  """Read-only MCA aggregate feed; returns no voter identifiers."""
  if not dashboard_api_authorized():return jsonify({"error":"Unauthorized"}),401
  now_ts=time.time();cached=_MCA_DASHBOARD_CACHE.get("payload")
- if cached is not None and now_ts-float(_MCA_DASHBOARD_CACHE.get("at") or 0)<MCA_DASHBOARD_CACHE_SECONDS:return jsonify(cached)
+ if cached is not None and now_ts-float(_MCA_DASHBOARD_CACHE.get("at") or 0)<MCA_DASHBOARD_CACHE_SECONDS:return jsonify(with_current_registered_metadata(cached))
  payload=_build_mca_dashboard_payload()
  with _MCA_DASHBOARD_CACHE_LOCK:
   _MCA_DASHBOARD_CACHE["payload"]=payload;_MCA_DASHBOARD_CACHE["at"]=time.time()
@@ -5382,6 +5451,8 @@ def approve_membership_request(request_id,reviewer):
                    WHERE id=%s""",(reviewer,request_id))
     conn.commit()
     _MEMBERSHIP_CSV_CACHE.update(loaded_at=0.0,rows={},serial_rows={},media={})
+    if not publish_membership_change_to_dashboard_tallies(request_row):
+     refresh_registered_tallies_background()
     return "postgresql_master_register"
    raw=membership_csv_source_bytes()
    text=raw.decode("utf-8-sig",errors="replace")
