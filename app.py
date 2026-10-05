@@ -22,7 +22,7 @@ except ImportError:  # Local source inspection can run before dependencies insta
  WhiteNoise=None
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, A5, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
@@ -6023,6 +6023,134 @@ def _register_scope_label(filters):
  if filters.get("county"):return "in "+filters["county"]+" County"
  return "in the selected register"
 
+def _ballot_candidates_for_position(catalog,position,geo):
+ candidates=list(catalog.get(position,[]))
+ scope_key={"governor":"county","senator":"county","woman_rep":"county",
+            "mna":"constituency","mca":"ward"}.get(position)
+ if scope_key:
+  wanted=station_key(geo.get(scope_key))
+  candidates=[candidate for candidate in candidates
+              if not station_key(candidate.get(scope_key))
+              or station_key(candidate.get(scope_key))==wanted]
+ return candidates
+
+def _emergency_ballot_filters():
+ return {key:(request.args.get(key) or "").strip()
+         for key in ("county","constituency","ward","polling_station")}
+
+def _validated_ballot_geo(filters):
+ if not all(filters.get(key) for key in ("county","constituency","ward","polling_station")):
+  raise ValueError("Filter to one polling station before generating ballots.")
+ options=_register_hierarchy_options(filters)
+ wanted=station_key(filters["polling_station"])
+ station=next((row for row in options.get("stations",[])
+               if wanted in {station_key(row.get("name")),station_key(row.get("label"))}),None)
+ if not station:raise ValueError("The selected polling station is not valid for this ward.")
+ return {**filters,"polling_station":station.get("label") or filters["polling_station"],
+         "polling_station_code":str(station.get("poll_station_code") or "").strip()}
+
+_BALLOT_PHOTO_CACHE={}
+def _ballot_candidate_photo(url):
+ value=str(url or "").strip()
+ if not value:return Paragraph("PHOTO",getSampleStyleSheet()["Normal"])
+ absolute=urljoin(CANDIDATE_PORTAL_BASE_URL.rstrip("/")+"/",value)
+ cached=_BALLOT_PHOTO_CACHE.get(absolute)
+ if cached is None:
+  try:
+   response=requests.get(absolute,timeout=(3,8));response.raise_for_status()
+   image=PILImage.open(BytesIO(response.content));image.verify()
+   cached=response.content
+  except Exception:
+   cached=b""
+  _BALLOT_PHOTO_CACHE[absolute]=cached
+ if not cached:return Paragraph("PHOTO",getSampleStyleSheet()["Normal"])
+ return RLImage(BytesIO(cached),width=11*mm,height=11*mm,kind="proportional")
+
+@app.get("/admin/emergency-ballots")
+def admin_emergency_ballots():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters=_emergency_ballot_filters()
+ return render_template("admin_emergency_ballots.html",filters=filters,
+                        options=_register_hierarchy_options(filters),
+                        positions=[("all","All six positions")]+[(key,title) for key,title,_ in ELECTIONS])
+
+@app.get("/admin/emergency-ballots.pdf")
+def download_emergency_ballots_pdf():
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=request.full_path))
+ try:
+  geo=_validated_ballot_geo(_emergency_ballot_filters())
+  requested=(request.args.get("position") or "all").strip().lower()
+  valid={key for key,_,_ in ELECTIONS}
+  if requested!="all" and requested not in valid:raise ValueError("Select a valid election position.")
+  copies=max(1,min(50,to_int(request.args.get("copies") or 1)))
+  selected=[(key,title) for key,title,_ in ELECTIONS if requested in ("all",key)]
+  catalog=candidate_portal_catalog(geo)
+  selected=[(key,title) for key,title in selected
+            if _ballot_candidates_for_position(catalog,key,geo)]
+  if not selected:
+   raise ValueError("No approved candidates are available for the selected polling station.")
+  output=BytesIO()
+  doc=SimpleDocTemplate(output,pagesize=A5,leftMargin=8*mm,rightMargin=8*mm,
+                        topMargin=7*mm,bottomMargin=7*mm,
+                        title="ODM Emergency Paper Ballots")
+  styles=getSampleStyleSheet()
+  title_style=ParagraphStyle("BallotTitle",parent=styles["Title"],fontSize=15,leading=17,
+                             textColor=colors.HexColor("#ef7d00"),spaceAfter=3*mm)
+  small=ParagraphStyle("BallotSmall",parent=styles["Normal"],fontSize=7.5,leading=9)
+  name_style=ParagraphStyle("CandidateName",parent=styles["Normal"],fontSize=9,leading=10.5,fontName="Helvetica-Bold")
+  story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
+  total_pages=copies*len(selected);page_number=0
+  for copy_number in range(1,copies+1):
+   for position,title in selected:
+    page_number+=1
+    if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=21*mm,kind="proportional"))
+    story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
+    story.append(Paragraph("TRAINING / SIMULATION ONLY — use only when authorised after electronic voting failure",small))
+    station_ref=geo.get("polling_station_code") or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
+    details=[[Paragraph("Election position",small),Paragraph(str(escape(title)),name_style)],
+             [Paragraph("Polling station",small),Paragraph(str(escape(geo["polling_station"])),name_style)],
+             [Paragraph("Ward / Constituency",small),Paragraph(str(escape(geo["ward"]+" / "+geo["constituency"])),small)],
+             [Paragraph("County",small),Paragraph(str(escape(geo["county"])),small)],
+             [Paragraph("Ballot reference",small),Paragraph(str(escape(f"{station_ref}-{position.upper()}-{copy_number:03d}")),small)]]
+    detail_table=Table(details,colWidths=[32*mm,94*mm])
+    detail_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.45,colors.grey),
+                                      ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#fff1d6")),
+                                      ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                                      ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3)]))
+    story.extend([Spacer(1,2*mm),detail_table,Spacer(1,3*mm),
+                  Paragraph("Place one clear mark in the box beside ONE candidate only.",name_style),Spacer(1,2*mm)])
+    cards=[]
+    for number,candidate in enumerate(_ballot_candidates_for_position(catalog,position,geo),1):
+     identity="<br/>".join(filter(None,[str(escape(candidate.get("candidate_id") or "")),str(escape(candidate.get("membership_no") or ""))]))
+     candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate"))+("<br/><font size='6'>"+identity+"</font>" if identity else ""),
+                              ParagraphStyle("CardName",parent=name_style,fontSize=7.5,leading=8.5))
+     card=Table([[Paragraph(str(number),name_style),_ballot_candidate_photo(candidate.get("photo_url")),candidate_text,
+                  Paragraph("[&nbsp;&nbsp;]",ParagraphStyle("VoteBox",parent=styles["Normal"],fontSize=13,alignment=TA_CENTER))]],
+                colWidths=[6*mm,13*mm,35*mm,9*mm],rowHeights=[14*mm])
+     card.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.8,colors.black),("INNERGRID",(0,0),(-1,-1),0.35,colors.grey),
+                               ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,0),"CENTER"),
+                               ("ALIGN",(-1,0),(-1,0),"CENTER"),("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2)]))
+     cards.append(card)
+    card_rows=[]
+    for start in range(0,len(cards),2):
+     card_rows.append([cards[start],cards[start+1] if start+1<len(cards) else ""])
+    table=Table(card_rows,colWidths=[63*mm,63*mm],hAlign="CENTER")
+    table.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),1),
+                               ("RIGHTPADDING",(0,0),(-1,-1),1),("TOPPADDING",(0,0),(-1,-1),1),
+                               ("BOTTOMPADDING",(0,0),(-1,-1),1)]))
+    story.extend([table,Spacer(1,3*mm),Paragraph("Presiding Officer stamp/signature: __________________________________",small),
+                  Spacer(1,2*mm),Paragraph("Do not write the voter's name or National ID on this ballot.",small)])
+    if page_number<total_pages:story.append(PageBreak())
+  doc.build(story)
+  output.seek(0)
+  filename="A5_emergency_ballots_"+re.sub(r"[^A-Za-z0-9]+","_",geo["polling_station"]).strip("_")+".pdf"
+  return send_file(output,mimetype="application/pdf",as_attachment=True,download_name=filename,max_age=0)
+ except Exception as exc:
+  app.logger.exception("Emergency ballot PDF generation failed")
+  return Response("Emergency ballots could not be generated: "+str(exc),status=502,mimetype="text/plain")
+
 
 def voter_participation_status(national_ids):
  """Bulk-read participation status without exposing ballot selections."""
@@ -6530,7 +6658,7 @@ def admin_master_register_schema():
   session["data_files_error"]="MASTER_REGISTER_DATABASE_URL is not configured on this Render service."
  else:
   try:
-   master_register.ensure_schema()
+   master_register.ensure_schema(force=True)
    session["data_files_message"]="Master voters register schema migration completed successfully."
   except Exception as exc:
    app.logger.exception("Master register schema migration failed")

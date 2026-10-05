@@ -33,12 +33,29 @@ def connect(statement_timeout_ms=4000, lock_timeout_ms=2000):
     )
 
 
-def ensure_schema():
+def ensure_schema(force=False):
+    """Ensure schema exists without running DDL during ordinary web reads.
+
+    Recycled Gunicorn workers must not repeat CREATE/ALTER/INDEX statements
+    during register lookups. Those statements require stronger locks and can
+    time out behind a membership update. Normal calls use a catalog probe;
+    force=True is reserved for the explicit administrator migration action.
+    """
     global _SCHEMA_READY
     if not configured():
         return
-    if _SCHEMA_READY:
+    if _SCHEMA_READY and not force:
         return
+    if not force:
+        with connect(statement_timeout_ms=3000, lock_timeout_ms=1000) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT to_regclass('public.master_voters') AS master,
+                                      to_regclass('public.voter_register_import_batches') AS batches,
+                                      to_regclass('public.voter_register_stage') AS stage""")
+                present=cur.fetchone()
+        if present and present.get("master") and present.get("batches") and present.get("stage"):
+            _SCHEMA_READY=True
+            return
     with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
         with conn.cursor() as cur:
             cur.execute("""
