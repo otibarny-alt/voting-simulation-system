@@ -89,7 +89,8 @@ def con():
  stream_session_migrations={
   "closed_at":"TEXT",
   "poll_station_code":"TEXT",
-  "opening_zero_votes":"INTEGER DEFAULT 0",
+ "opening_zero_votes":"INTEGER DEFAULT 0",
+  "opening_precast_voters":"INTEGER",
   "opening_lat":"REAL",
   "opening_lon":"REAL",
   "opening_accuracy":"REAL"
@@ -2531,6 +2532,51 @@ def stream_distinct_voter_count(ref):
    app.logger.warning("Could not read preserved central votes for %s / %s: %s",station,stream,exc)
  return max(local_count,central_count)
 
+def authoritative_precast_voter_count(ref,before_opened_at=None):
+ """Count completed voters already recorded for a stream before it opens.
+
+ Uses both anonymous central ballot events and the shared voter-status/admission
+ records. The maximum category/event count is used because every completed
+ electronic ballot writes one event for each election category.
+ """
+ if not DATABASE_URL or not ref:return 0
+ station=str(ref.get("poll_station") or "").strip();stream=str(ref.get("stream") or "").strip()
+ if not station or not stream:return 0
+ station_key=re.sub(r'[^a-z0-9]+','',station.lower())
+ stream_key=re.sub(r'[^a-z0-9]+','',stream.lower())
+ time_clause=""
+ params=[station_key,stream_key]
+ if before_opened_at:
+  time_clause=" AND recorded_at::timestamptz < %s::timestamptz"
+  params.append(str(before_opened_at))
+ init_dashboard_db();init_voter_access_db()
+ with central_control_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute(f"""SELECT COALESCE(MAX(category_total),0) AS voters FROM (
+      SELECT election,COUNT(*) AS category_total
+      FROM simulation_dashboard_vote_events
+      WHERE regexp_replace(lower(poll_station),'[^a-z0-9]+','','g')=%s
+        AND regexp_replace(lower(stream),'[^a-z0-9]+','','g')=%s
+        {time_clause}
+      GROUP BY election
+    ) totals""",tuple(params))
+   event_row=cur.fetchone();event_count=int((event_row or {}).get("voters") or 0)
+   status_params=[ELECTION_ID,station_key,stream_key]
+   status_time=""
+   if before_opened_at:
+    status_time=" AND v.voted_at < %s::timestamptz"
+    status_params.append(str(before_opened_at))
+   cur.execute(f"""SELECT COUNT(DISTINCT v.national_id) AS voters
+      FROM voter_status v
+      JOIN voter_admission_approvals a
+        ON a.election_id=v.election_id AND a.national_id=v.national_id
+      WHERE v.election_id=%s AND v.voted_at IS NOT NULL
+        AND regexp_replace(lower(COALESCE(v.voted_at_station,a.polling_station,'')),'[^a-z0-9]+','','g')=%s
+        AND regexp_replace(lower(COALESCE(a.consumed_stream,'')),'[^a-z0-9]+','','g')=%s
+        {status_time}""",tuple(status_params))
+   status_row=cur.fetchone();status_count=int((status_row or {}).get("voters") or 0)
+ return max(event_count,status_count)
+
 def central_stream_tally_rows(ref):
  """Recover a stream tally from central events or its last certified close."""
  if not DATABASE_URL or not ref:
@@ -2888,7 +2934,8 @@ def open_stream():
  c=None
  try:
   c=con()
-  precast=c.execute("SELECT COUNT(*) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
+  local_precast=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]
+  precast=max(int(local_precast or 0),authoritative_precast_voter_count({"poll_station":ps,"stream":st}))
  except Exception as exc:
   app.logger.exception("Could not complete pre-cast check for %s / %s",ps,st)
   return render_template(
@@ -2899,11 +2946,8 @@ def open_stream():
   ),503
  finally:
   if c is not None:c.close()
- if precast:
-  return render_template("stream_control.html",row=None,poll_station=ps,stream=st,
-   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
-   report_header_image_url=REPORT_HEADER_IMAGE_URL,
-   error=f"OPENING BLOCKED: {precast} simulated ballot records already exist in this stream.")
+ # Do not erase or conceal pre-existing votes. Preserve the count in the
+ # opening snapshot and clearly certify that this was not a clean-zero opening.
  lock_data={"county":f.get("county","").strip(),"constituency":f.get("constituency","").strip(),
             "ward":f.get("ward","").strip(),"poll_station":ps,"stream":st,
             "poll_station_code":f.get("poll_station_code","").strip(),"session_date":today_iso()}
@@ -2969,8 +3013,10 @@ def open_stream():
  try:
   c=con()
   c.execute("""INSERT OR IGNORE INTO stream_sessions
-  (session_date,county,constituency,ward,poll_station,stream,poll_station_code,opened_at,opening_zero_votes,opening_lat,opening_lon,opening_accuracy)
-  VALUES(?,?,?,?,?,?,?,?,1,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,f.get("poll_station_code",""),now,opening_lat,opening_lon,opening_accuracy))
+  (session_date,county,constituency,ward,poll_station,stream,poll_station_code,opened_at,
+   opening_zero_votes,opening_precast_voters,opening_lat,opening_lon,opening_accuracy)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",(today_iso(),f.get("county",""),f.get("constituency",""),f.get("ward",""),ps,st,
+   f.get("poll_station_code",""),now,1 if precast==0 else 0,precast,opening_lat,opening_lon,opening_accuracy))
   c.commit()
  except Exception:
   if c is not None:
@@ -3009,6 +3055,7 @@ def open_stream():
   "session_date":today_iso(),"county":f.get("county","").strip(),
   "constituency":f.get("constituency","").strip(),"ward":f.get("ward","").strip(),
   "poll_station":ps,"stream":st,"opened_at":now,
+  "opening_precast_voters":precast,
   "opening_lat":opening_lat,"opening_lon":opening_lon,"opening_accuracy":opening_accuracy
  })
 
@@ -3140,7 +3187,15 @@ def stream_report():
  report_date=report_lock.get("session_date") if report_lock and report_lock.get("poll_station")==ps and report_lock.get("stream")==st else None
  row=stream_session(ps,st,report_date)
  if not row:return redirect(url_for("stream_control",poll_station=ps,stream=st))
- c=con(); votes=c.execute("SELECT COUNT(DISTINCT voter_session) n FROM demo_votes WHERE poll_station=? AND stream=?",(ps,st)).fetchone()["n"]; c.close()
+ if row["opening_precast_voters"] is None:
+  try:
+   precast=authoritative_precast_voter_count(
+    {"poll_station":ps,"stream":st},row["opened_at"])
+   c=con();c.execute("""UPDATE stream_sessions SET opening_precast_voters=?,opening_zero_votes=?
+                         WHERE id=?""",(precast,1 if precast==0 else 0,row["id"]));c.commit();c.close()
+   row=stream_session(ps,st,report_date)
+  except Exception:
+   app.logger.exception("Could not backfill opening pre-cast count for %s / %s",ps,st)
 
  geo={
   "county":row["county"] or "",
@@ -3171,7 +3226,7 @@ def stream_report():
  # failure without producing a duplicate row.
  defer_opening_report_deposit({key:row[key] for key in (
   "session_date","county","constituency","ward","poll_station","stream",
-  "opened_at","opening_lat","opening_lon","opening_accuracy"
+  "opened_at","opening_precast_voters","opening_lat","opening_lon","opening_accuracy"
  )})
 
  return render_template("stream_report.html",row=row,
@@ -7881,6 +7936,9 @@ def render_opening_report_pdf(row,position_rows):
   try:return row[key] if row[key] is not None else default
   except Exception:return default
  opened_at=str(value("opened_at",""))
+ precast_voters=int(value("opening_precast_voters",0) or 0)
+ precast_label=("0 — VERIFIED CLEAN" if precast_voters==0 else
+                f"{precast_voters} — PRE-EXISTING VOTES RECORDED — NOT A CLEAN OPENING")
  info=[
   ["County",str(value("county")) or "Not recorded"],
   ["Constituency",str(value("constituency")) or "Not recorded"],
@@ -7888,7 +7946,7 @@ def render_opening_report_pdf(row,position_rows):
   ["Polling Station",str(value("poll_station"))],
   ["Stream",str(value("stream"))],
   ["Date",str(value("session_date"))],
-  ["Pre-cast votes at opening","0 — VERIFIED CLEAN"],
+  ["Pre-existing voters at opening",precast_label],
   ["Scheduled opening",VOTING_OPEN_TIME or "Not configured"],
   ["Actual opening timestamp",opened_at or "Not recorded"],
   ["Opening check",opening_time_check(opened_at,VOTING_OPEN_TIME)],
@@ -7908,8 +7966,13 @@ def render_opening_report_pdf(row,position_rows):
   ("RIGHTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),
   ("BOTTOMPADDING",(0,0),(-1,-1),4),
  ]))
+ certification=("We, the undersigned agents, verify that before simulated voting started in this polling-station stream, "
+                "the system displayed zero pre-existing voters and was clean." if precast_voters==0 else
+                f"OPENING EXCEPTION: We, the undersigned agents, acknowledge that the system already contained "
+                f"{precast_voters} completed voter record{'s' if precast_voters!=1 else ''} for this polling-station "
+                "stream when it was opened. This opening is not certified as clean-zero.")
  story.extend([info_table,Paragraph("Opening Certification — Candidate Agents",heading_style),
-  Paragraph("We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.",small_style)])
+  Paragraph(certification,small_style)])
  for position in position_rows:
   story.append(Paragraph(str(escape(position.get("title") or "")),heading_style))
   rows=[["Candidate","Agent Name","Signature","Date / Time"]]

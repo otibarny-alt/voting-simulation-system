@@ -41,7 +41,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 {% if reopened_notice %}<div class="vote-success admin-reopen-success">{{reopened_notice}}</div>{% endif %}
 {% if not row and not terminal_lock %}
 {% if agent_access %}<div class="terminal-lock-banner"><b>AUTHENTICATED VOTING TERMINAL</b><br>Terminal ID {{agent_access.agent_id}} is authorized only for <b>{{agent_access.poll_station}} — {{agent_access.stream}}</b>.</div>{% endif %}
-<p><b>Before voting starts:</b> the system checks this polling-station stream and will open it only when it contains <b>0 pre-cast simulated votes</b>. Candidate agents can then verify and sign the printed opening report.</p>
+<p><b>Before voting starts:</b> the system reads the authoritative central records and stores the exact number of completed voters already present in this polling-station stream. The printed opening report will clearly state whether the opening was clean-zero or contained pre-existing votes.</p>
 <form method=post action=/stream/open id=streamOpenForm>
 <input type="hidden" name="opening_lat" id="opening_lat">
 <input type="hidden" name="opening_lon" id="opening_lon">
@@ -72,7 +72,7 @@ The polling-station stream is centrally reserved to this device. Another device 
 </div>
 {% endif %}
 <p>Scheduled opening: <b>{{open_time or "Not configured"}}</b> &nbsp; Official closing: <b>08:00 (8:00 AM) — TESTING</b></p>
-<div class="open-stream-submit-row"><button type="button" id="open_stream_btn" class="open-stream-submit-btn">Capture GPS, Verify 0 Pre-Cast Votes & Open Stream</button></div></form>
+<div class="open-stream-submit-row"><button type="button" id="open_stream_btn" class="open-stream-submit-btn">Capture Opening Snapshot & Open Stream</button></div></form>
 <script>
 const $=id=>document.getElementById(id);
 function fill(sel,rows,placeholder){

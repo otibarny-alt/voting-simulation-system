@@ -16,7 +16,8 @@
 <tr><th>Constituency</th><td>{{row["constituency"] or "Not recorded"}}</td></tr>
 <tr><th>Ward</th><td>{{row["ward"] or "Not recorded"}}</td></tr>
 <tr><th>Polling Station</th><td>{{row["poll_station"]}}</td></tr><tr><th>Stream</th><td>{{row["stream"]}}</td></tr><tr><th>Date</th><td>{{row["session_date"]}}</td></tr>
-<tr><th>Pre-cast votes at opening</th><td>0 — VERIFIED CLEAN</td></tr>
+{% set precast = row["opening_precast_voters"] or 0 %}
+<tr><th>Pre-existing voters at opening</th><td><strong>{{ precast }}</strong> — {{ "VERIFIED CLEAN" if precast == 0 else "PRE-EXISTING VOTES RECORDED — NOT A CLEAN OPENING" }}</td></tr>
 <tr><th>Scheduled opening</th><td>{{open_time or "Not configured"}}</td></tr><tr><th>Actual opening timestamp</th><td>{{row["opened_at"]}}</td></tr>
 <tr><th>Opening check</th><td>{{opening_check}}</td></tr>
 <tr><th>Opening Station GPS Latitude</th><td id="opening-gps-lat">{{ "%.7f"|format(row["opening_lat"]) if row["opening_lat"] is not none else "Not captured at opening" }}</td></tr>
@@ -25,7 +26,7 @@
 <tr><th>GPS Capture Status</th><td id="opening-gps-status">{{ "Captured and stored when stream opened" if row["opening_lat"] is not none and row["opening_lon"] is not none else "Opening GPS was not stored" }}</td></tr>
 </table>
 <h2>Opening Certification — Candidate Agents</h2>
-<p>We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-cast simulated votes and was clean.</p>
+{% if precast == 0 %}<p>We, the undersigned agents, verify that before simulated voting started in this polling-station stream, the system displayed zero pre-existing voters and was clean.</p>{% else %}<p><strong>Opening exception:</strong> We, the undersigned agents, acknowledge that the system already contained <strong>{{ precast }}</strong> completed voter record{{ '' if precast == 1 else 's' }} for this polling-station stream when it was opened. This opening is not certified as clean-zero.</p>{% endif %}
 
 {% if candidate_error %}
 <div class="vote-error">{{candidate_error}}</div>
