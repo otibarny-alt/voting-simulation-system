@@ -141,7 +141,10 @@ DATABASE_URL = (os.getenv("VOTING_DATABASE_URL", "").strip()
 SERIAL_LOOKUP_DATABASE_URL=(os.getenv("SERIAL_LOOKUP_DATABASE_URL","").strip()
                             or os.getenv("MASTER_REGISTER_DATABASE_URL","").strip()
                             or DATABASE_URL)
-SERIAL_LOOKUP_LEASE_SECONDS=max(60,int(os.getenv("SERIAL_LOOKUP_LEASE_SECONDS","120") or 120))
+# This is the takeover grace period, not the lifetime of the browser session.
+# The owning browser can renew its token after a network/Render interruption;
+# another device may claim the terminal only after this grace period.
+SERIAL_LOOKUP_LEASE_SECONDS=max(300,int(os.getenv("SERIAL_LOOKUP_LEASE_SECONDS","900") or 900))
 _SERIAL_LOOKUP_DB_READY=False
 _SERIAL_LOOKUP_DB_INIT_LOCK=threading.Lock()
 MASTER_REGISTER_STRICT = os.getenv("MASTER_REGISTER_STRICT", "false").strip().lower() in {"1","true","yes","on"}
@@ -911,15 +914,13 @@ def serial_lookup_lease_is_current(terminal,renew=False):
   with conn.cursor() as cur:
    if renew:
     cur.execute("""UPDATE serial_lookup_terminal_sessions SET last_seen=NOW()
-      WHERE terminal_id=%s AND session_token=%s
-        AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
-      (terminal["terminal_id"],terminal["session_token"],SERIAL_LOOKUP_LEASE_SECONDS))
+      WHERE terminal_id=%s AND session_token=%s""",
+      (terminal["terminal_id"],terminal["session_token"]))
     current=bool(cur.rowcount)
    else:
     cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
-      WHERE terminal_id=%s AND session_token=%s
-        AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
-      (terminal["terminal_id"],terminal["session_token"],SERIAL_LOOKUP_LEASE_SECONDS))
+      WHERE terminal_id=%s AND session_token=%s""",
+      (terminal["terminal_id"],terminal["session_token"]))
     current=bool(cur.fetchone())
   conn.commit()
  return current
@@ -7459,8 +7460,10 @@ def id_serial_lookup():
     error="This Serial Lookup login is no longer active. It may have expired or been opened on another terminal. Please log in again."
   except Exception as exc:
    app.logger.exception("Serial Lookup lease validation failed")
-   session.pop("serial_lookup_terminal",None);lookup_terminal=None
-   error="The exclusive lookup-terminal service is temporarily unavailable. Ask the administrator to verify SERIAL_LOOKUP_DATABASE_URL or MASTER_REGISTER_DATABASE_URL on Render."
+   # Do not destroy a valid browser login merely because PostgreSQL or Render
+   # was briefly unreachable. The page remains usable and its heartbeat will
+   # renew the same token as soon as the service recovers.
+   error="Connection interrupted. This terminal remains signed in and will reconnect automatically."
  if request.method=="POST":
   supplied=request.form.get("csrf_token","")
   if not supplied or not hmac.compare_digest(supplied,token):
@@ -7516,7 +7519,8 @@ def id_serial_lookup():
        else:conn.commit()
       if already_active:
        lookup_terminal=None
-       error="Login blocked: this Serial Lookup ID is already active on another terminal. Log out from that terminal or wait two minutes after it goes offline."
+       wait_minutes=max(1,(SERIAL_LOOKUP_LEASE_SECONDS+59)//60)
+       error=f"Login blocked: this Serial Lookup ID is already active on another terminal. Log out there or wait {wait_minutes} minutes after it goes offline."
       else:
        session["serial_lookup_terminal"]=lookup_terminal
        session.modified=True
@@ -7568,6 +7572,7 @@ def id_serial_lookup_keepalive():
  try:
   current=serial_lookup_lease_is_current(terminal,renew=True)
  except Exception as exc:
+  app.logger.warning("Serial Lookup keepalive temporarily unavailable: %s",exc)
   return jsonify({"ok":False,"error":"The lookup-terminal session database is temporarily unavailable."}),503
  if not current:
   session.pop("serial_lookup_terminal",None)
