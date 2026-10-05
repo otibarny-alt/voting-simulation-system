@@ -1236,7 +1236,7 @@ def entrance_approval_status(national_id,poll_station):
     SELECT a.polling_station,a.approved_at,a.approved_by,a.consumed_at,
            a.consumed_station,a.consumed_stream,
            (a.approved_at >= NOW() - (%s * INTERVAL '1 minute')) AS approval_valid,
-           v.voted_at,v.voted_at_station
+           v.voted_at,v.voted_at_station,v.verified_by
     FROM voter_admission_approvals a
     LEFT JOIN voter_status v
       ON v.election_id=a.election_id AND v.national_id=a.national_id
@@ -1247,6 +1247,10 @@ def entrance_approval_status(national_id,poll_station):
   return False,"This voter has not been verified at the entrance. Please complete entrance verification before proceeding.",None
  if row.get("voted_at"):
   voted_station=row.get("voted_at_station") or row.get("consumed_station") or row.get("polling_station")
+  if str(row.get("verified_by") or "").upper()=="PAPER_BALLOT":
+   return False,(f"ID No {national_id} selected Paper Voting at "
+                 f"{polling_location_label(voted_station)}, is already marked as Voted, "
+                 "and cannot access the electronic Voting Terminal."),None
   return False,already_voted_message(national_id,voted_station,row.get("consumed_stream"),include_prefix=False),None
  if row.get("consumed_at"):
   return False,"This entrance approval has already been used by a voting terminal.",None
@@ -1299,7 +1303,7 @@ def mark_shared_voter_voted(national_id,poll_station):
   with conn.cursor() as cur:
    cur.execute("""
     INSERT INTO voter_status(election_id,national_id,voted_at,voted_at_station,verified_by)
-    VALUES(%s,%s,NOW(),%s,'SIMULATION_BALLOT')
+    VALUES(%s,%s,NOW(),%s,'ELECTRONIC_BALLOT')
     ON CONFLICT(election_id,national_id) DO UPDATE SET
       voted_at=COALESCE(voter_status.voted_at,EXCLUDED.voted_at),
       voted_at_station=COALESCE(voter_status.voted_at_station,EXCLUDED.voted_at_station),
@@ -3539,7 +3543,7 @@ def cast():
                     ON CONFLICT(event_id) DO NOTHING""",row)
     cur.execute("""UPDATE voter_status SET voted_at=NOW(),voted_at_station=%s,verified_by=%s
                    WHERE election_id=%s AND national_id=%s""",
-                (geo.get("poll_station",""),"simulation_ballot",ELECTION_ID,voter))
+                (geo.get("poll_station",""),"ELECTRONIC_BALLOT",ELECTION_ID,voter))
    conn.commit()
   c.execute("UPDATE demo_votes SET dashboard_mirrored=1 WHERE voter_session=?",(voter,))
   c.commit()
@@ -6165,13 +6169,14 @@ def voter_participation_status(national_ids):
   init_voter_access_db()
   with central_control_db() as conn:
    with conn.cursor() as cur:
-    cur.execute("""SELECT national_id,voted_at,voted_at_station FROM voter_status
+    cur.execute("""SELECT national_id,voted_at,voted_at_station,verified_by FROM voter_status
                    WHERE election_id=%s AND national_id=ANY(%s) AND voted_at IS NOT NULL""",
                 (ELECTION_ID,ids))
     for row in cur.fetchall():
      national_id=clean_national_id(row.get("national_id"))
      statuses[national_id]={"status":"Voted","voted_at":row.get("voted_at"),
-                            "voted_at_station":str(row.get("voted_at_station") or "")}
+                            "voted_at_station":str(row.get("voted_at_station") or ""),
+                            "voting_method":("Paper" if str(row.get("verified_by") or "").upper()=="PAPER_BALLOT" else "Electronic")}
   return statuses
  except Exception:
   app.logger.warning("Central voter status lookup failed; using local vote fallback",exc_info=True)
@@ -6184,7 +6189,7 @@ def voter_participation_status(national_ids):
    for row in rows:
     national_id=clean_national_id(row["voter_session"])
     statuses[national_id]={"status":"Voted","voted_at":None,
-                           "voted_at_station":str(row["poll_station"] or "")}
+                           "voted_at_station":str(row["poll_station"] or ""),"voting_method":"Electronic"}
    return statuses
   finally:c.close()
 
@@ -6194,6 +6199,7 @@ def attach_voting_status(members):
  for member in members:
   detail=statuses.get(clean_national_id(member.get("member_id")))
   member["voting_status"]="Voted" if detail else "Not Voted"
+  member["voting_method"]=(detail or {}).get("voting_method","")
   member["voted_at_station"]=(detail or {}).get("voted_at_station","")
  return members
 
@@ -7151,6 +7157,7 @@ def admin_voters_register_voting_status():
  try:
   voted=voter_participation_status(cleaned)
   return jsonify({"ok":True,"statuses":{item:("Voted" if item in voted else "Not Voted") for item in cleaned},
+                  "methods":{item:(voted.get(item) or {}).get("voting_method","") for item in cleaned},
                   "updated_at":kenya_now().isoformat(timespec="seconds")})
  except Exception as exc:
   return jsonify({"ok":False,"error":"Voting status is temporarily unavailable: "+str(exc)}),503
