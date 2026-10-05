@@ -161,7 +161,7 @@ if(openBtn){
 </script>
 {% else %}
 <p><b>Polling Station:</b> {{row["poll_station"]}} &nbsp; <b>Stream:</b> {{row["stream"]}}</p>
-<p class=clean-check>✓ PRE-OPENING CHECK: 0 PRE-CAST SIMULATED VOTES — SYSTEM CLEAN</p>
+{% set opening_precast = row["opening_precast_voters"] or 0 %}<p class=clean-check>{% if opening_precast == 0 %}✓ PRE-OPENING CHECK: 0 PRE-EXISTING VOTERS — SYSTEM CLEAN{% else %}⚠ PRE-OPENING CHECK: {{ opening_precast }} PRE-EXISTING VOTER{{ '' if opening_precast == 1 else 'S' }} — NOT A CLEAN OPENING{% endif %}</p>
 <p><b>Opened:</b> {{row["opened_at"]}}<br><b>Closed:</b> {{row["closed_at"] or "Still open"}}</p>
 {% if row and not row["closed_at"] %}
  <div class="close-control-panel" id="close-stream-control">
@@ -211,7 +211,7 @@ if(openBtn){
   {% endif %}
  </div>
  <div class="closed-tally-action">
-  <a class="closed-tally-btn" href="/tallies">Open / View / Print Tally Dashboard</a>
+  <a class="closed-tally-btn" href="{{ url_for('paper_tally') }}">Submit Paper Ballot Tallies</a>
  </div>
 {% endif %}
 <p><a target="_blank" rel="noopener" href="/stream/report?poll_station={{row['poll_station']|urlencode}}&stream={{row['stream']|urlencode}}">View / Print Opening Report</a> <small>(opens in a new tab)</small></p>

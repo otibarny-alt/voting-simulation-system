@@ -978,6 +978,21 @@ def init_repository_db():
      )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_certified_tallies_scope ON simulation_certified_stream_tallies(session_date,election,county,constituency,ward)")
+    cur.execute("""CREATE TABLE IF NOT EXISTS simulation_paper_vote_tallies(
+      session_date TEXT NOT NULL,election TEXT NOT NULL,
+      county TEXT NOT NULL DEFAULT '',constituency TEXT NOT NULL DEFAULT '',
+      ward TEXT NOT NULL DEFAULT '',poll_station TEXT NOT NULL,stream TEXT NOT NULL,
+      candidate_id TEXT NOT NULL,candidate_name TEXT NOT NULL,paper_votes INTEGER NOT NULL CHECK(paper_votes>=0),
+      submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(session_date,election,county,constituency,ward,poll_station,stream,candidate_id)
+    )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS simulation_paper_tally_submissions(
+      session_date TEXT NOT NULL,county TEXT NOT NULL DEFAULT '',constituency TEXT NOT NULL DEFAULT '',
+      ward TEXT NOT NULL DEFAULT '',poll_station TEXT NOT NULL,stream TEXT NOT NULL,
+      category_totals JSONB NOT NULL,submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(session_date,county,constituency,ward,poll_station,stream)
+    )""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_tallies_dashboard ON simulation_paper_vote_tallies(session_date,election,county,constituency,ward,poll_station,stream)")
    conn.commit()
   _REPOSITORY_DB_READY=True
 
@@ -2530,7 +2545,40 @@ def stream_distinct_voter_count(ref):
    central_count=max((int(r.get("participation") or 0) for r in participation_rows),default=0)
   except Exception as exc:
    app.logger.warning("Could not read preserved central votes for %s / %s: %s",station,stream,exc)
- return max(local_count,central_count)
+ paper_count=paper_stream_participant_count(ref)
+ return max(local_count,central_count,paper_count)
+
+def paper_stream_participant_count(ref):
+ """Largest category total in the locked paper-tally submission."""
+ if not DATABASE_URL or not ref:return 0
+ try:
+  init_repository_db()
+  with repository_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT COALESCE(MAX(category_total),0) AS voters FROM (
+      SELECT election,SUM(paper_votes) AS category_total
+      FROM simulation_paper_vote_tallies
+      WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
+        AND poll_station=%s AND stream=%s GROUP BY election
+    ) totals""",(ref.get("session_date") or today_iso(),ref.get("county") or "",
+      ref.get("constituency") or "",ref.get("ward") or "",ref.get("poll_station") or "",ref.get("stream") or ""))
+    row=cur.fetchone();return int((row or {}).get("voters") or 0)
+ except Exception as exc:
+  app.logger.warning("Paper participant count unavailable: %s",exc)
+  return 0
+
+def paper_tally_submission(ref):
+ if not DATABASE_URL or not ref:return None
+ init_repository_db()
+ with repository_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT category_totals,submitted_by,submitted_at
+    FROM simulation_paper_tally_submissions
+    WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
+      AND poll_station=%s AND stream=%s""",(ref.get("session_date") or today_iso(),
+      ref.get("county") or "",ref.get("constituency") or "",ref.get("ward") or "",
+      ref.get("poll_station") or "",ref.get("stream") or ""))
+   return cur.fetchone()
 
 def authoritative_precast_voter_count(ref,before_opened_at=None):
  """Count completed voters already recorded for a stream before it opens.
@@ -2590,7 +2638,7 @@ def central_stream_tally_rows(ref):
  stream_key=re.sub(r'[^a-z0-9]+','',stream.lower())
  normalized_match="""regexp_replace(lower(poll_station),'[^a-z0-9]+','','g')=%s
                      AND regexp_replace(lower(stream),'[^a-z0-9]+','','g')=%s"""
- init_dashboard_db()
+ init_dashboard_db();init_repository_db()
  with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute(f"""SELECT session_date FROM simulation_dashboard_vote_events
@@ -2618,11 +2666,16 @@ def central_stream_tally_rows(ref):
                    ORDER BY (session_date=%s) DESC,event_count DESC,session_date DESC
                    LIMIT 1""",(station_key,stream_key,requested_date))
     legacy=cur.fetchone()
-    if legacy:
+   if legacy:
      selected_date=legacy.get("session_date")
      station_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("poll_station") or "").lower())
      stream_key=re.sub(r'[^a-z0-9]+','',str(legacy.get("stream") or "").lower())
      app.logger.warning("Resolved reopened stream %s / %s to stored keys %s / %s",station,stream,legacy.get("poll_station"),legacy.get("stream"))
+   if not selected_date:
+    cur.execute(f"""SELECT session_date FROM simulation_paper_vote_tallies
+                    WHERE session_date=%s AND {normalized_match} LIMIT 1""",
+                (requested_date,station_key,stream_key))
+    paper_date=cur.fetchone();selected_date=paper_date.get("session_date") if paper_date else None
    if not selected_date:
     vote_rows=[]; geo_rows=[]
    else:
@@ -2644,8 +2697,9 @@ def central_stream_tally_rows(ref):
 
  # Reports closed by older builds may already have certified machine-readable
  # tallies even when their raw dashboard events used a legacy or missing key.
- if vote_rows:
-  return vote_rows,geo_rows
+ combined_votes,combined_geo=merge_paper_tally_rows(ref,vote_rows,geo_rows,selected_date)
+ if combined_votes:
+  return combined_votes,combined_geo
  try:
   init_repository_db()
   with repository_db() as conn:
@@ -2691,10 +2745,47 @@ def central_stream_tally_rows(ref):
                     GROUP BY election ORDER BY election""",
                 (selected_date,station_key,stream_key))
     geo_rows=cur.fetchall()
-  return vote_rows,geo_rows
+  return merge_paper_tally_rows(ref,vote_rows,geo_rows,selected_date)
  except Exception as exc:
   app.logger.warning("Certified stream tally recovery failed for %s / %s: %s",station,stream,exc)
   return [],[]
+
+def merge_paper_tally_rows(ref,vote_rows,geo_rows,session_date=None):
+ """Return combined electronic + locked paper rows without mutating either source."""
+ if not DATABASE_URL:return vote_rows,geo_rows
+ session_date=session_date or ref.get("session_date") or today_iso()
+ try:
+  init_repository_db()
+  with repository_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT election,candidate_id,candidate_name,paper_votes
+      FROM simulation_paper_vote_tallies
+      WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
+        AND poll_station=%s AND stream=%s""",(session_date,ref.get("county") or "",
+      ref.get("constituency") or "",ref.get("ward") or "",ref.get("poll_station") or "",ref.get("stream") or ""))
+    paper=cur.fetchall()
+  if not paper:return vote_rows,geo_rows
+  votes={}
+  for row in vote_rows:
+   key=(str(row.get("election") or ""),str(row.get("candidate_id") or ""))
+   votes[key]={"election":key[0],"candidate":0,"candidate_id":key[1],
+               "candidate_name":str(row.get("candidate_name") or key[1]),"votes":int(row.get("votes") or 0)}
+  paper_totals={}
+  for row in paper:
+   key=(str(row.get("election") or ""),str(row.get("candidate_id") or ""))
+   item=votes.setdefault(key,{"election":key[0],"candidate":0,"candidate_id":key[1],
+          "candidate_name":str(row.get("candidate_name") or key[1]),"votes":0})
+   amount=int(row.get("paper_votes") or 0);item["votes"]+=amount
+   paper_totals[key[0]]=paper_totals.get(key[0],0)+amount
+  geo={str(row.get("election") or ""):dict(row) for row in geo_rows}
+  for election,total in paper_totals.items():
+   item=geo.setdefault(election,{"election":election,"poll_station":ref.get("poll_station") or "",
+     "stream":ref.get("stream") or "","participation":0,"skipped":0})
+   item["participation"]=int(item.get("participation") or 0)+total
+  return list(votes.values()),list(geo.values())
+ except Exception as exc:
+  app.logger.warning("Paper tally merge unavailable for %s / %s: %s",ref.get("poll_station"),ref.get("stream"),exc)
+  return vote_rows,geo_rows
 
 @app.post("/terminal/reset")
 @agent_access_required
@@ -3166,7 +3257,7 @@ def close_stream():
  # Once closed, voting stops unless an authenticated administrator explicitly reopens this training stream.
  # Preserve a signed read-only reference so the closed stream's tally dashboard
  # remains available for opening, viewing and printing.
- resp=redirect(url_for("tallies"))
+ resp=redirect(url_for("paper_tally"))
  resp.delete_cookie(TERMINAL_ACTIVE_COOKIE)
  resp.set_cookie(
   TERMINAL_CLOSED_COOKIE,
@@ -3179,6 +3270,76 @@ def close_stream():
   httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400
  )
  return resp
+
+@app.route("/stream/paper-tally",methods=["GET","POST"])
+def paper_tally():
+ """Capture one immutable candidate-by-candidate paper tally after closing."""
+ agent=current_agent_access()
+ if not agent:return redirect(f"{VOTER_VERIFICATION_BASE_URL}/login?mode=voting")
+ available,ref,row=tallies_available()
+ if not available or not row:return Response("Paper tally entry is available only after this stream is formally closed.",status=409)
+ ref={"session_date":ref.get("session_date") or today_iso(),"county":row["county"] or "",
+      "constituency":row["constituency"] or "","ward":row["ward"] or "",
+      "poll_station":row["poll_station"] or "","stream":row["stream"] or ""}
+ if norm_key(agent.get("poll_station"))!=norm_key(ref["poll_station"]) or norm_key(agent.get("stream"))!=norm_key(ref["stream"]):
+  return Response("Paper tally entry denied: this terminal is assigned to another stream.",status=403)
+ existing=paper_tally_submission(ref)
+ catalog=current_catalog_or_empty(ref)
+ sections=[{"key":key,"title":title,"candidates":catalog.get(key,[])} for key,title,_ in ELECTIONS]
+ electronic_rows,_=central_stream_tally_rows(ref)
+ electronic={(str(r.get("election") or ""),str(r.get("candidate_id") or "")):int(r.get("votes") or 0) for r in electronic_rows}
+ csrf=session.get("paper_tally_csrf")
+ if not csrf:csrf=secrets.token_urlsafe(32);session["paper_tally_csrf"]=csrf
+ error=""
+ if request.method=="POST":
+  supplied=request.form.get("csrf_token","")
+  if not supplied or not hmac.compare_digest(supplied,csrf):error="Security token expired. Reload and submit again."
+  elif existing:error="Paper votes for this polling-station stream have already been submitted and locked."
+  else:
+   elections=request.form.getlist("election");candidate_ids=request.form.getlist("candidate_id")
+   candidate_names=request.form.getlist("candidate_name");values=request.form.getlist("paper_votes")
+   allowed={(section["key"],str(c.get("candidate_id") or "")):str(c.get("name") or "") for section in sections for c in section["candidates"]}
+   entries=[];category_totals={key:0 for key,_,_ in ELECTIONS}
+   if not (len(elections)==len(candidate_ids)==len(candidate_names)==len(values)==len(allowed)):
+    error="The submitted paper form is incomplete. Reload it and enter every candidate total."
+   else:
+    seen=set()
+    for election,cid,_posted_name,value in zip(elections,candidate_ids,candidate_names,values):
+     key=(election,cid)
+     if key not in allowed or key in seen:error="The submitted candidate list does not match the approved ballot.";break
+     seen.add(key)
+     try:votes=int(value)
+     except (TypeError,ValueError):error="Every paper vote total must be a whole number.";break
+     if votes<0:error="Paper vote totals cannot be negative.";break
+     entries.append((election,cid,allowed[key],votes));category_totals[election]+=votes
+    if not error and seen!=set(allowed):error="Enter paper totals for every approved candidate."
+   if not error:
+    try:
+     init_repository_db()
+     with repository_db() as conn:
+      with conn.cursor() as cur:
+       cur.execute("""INSERT INTO simulation_paper_tally_submissions(
+        session_date,county,constituency,ward,poll_station,stream,category_totals,submitted_by)
+        VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING RETURNING submitted_at""",
+        (ref["session_date"],ref["county"],ref["constituency"],ref["ward"],ref["poll_station"],ref["stream"],
+         json.dumps(category_totals),str(agent.get("agent_id") or "Voting Terminal")))
+       accepted=cur.fetchone()
+       if not accepted:raise ValueError("Paper tally was already submitted by another active session.")
+       for election,cid,name,votes in entries:
+        cur.execute("""INSERT INTO simulation_paper_vote_tallies(
+         session_date,election,county,constituency,ward,poll_station,stream,
+         candidate_id,candidate_name,paper_votes,submitted_by)
+         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+         (ref["session_date"],election,ref["county"],ref["constituency"],ref["ward"],ref["poll_station"],ref["stream"],
+          cid,name,votes,str(agent.get("agent_id") or "Voting Terminal")))
+      conn.commit()
+     for cache in (_GOV_DASHBOARD_CACHE,_SEN_DASHBOARD_CACHE,_PRES_DASHBOARD_CACHE,_WOMAN_REP_DASHBOARD_CACHE,_MNA_DASHBOARD_CACHE,_MCA_DASHBOARD_CACHE):cache["payload"]=None
+     return redirect(url_for("tallies"))
+    except Exception as exc:
+     app.logger.exception("Paper tally submission failed for %s / %s",ref["poll_station"],ref["stream"])
+     error="Paper tally was not saved: "+str(exc)
+ return render_template("paper_tally.html",ref=ref,sections=sections,electronic=electronic,
+                        existing=existing,csrf_token=csrf,error=error)
 
 @app.get("/stream/report")
 def stream_report():
@@ -3711,7 +3872,7 @@ def _persistent_dashboard_snapshot(election):
  """
  if not DATABASE_URL:
   return None
- init_dashboard_db()
+ init_dashboard_db();init_repository_db()
  try:
   c=con()
   aliases=dashboard_election_aliases(election)
@@ -3729,12 +3890,17 @@ def _persistent_dashboard_snapshot(election):
  try:
   with lock_db() as conn:
    with conn.cursor() as cur:
-    cur.execute("""
-     SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-     FROM simulation_dashboard_vote_events
-     WHERE session_date=%s AND LOWER(election) = ANY(%s)
-     GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-    """,(session_date,list(aliases)))
+    cur.execute("""WITH combined AS (
+      SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
+      FROM simulation_dashboard_vote_events WHERE session_date=%s AND LOWER(election)=ANY(%s)
+      GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
+      UNION ALL
+      SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,SUM(paper_votes) AS n
+      FROM simulation_paper_vote_tallies WHERE session_date=%s AND LOWER(election)=ANY(%s)
+      GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name)
+     SELECT county,constituency,ward,poll_station,stream,candidate_id,MAX(candidate_name) AS candidate_name,SUM(n) AS n
+     FROM combined GROUP BY county,constituency,ward,poll_station,stream,candidate_id
+    """,(session_date,list(aliases),session_date,list(aliases)))
     rows=cur.fetchall()
 
     # If PostgreSQL is empty but this worker still has local votes, never mask them.
@@ -3744,17 +3910,25 @@ def _persistent_dashboard_snapshot(election):
     # Across Render deploys the local SQLite file can be fresh/empty while the durable
     # anonymous mirror still has the user's most recent training session. Use that session.
     if not rows:
-     cur.execute("SELECT MAX(session_date) AS d FROM simulation_dashboard_vote_events WHERE LOWER(election) = ANY(%s)",(list(aliases),))
+     cur.execute("""SELECT MAX(session_date) AS d FROM (
+       SELECT session_date FROM simulation_dashboard_vote_events WHERE LOWER(election)=ANY(%s)
+       UNION ALL SELECT session_date FROM simulation_paper_vote_tallies WHERE LOWER(election)=ANY(%s)
+      ) dates""",(list(aliases),list(aliases)))
      latest=cur.fetchone()
      latest_date=(latest.get("d") if latest else None) if hasattr(latest,'get') else (latest[0] if latest else None)
      if latest_date:
       session_date=str(latest_date)
-      cur.execute("""
+      cur.execute("""WITH combined AS (
        SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,COUNT(*) AS n
-       FROM simulation_dashboard_vote_events
-       WHERE session_date=%s AND LOWER(election) = ANY(%s)
+       FROM simulation_dashboard_vote_events WHERE session_date=%s AND LOWER(election)=ANY(%s)
        GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name
-      """,(session_date,list(aliases)))
+       UNION ALL
+       SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,SUM(paper_votes) AS n
+       FROM simulation_paper_vote_tallies WHERE session_date=%s AND LOWER(election)=ANY(%s)
+       GROUP BY county,constituency,ward,poll_station,stream,candidate_id,candidate_name)
+       SELECT county,constituency,ward,poll_station,stream,candidate_id,MAX(candidate_name) AS candidate_name,SUM(n) AS n
+       FROM combined GROUP BY county,constituency,ward,poll_station,stream,candidate_id
+      """,(session_date,list(aliases),session_date,list(aliases)))
       rows=cur.fetchall()
 
     cur.execute("""
@@ -4720,13 +4894,19 @@ def tallies_available():
  if lock:
   row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
   if row and row["closed_at"]:
-   return True,lock,row
+   enriched=dict(lock)
+   for key in ("county","constituency","ward","poll_station","stream","session_date"):
+    if not enriched.get(key):enriched[key]=row[key] or ""
+   return True,enriched,row
 
  closed_ref=closed_stream_cookie()
  if closed_ref:
   row=stream_session(closed_ref.get("poll_station",""),closed_ref.get("stream",""),closed_ref.get("session_date"))
   if row and row["closed_at"]:
-   return True,closed_ref,row
+   enriched=dict(closed_ref)
+   for key in ("county","constituency","ward","poll_station","stream","session_date"):
+    if not enriched.get(key):enriched[key]=row[key] or ""
+   return True,enriched,row
 
  return False,lock,None
 
@@ -4740,6 +4920,9 @@ def tallies():
    stream_row=row,
    official_close_time="08:00 (8:00 AM)"
   ),403
+
+ if not paper_tally_submission(lock):
+  return redirect(url_for("paper_tally"))
 
  # Do not generate or display any tally/general report for a closed stream
  # that recorded no completed simulated voter session. This check happens
@@ -6385,7 +6568,9 @@ def _winner_source_rows(election):
                     SELECT session_date AS d FROM simulation_certified_stream_tallies WHERE LOWER(election)=ANY(%s)
                     UNION ALL
                     SELECT session_date AS d FROM simulation_dashboard_vote_events WHERE LOWER(election)=ANY(%s)
-                   ) dates""",(list(aliases),list(aliases)))
+                    UNION ALL
+                    SELECT session_date AS d FROM simulation_paper_vote_tallies WHERE LOWER(election)=ANY(%s)
+                   ) dates""",(list(aliases),list(aliases),list(aliases)))
      latest=cur.fetchone(); session_date=(latest.get('d') if latest else None)
      if session_date:
       cur.execute("""SELECT county,constituency,ward,poll_station,stream,candidate_id,candidate_name,SUM(votes) AS n
@@ -6409,6 +6594,21 @@ def _winner_source_rows(election):
                            AND c.poll_station=e.poll_station AND c.stream=e.stream
                        )
                      GROUP BY e.county,e.constituency,e.ward,e.poll_station,e.stream,e.candidate_id,e.candidate_name""",
+                  (session_date,list(aliases)))
+      rows.extend(cur.fetchall())
+      cur.execute("""SELECT p.county,p.constituency,p.ward,p.poll_station,p.stream,
+                            p.candidate_id,p.candidate_name,SUM(p.paper_votes) AS n
+                     FROM simulation_paper_vote_tallies p
+                     JOIN simulation_terminal_locks l
+                       ON l.session_date=p.session_date AND l.poll_station=p.poll_station AND l.stream=p.stream
+                     WHERE p.session_date=%s AND LOWER(p.election)=ANY(%s) AND l.closed_at IS NOT NULL
+                       AND NOT EXISTS (
+                         SELECT 1 FROM simulation_certified_stream_tallies c
+                         WHERE c.session_date=p.session_date AND LOWER(c.election)=LOWER(p.election)
+                           AND c.county=p.county AND c.constituency=p.constituency AND c.ward=p.ward
+                           AND c.poll_station=p.poll_station AND c.stream=p.stream
+                       )
+                     GROUP BY p.county,p.constituency,p.ward,p.poll_station,p.stream,p.candidate_id,p.candidate_name""",
                   (session_date,list(aliases)))
       rows.extend(cur.fetchall())
       if rows:return rows
@@ -6668,6 +6868,7 @@ def admin_reset_test_data():
   central_tables=(
    "simulation_pdf_reports","simulation_opening_pdf_reports",
    "simulation_certified_stream_tallies","simulation_dashboard_vote_events",
+   "simulation_paper_vote_tallies","simulation_paper_tally_submissions",
    "simulation_terminal_locks","voter_admission_approvals","voter_status",
    "simulation_agent_handoffs",
   )
