@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Paper Tally Temporarily Unavailable</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+<style>body{background:#f4f6f8}.wrap{max-width:720px;margin:40px auto;padding:18px}.card{background:#fff;border:1px solid #ddd;border-radius:14px;padding:28px;text-align:center;box-shadow:0 6px 24px #0002}.notice{background:#fff3cd;border:2px solid #ef7d00;border-radius:9px;padding:17px;font-size:18px;line-height:1.5}.retry{display:inline-block;margin-top:20px;background:#111;color:#fff;border:3px solid #ef7d00;border-radius:8px;padding:12px 22px;text-decoration:none;font-weight:800}.status{min-height:22px;color:#666;font-weight:700;margin-top:14px}</style></head>
+<body><main class="wrap"><section class="card"><h1>Paper Tally Connection Interrupted</h1>
+<div class="notice">The closed stream and its electronic votes remain safely recorded. The tally form could not be loaded because the results database is temporarily busy. This page will retry automatically.</div>
+<p><b>{{ ref.poll_station }}</b> · {{ ref.stream }}</p><a class="retry" href="{{ url_for('paper_tally') }}">Retry Now</a><div class="status" id="status">Waiting to reconnect…</div>
+</section></main><script>let seconds=5;const status=document.getElementById('status');const timer=setInterval(()=>{seconds-=1;status.textContent='Retrying in '+seconds+' seconds…';if(seconds<=0){clearInterval(timer);window.location.reload();}},1000);</script></body></html>

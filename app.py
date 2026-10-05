@@ -2642,6 +2642,10 @@ def central_stream_tally_rows(ref):
  init_dashboard_db();init_repository_db()
  with central_control_db() as conn:
   with conn.cursor() as cur:
+   # Always define the legacy fallback. When the exact session-date query
+   # succeeds this fallback is intentionally skipped; older code then tried
+   # to read an undefined variable and /stream/paper-tally returned HTTP 500.
+   legacy=None
    cur.execute(f"""SELECT session_date FROM simulation_dashboard_vote_events
                    WHERE session_date=%s AND {normalized_match}
                    LIMIT 1""",(requested_date,station_key,stream_key))
@@ -3284,10 +3288,14 @@ def paper_tally():
       "poll_station":row["poll_station"] or "","stream":row["stream"] or ""}
  if norm_key(agent.get("poll_station"))!=norm_key(ref["poll_station"]) or norm_key(agent.get("stream"))!=norm_key(ref["stream"]):
   return Response("Paper tally entry denied: this terminal is assigned to another stream.",status=403)
- existing=paper_tally_submission(ref)
- catalog=current_catalog_or_empty(ref)
- sections=[{"key":key,"title":title,"candidates":catalog.get(key,[])} for key,title,_ in ELECTIONS]
- electronic_rows,_=central_stream_tally_rows(ref)
+ try:
+  existing=paper_tally_submission(ref)
+  catalog=current_catalog_or_empty(ref)
+  sections=[{"key":key,"title":title,"candidates":catalog.get(key,[])} for key,title,_ in ELECTIONS]
+  electronic_rows,_=central_stream_tally_rows(ref)
+ except Exception as exc:
+  app.logger.exception("Paper tally page could not be prepared for %s / %s",ref["poll_station"],ref["stream"])
+  return render_template("paper_tally_unavailable.html",ref=ref),503
  electronic={(str(r.get("election") or ""),str(r.get("candidate_id") or "")):int(r.get("votes") or 0) for r in electronic_rows}
  csrf=session.get("paper_tally_csrf")
  if not csrf:csrf=secrets.token_urlsafe(32);session["paper_tally_csrf"]=csrf
