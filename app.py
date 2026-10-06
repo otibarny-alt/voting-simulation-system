@@ -524,7 +524,34 @@ def terminal_heartbeat():
  lease_ok=pulse_terminal_lease("active")
  if lease_ok is True:
   session["terminal_lease_checked_at"]=time.time()
-  return jsonify({"ok":True})
+  lock=signed_terminal_cookie_lock()
+  reopened=False
+  if lock:
+   try:
+    closed_ref=closed_stream_cookie()
+    agent=current_agent_access()
+    if (closed_ref and agent
+        and norm_key(agent.get("poll_station"))==norm_key(lock.get("poll_station"))
+        and norm_key(agent.get("stream"))==norm_key(lock.get("stream"))):
+     restore_remote_owner_after_reopen(
+      lock,request.cookies.get(TERMINAL_OWNER_COOKIE,"")
+     )
+    _row,state_changed=sync_local_stream_session(lock)
+    reopened=bool(
+     _row and not _row["closed_at"] and closed_ref
+     and norm_key(closed_ref.get("poll_station"))==norm_key(lock.get("poll_station"))
+     and norm_key(closed_ref.get("stream"))==norm_key(lock.get("stream"))
+    )
+   except Exception as exc:
+    app.logger.warning("Remote reopen heartbeat sync deferred: %s",exc)
+  response=jsonify({"ok":True,"stream_reopened":reopened})
+  if reopened:
+   response.set_cookie(TERMINAL_ACTIVE_COOKIE,terminal_serializer().dumps({
+    "session_date":lock.get("session_date") or today_iso(),
+    "poll_station":lock.get("poll_station") or "","stream":lock.get("stream") or ""
+   }),httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
+   response.delete_cookie(TERMINAL_CLOSED_COOKIE)
+  return response
  if lease_ok is False:
   if session.get("terminal_pause_reason")=="entrance_terminal_offline":
    session.pop("terminal_lease_checked_at",None)
@@ -1435,30 +1462,46 @@ def mark_global_stream_closed(lock_data, owner_token):
   conn.commit()
  return ok
 
-def admin_reopen_global_stream(lock_data, owner_token):
+def admin_reopen_global_stream(lock_data):
  """
  Administrator-only override used to reopen a formally closed TRAINING stream.
- The new/current admin device becomes the lock owner, while all existing
- simulated votes remain intact.
+ The original remote voting terminal remains the lock owner, while all
+ existing simulated votes remain intact.
  """
- if not DATABASE_URL or not lock_data or not owner_token:
+ if not DATABASE_URL or not lock_data:
   return False
- now=kenya_now().isoformat(timespec="seconds")
  init_terminal_lock_db()
  with central_control_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""
     UPDATE simulation_terminal_locks
-    SET owner_token_hash=%s, locked_at=%s, released_at=NULL, closed_at=NULL
+    SET released_at=NULL, closed_at=NULL
     WHERE session_date=%s AND poll_station=%s AND stream=%s
       AND closed_at IS NOT NULL
-   """,(
-    token_hash(owner_token),now,lock_data["session_date"],
-    lock_data["poll_station"],lock_data["stream"]
-   ))
+   """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
    ok=cur.rowcount==1
   conn.commit()
  return ok
+
+def restore_remote_owner_after_reopen(lock_data,owner_token):
+ """Repair ownership changed by an older admin-reopen build.
+
+ This is called only for an authenticated voting terminal holding both the
+ signed lock cookie and the signed closed-stream cookie for the same stream.
+ """
+ if not DATABASE_URL or not lock_data or not owner_token:return False
+ init_terminal_lock_db()
+ with central_control_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""UPDATE simulation_terminal_locks
+    SET owner_token_hash=%s,released_at=NULL
+    WHERE session_date=%s AND poll_station=%s AND stream=%s
+      AND closed_at IS NULL AND released_at IS NULL""",(
+     token_hash(owner_token),lock_data.get("session_date") or today_iso(),
+     lock_data.get("poll_station") or "",lock_data.get("stream") or ""))
+   restored=cur.rowcount==1
+  conn.commit()
+ return restored
 
 def delete_repository_reports_for_stream(session_date,poll_station,stream):
  """Remove stale PDFs when a closed training stream is reopened.
@@ -1473,6 +1516,18 @@ def delete_repository_reports_for_stream(session_date,poll_station,stream):
     WHERE session_date=%s AND poll_station=%s AND stream=%s
    """,(session_date,poll_station,stream))
    n=cur.rowcount
+   # A reopened stream may admit more paper voters. Unlock the previous paper
+   # submission so the cumulative physical count can be entered again after
+   # the next close.
+   cur.execute("""DELETE FROM simulation_paper_vote_tallies
+    WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+    (session_date,poll_station,stream))
+   cur.execute("""DELETE FROM simulation_paper_tally_submissions
+    WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+    (session_date,poll_station,stream))
+   cur.execute("""DELETE FROM simulation_certified_stream_tallies
+    WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+    (session_date,poll_station,stream))
   conn.commit()
  invalidate_repository_cache()
  return n
@@ -2482,6 +2537,27 @@ def recover_local_stream_session(lock):
   app.logger.warning("Recovered local stream session from central lock for %s / %s",station,stream)
  return recovered
 
+def sync_local_stream_session(lock):
+ """Mirror the central open/closed state into this Render worker's SQLite."""
+ if not lock or not DATABASE_URL:return None,False
+ session_date=str(lock.get("session_date") or today_iso())
+ station=str(lock.get("poll_station") or "").strip();stream=str(lock.get("stream") or "").strip()
+ if not station or not stream:return None,False
+ central=global_lock_row(session_date,station,stream)
+ if not central:return stream_session(station,stream,session_date),False
+ row=stream_session(station,stream,session_date)
+ if not row:
+  return recover_local_stream_session(lock),True
+ central_closed=str(central.get("closed_at") or "")
+ local_closed=str(row["closed_at"] or "")
+ if bool(central_closed)==bool(local_closed):return row,False
+ c=con()
+ try:
+  c.execute("UPDATE stream_sessions SET closed_at=? WHERE id=?",(central_closed or None,row["id"]))
+  c.commit()
+ finally:c.close()
+ return stream_session(station,stream,session_date),True
+
 def time_status(ts,expected):
  if not ts or not expected: return None
  try: return datetime.fromisoformat(ts).strftime("%H:%M")==expected
@@ -2955,7 +3031,12 @@ def stream_control():
    st=current_lock.get("stream","")
 
  lookup_date=current_lock.get("session_date") if current_lock else None
- row=stream_session(ps,st,lookup_date) if ps and st else None
+ row=None
+ if current_lock and ps and st:
+  try:row,_changed=sync_local_stream_session(current_lock)
+  except Exception as exc:
+   app.logger.warning("Stream-control central state sync deferred: %s",exc)
+ if row is None:row=stream_session(ps,st,lookup_date) if ps and st else None
  recovery_error=""
  if current_lock and ps and st and not row:
   try:
@@ -3002,7 +3083,17 @@ def admin_reopen_stream():
 
  row=stream_session(ps,st,requested_session_date or None)
  session_date=str(row["session_date"] or today_iso()) if row else today_iso()
+ if requested_session_date:session_date=requested_session_date
  central=global_lock_row(session_date,ps,st) if DATABASE_URL else None
+ if row is None and central:
+  try:
+   row=recover_local_stream_session({
+    "session_date":session_date,"poll_station":ps,"stream":st,
+    "county":central.get("county") or "","constituency":central.get("constituency") or "",
+    "ward":central.get("ward") or "","poll_station_code":central.get("poll_station_code") or ""
+   })
+  except Exception as exc:
+   app.logger.warning("Admin reopen local-state recovery deferred: %s",exc)
  if not row or not row["closed_at"] or not central or not central.get("closed_at"):
   return render_template(
    "stream_control.html",row=row,poll_station=ps,stream=st,
@@ -3013,7 +3104,6 @@ def admin_reopen_stream():
    owns_current_stream=False,stream_admin_logged_in=True
   )
 
- owner_token=request.cookies.get(TERMINAL_OWNER_COOKIE,"") or secrets.token_urlsafe(32)
  lock_data={
   "session_date":session_date,
   "county":central.get("county") or row["county"] or "",
@@ -3023,7 +3113,7 @@ def admin_reopen_stream():
   "poll_station_code":central.get("poll_station_code") or row["poll_station_code"] or ""
  }
  try:
-  if not admin_reopen_global_stream(lock_data,owner_token):
+  if not admin_reopen_global_stream(lock_data):
    raise RuntimeError("central closed-stream record could not be reopened")
  except Exception as exc:
   return render_template(
@@ -3053,15 +3143,11 @@ def admin_reopen_stream():
  session.pop("awaiting_new_stream_after_reset",None)
  session.pop("terminal_reset_completed",None)
 
+ for cache in (_GOV_DASHBOARD_CACHE,_SEN_DASHBOARD_CACHE,_PRES_DASHBOARD_CACHE,
+               _WOMAN_REP_DASHBOARD_CACHE,_MNA_DASHBOARD_CACHE,_MCA_DASHBOARD_CACHE):
+  cache["payload"]=None
+
  resp=redirect(url_for("stream_control",poll_station=ps,stream=st))
- resp.set_cookie(TERMINAL_LOCK_COOKIE,terminal_serializer().dumps(lock_data),
-                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
- resp.set_cookie(TERMINAL_OWNER_COOKIE,owner_token,
-                 httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
- resp.set_cookie(TERMINAL_ACTIVE_COOKIE,terminal_serializer().dumps({
-   "session_date":session_date,"poll_station":ps,"stream":st
-  }),httponly=True,samesite="Lax",secure=request.is_secure,max_age=86400)
- resp.delete_cookie(TERMINAL_CLOSED_COOKIE)
  return resp
 
 @app.post("/stream/open")
@@ -3512,7 +3598,8 @@ def voting_stream_ready():
  agent=current_agent_access()
  if not agent or norm_key(lock.get("poll_station"))!=norm_key(agent.get("poll_station")) or norm_key(lock.get("stream"))!=norm_key(agent.get("stream")):
   return False,lock,None
- row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
+ try:row,_changed=sync_local_stream_session(lock)
+ except Exception:row=stream_session(lock.get("poll_station",""),lock.get("stream",""),lock.get("session_date"))
  if not row or not row["opened_at"] or row["closed_at"]:
   return False,lock,row
  # A previous/stale device lock is not active for voter entry.
