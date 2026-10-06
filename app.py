@@ -1556,10 +1556,13 @@ def release_global_lock(lock_data, owner_token):
       LIMIT 1
      """,(lock_data["session_date"],lock_data["poll_station"],lock_data["stream"]))
      existing=cur.fetchone()
-     ok=bool(
-      existing and existing.get("released_at")
-      and hmac.compare_digest(existing.get("owner_token_hash","") or "",token_hash(owner_token))
-     )
+     # A reset/clean-data operation may already have removed the central row,
+     # while this browser still carries its signed pending-release cookie.  A
+     # missing row is therefore already released, not a release failure.  The
+     # same is true when another administrative action has marked the row as
+     # released.  An existing *active* row still returns False and cannot be
+     # taken over by this device.
+     ok=(existing is None) or bool(existing.get("released_at"))
    conn.commit()
   return ok
 
