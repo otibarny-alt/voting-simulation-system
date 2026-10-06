@@ -18,6 +18,13 @@
 <main class="data-admin">
  <h1>Admin Data Files</h1>
  <p>Download or replace the electoral hierarchy, agents polling register, and Kobo membership fallback CSV files.</p>
+ <section class="data-panel" id="terminal-reset" style="border:3px solid #ef7d00;background:#fff8e8">
+  <h2>Polling-Station Terminal Control</h2>
+  <p>View every active station and administratively release both its Entrance Verification and Voting Terminal sessions.</p>
+  <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('admin_terminal_resets') }}">Reset Verification &amp; Voting Terminals</a>
+  </div>
+ </section>
  <section class="data-panel" id="party-branding">
   <h2>Universal Party Branding</h2>
   <p>Change the logos, colour theme, party name, abbreviation, slogan and visible membership wording for every connected nomination service.</p>
@@ -157,6 +164,7 @@
   <p>Open the protected management facilities hosted by the Voter Verification System.</p>
   {% if voter_verification_base_url %}
   <div class="verification-admin-actions">
+   <a class="verification-admin-link" href="{{ url_for('admin_terminal_resets') }}">Reset Verification &amp; Voting Terminals</a>
    <a class="verification-admin-link" href="{{ voter_verification_base_url }}/admin/officers">Manage Officers</a>
    <a class="verification-admin-link" href="{{ voter_verification_base_url }}/admin/edit-registration">Edit Registration</a>
   </div>
