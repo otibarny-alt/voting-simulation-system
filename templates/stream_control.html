@@ -202,8 +202,8 @@ if(openBtn){
   <b>VOTING STREAM CLOSED</b><br>
   Voting is stopped for this stream. Existing simulated votes remain preserved.
  </div>
+ {% if stream_admin_logged_in %}
  <div class="admin-reopen-panel">
-  {% if stream_admin_logged_in %}
    <form method="post" action="/stream/admin-reopen"
          onsubmit="return confirm('ADMIN OVERRIDE: Reopen this closed training stream so additional eligible voters can continue? Existing votes will be preserved. Previously deposited repository PDFs for this stream will be removed and regenerated after the stream is closed again.');">
     <input type="hidden" name="poll_station" value="{{row['poll_station']}}">
@@ -211,11 +211,8 @@ if(openBtn){
     <button type="submit" class="admin-reopen-btn">Admin Reopen Voting Stream</button>
    </form>
    <div class="admin-reopen-help"><b>Administrator override:</b> reopening preserves all existing votes and permits additional eligible voters to continue.</div>
-  {% else %}
-   <a class="admin-reopen-btn" href="{{ url_for('repository_admin_login', next=url_for('stream_control', poll_station=row['poll_station'], stream=row['stream'])) }}">Admin Login to Reopen Stream</a>
-   <div class="admin-reopen-help">Only an authenticated administrator can reopen a formally closed training stream.</div>
-  {% endif %}
  </div>
+ {% endif %}
  <div class="closed-tally-action">
   <a class="closed-tally-btn" href="{{ url_for('paper_tally') }}">Submit Paper Ballot Tallies</a>
  </div>
