@@ -9,7 +9,7 @@ from functools import wraps
 from email.message import EmailMessage
 from html import unescape
 from io import BytesIO, StringIO
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from xml.etree import ElementTree as ET
 from xhtml2pdf import pisa
 from zoneinfo import ZoneInfo
@@ -6969,6 +6969,54 @@ def admin_master_register_promote(batch_id):
    app.logger.exception("Master register activation failed")
    session["data_files_error"]="Register activation blocked: "+str(exc)
  return redirect(url_for("admin_data_files")+"#master-register-database")
+
+
+@app.route("/admin/data-files/terminal-resets",methods=["GET","POST"])
+def admin_terminal_resets():
+ """Voting-admin proxy for verification/voting station-session resets."""
+ if not repository_admin_logged_in():
+  return redirect(url_for("repository_admin_login",next=url_for("admin_terminal_resets")))
+ token=session.get("terminal_reset_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32);session["terminal_reset_csrf"]=token
+ if request.method=="POST":
+  supplied=str(request.form.get("csrf_token") or "")
+  terminal_id=str(request.form.get("terminal_id") or "").strip()
+  if not supplied or not hmac.compare_digest(supplied,token):
+   flash("Security token expired. Reload the page and try again.","error")
+  elif not terminal_id:
+   flash("Select an active station terminal to reset.","error")
+  elif not AGENT_SSO_SECRET:
+   flash("Terminal reset bridge is not configured. Set the same AGENT_SSO_SECRET on both Render services.","error")
+  else:
+   try:
+    response=requests.post(
+     f"{VOTER_VERIFICATION_BASE_URL}/api/admin/terminal-sessions/{quote(terminal_id,safe='')}/release",
+     headers={"X-Terminal-Bridge-Secret":AGENT_SSO_SECRET},timeout=(4,10))
+    payload=response.json() if response.content else {}
+    if response.ok and payload.get("ok"):
+     flash("Verification and Voting Terminal sessions were released. This station can now log in again.","success")
+    else:
+     flash(str(payload.get("message") or payload.get("error") or "The station terminal could not be reset."),"error")
+   except Exception:
+    app.logger.exception("Station terminal admin reset failed")
+    flash("The Verification service could not be reached. No terminal session was changed. Retry shortly.","error")
+  return redirect(url_for("admin_terminal_resets"))
+ terminals=[];error=None
+ if not AGENT_SSO_SECRET:
+  error="Terminal reset bridge is not configured. Set the same AGENT_SSO_SECRET on both Render services."
+ else:
+  try:
+   response=requests.get(f"{VOTER_VERIFICATION_BASE_URL}/api/admin/terminal-sessions",
+                         headers={"X-Terminal-Bridge-Secret":AGENT_SSO_SECRET},timeout=(4,10))
+   payload=response.json() if response.content else {}
+   if not response.ok or not payload.get("ok"):
+    raise RuntimeError(str(payload.get("error") or f"HTTP {response.status_code}"))
+   terminals=payload.get("terminals") or []
+  except Exception:
+   app.logger.exception("Active station terminals could not be loaded")
+   error="Active terminals could not be loaded from the Verification service. No session was changed. Retry shortly."
+ return render_template("admin_terminal_resets.html",terminals=terminals,error=error,csrf_token=token)
 
 
 @app.route("/admin/data-files",methods=["GET","POST"])
