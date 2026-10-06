@@ -2442,6 +2442,46 @@ def stream_session(poll_station,stream,session_date=None):
  c=con(); row=c.execute("SELECT * FROM stream_sessions WHERE session_date=? AND poll_station=? AND stream=?",
  (session_date,poll_station,stream)).fetchone(); c.close(); return row
 
+def recover_local_stream_session(lock):
+ """Rebuild an ephemeral SQLite stream row from its central PostgreSQL lock.
+
+ Render deployments can replace the local filesystem while the signed browser
+ cookie and authoritative central lock correctly survive. Closing must remain
+ available in that situation, especially when votes already exist.
+ """
+ if not lock or not DATABASE_URL:return None
+ session_date=str(lock.get("session_date") or today_iso())
+ station=str(lock.get("poll_station") or "").strip();stream=str(lock.get("stream") or "").strip()
+ if not station or not stream:return None
+ central=global_lock_row(session_date,station,stream)
+ if not central:return None
+ opened_at=str(central.get("locked_at") or kenya_now().isoformat(timespec="seconds"))
+ closed_at=central.get("closed_at") or None
+ try:
+  precast=authoritative_precast_voter_count(
+   {"poll_station":station,"stream":stream},opened_at)
+ except Exception as exc:
+  app.logger.warning("Recovered opening pre-cast count unavailable for %s / %s: %s",station,stream,exc)
+  precast=0
+ c=con()
+ try:
+  c.execute("""INSERT OR IGNORE INTO stream_sessions(
+   session_date,county,constituency,ward,poll_station,stream,poll_station_code,
+   opened_at,closed_at,opening_zero_votes,opening_precast_voters)
+   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(
+    session_date,central.get("county") or lock.get("county") or "",
+    central.get("constituency") or lock.get("constituency") or "",
+    central.get("ward") or lock.get("ward") or "",station,stream,
+    central.get("poll_station_code") or lock.get("poll_station_code") or "",
+    opened_at,closed_at,1 if precast==0 else 0,precast))
+  c.commit()
+ finally:
+  c.close()
+ recovered=stream_session(station,stream,session_date)
+ if recovered:
+  app.logger.warning("Recovered local stream session from central lock for %s / %s",station,stream)
+ return recovered
+
 def time_status(ts,expected):
  if not ts or not expected: return None
  try: return datetime.fromisoformat(ts).strftime("%H:%M")==expected
@@ -2877,6 +2917,14 @@ def stream_control():
 
  lookup_date=current_lock.get("session_date") if current_lock else None
  row=stream_session(ps,st,lookup_date) if ps and st else None
+ recovery_error=""
+ if current_lock and ps and st and not row:
+  try:
+   row=recover_local_stream_session(current_lock)
+  except Exception as exc:
+   app.logger.exception("Could not recover local stream state for %s / %s",ps,st)
+   recovery_error=("STREAM RECOVERY TEMPORARILY UNAVAILABLE: the central stream is still safely locked "
+                   "and all votes are preserved. Refresh this page when the database reconnects.")
  owns_current=bool(
   current_lock and row
   and current_lock.get("poll_station")==row["poll_station"]
@@ -2895,6 +2943,7 @@ def stream_control():
   owns_current_stream=owns_current,
   stream_admin_logged_in=repository_admin_logged_in(),
   agent_access=current_agent_access(),
+  error=recovery_error,
   reopened_notice=session.pop("stream_reopened_notice","") or session.pop("terminal_reset_notice","")
  )
 

@@ -32,14 +32,20 @@ The polling-station stream is centrally reserved to this device. Another device 
  <button type="submit" class="reset-terminal-btn reset-terminal-button"
          onclick="this.classList.add('reset-clicked')">Reset Terminal for New Stream</button>
 </form>
-{% elif not (row and row["opened_at"] and not row["closed_at"] and not reset_required) %}
+{% elif row and not (row["opened_at"] and not row["closed_at"] and not reset_required) %}
 <p class="reset-blocked"><b>Reset unavailable:</b> this open stream already has simulated votes.
  <a href="#close-stream-control">Go to Close Voting Stream</a>, complete the closing process and tallies, then reset the terminal.</p>
 {% endif %}
 {% endif %}
 {% if error %}<div class=vote-error>{{error}}</div>{% endif %}
 {% if reopened_notice %}<div class="vote-success admin-reopen-success">{{reopened_notice}}</div>{% endif %}
-{% if not row and not terminal_lock %}
+{% if not row and terminal_lock %}
+<div class="terminal-lock-banner">
+ <b>RESTORING THIS TERMINAL'S STREAM</b><br>
+ The central station assignment and votes remain preserved. Refresh this page to restore the polling station, stream and closing controls.
+</div>
+<p><a class="reset-terminal-btn" href="{{ url_for('stream_control') }}">Refresh and Restore Stream</a></p>
+{% elif not row and not terminal_lock %}
 {% if agent_access %}<div class="terminal-lock-banner"><b>AUTHENTICATED VOTING TERMINAL</b><br>Terminal ID {{agent_access.agent_id}} is authorized only for <b>{{agent_access.poll_station}} — {{agent_access.stream}}</b>.</div>{% endif %}
 <p><b>Before voting starts:</b> the system reads the authoritative central records and stores the exact number of completed voters already present in this polling-station stream. The printed opening report will clearly state whether the opening was clean-zero or contained pre-existing votes.</p>
 <form method=post action=/stream/open id=streamOpenForm>
