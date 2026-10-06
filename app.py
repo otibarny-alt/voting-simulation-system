@@ -2608,6 +2608,45 @@ def paper_stream_participant_count(ref):
   app.logger.warning("Paper participant count unavailable: %s",exc)
   return 0
 
+def authoritative_paper_voter_count(ref):
+ """Count distinct paper-method voters for exactly this station and stream."""
+ if not DATABASE_URL or not ref:
+  raise RuntimeError("The shared voter database is not configured.")
+ station=str(ref.get("poll_station") or "").strip()
+ stream=str(ref.get("stream") or "").strip()
+ if not station or not stream:
+  raise RuntimeError("The polling station or stream assignment is missing.")
+ init_voter_access_db()
+ station_normalized=re.sub(r"[^a-z0-9]+","",station.lower())
+ stream_normalized=re.sub(r"[^a-z0-9]+","",stream.lower())
+ # V14.34 stores the real stream. For paper choices made by an older
+ # verification build, recover the stream from the approving terminal ID.
+ legacy_verifier_ids=[]
+ for agent in agent_rows():
+  assigned=re.sub(r"[^a-z0-9]+","",str(agent.get("poll_station_name") or "").lower())
+  if assigned==stream_normalized or (station_normalized in assigned and stream_normalized in assigned):
+   verifier_id=str(agent.get("agent_id_no") or "").strip()
+   if verifier_id:legacy_verifier_ids.append(verifier_id)
+ with central_control_db() as conn:
+  with conn.cursor() as cur:
+   cur.execute("""SELECT COUNT(DISTINCT v.national_id) AS voters
+    FROM voter_status v
+    JOIN voter_admission_approvals a
+      ON a.election_id=v.election_id AND a.national_id=v.national_id
+    WHERE v.election_id=%s AND v.voted_at IS NOT NULL
+      AND UPPER(COALESCE(v.verified_by,''))='PAPER_BALLOT'
+      AND regexp_replace(lower(COALESCE(v.voted_at_station,a.consumed_station,a.polling_station,'')),'[^a-z0-9]+','','g')=%s
+      AND (
+       regexp_replace(lower(COALESCE(a.consumed_stream,'')),'[^a-z0-9]+','','g')=%s
+       OR (
+        regexp_replace(lower(COALESCE(a.consumed_stream,'')),'[^a-z0-9]+','','g')='paperballot'
+        AND COALESCE(a.approved_by,'')=ANY(%s::text[])
+       )
+      )
+   """,(ELECTION_ID,station_normalized,stream_normalized,legacy_verifier_ids))
+   row=cur.fetchone()
+ return int((row or {}).get("voters") or 0)
+
 def paper_tally_submission(ref):
  if not DATABASE_URL or not ref:return None
  init_repository_db()
@@ -3342,6 +3381,7 @@ def paper_tally():
   catalog=current_catalog_or_empty(ref)
   sections=[{"key":key,"title":title,"candidates":catalog.get(key,[])} for key,title,_ in ELECTIONS]
   electronic_rows,_=central_stream_tally_rows(ref)
+  paper_voter_limit=authoritative_paper_voter_count(ref)
  except Exception as exc:
   app.logger.exception("Paper tally page could not be prepared for %s / %s",ref["poll_station"],ref["stream"])
   return render_template("paper_tally_unavailable.html",ref=ref),503
@@ -3370,7 +3410,15 @@ def paper_tally():
      except (TypeError,ValueError):error="Every paper vote total must be a whole number.";break
      if votes<0:error="Paper vote totals cannot be negative.";break
      entries.append((election,cid,allowed[key],votes));category_totals[election]+=votes
-    if not error and seen!=set(allowed):error="Enter paper totals for every approved candidate."
+   if not error and seen!=set(allowed):error="Enter paper totals for every approved candidate."
+   if not error:
+    category_titles={key:title for key,title,_ in ELECTIONS}
+    for election,total in category_totals.items():
+     if total>paper_voter_limit:
+      error=(f"{category_titles.get(election,election)} paper votes total {total:,}, "
+             f"which exceeds the {paper_voter_limit:,} voter(s) recorded for Paper Voting "
+             "in this polling-station stream. Reduce that category total before submitting.")
+      break
    if not error:
     try:
      init_repository_db()
@@ -3397,7 +3445,8 @@ def paper_tally():
      app.logger.exception("Paper tally submission failed for %s / %s",ref["poll_station"],ref["stream"])
      error="Paper tally was not saved: "+str(exc)
  return render_template("paper_tally.html",ref=ref,sections=sections,electronic=electronic,
-                        existing=existing,csrf_token=csrf,error=error)
+                        existing=existing,csrf_token=csrf,error=error,
+                        paper_voter_limit=paper_voter_limit)
 
 @app.get("/stream/report")
 def stream_report():
