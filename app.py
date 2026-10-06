@@ -7236,6 +7236,18 @@ def admin_terminal_resets():
  """Voting-admin proxy for verification/voting station-session resets."""
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=url_for("admin_terminal_resets")))
+ filter_keys=("county","constituency","ward","polling_station")
+ filters={key:str(request.values.get(key) or "").strip() for key in filter_keys}
+ assignments=terminal_assignment_rows()
+ def matches(row,keys):
+  return all(not filters.get(key) or station_key(row.get(key))==station_key(filters[key]) for key in keys)
+ counties=sorted({str(row.get("county") or "").strip() for row in assignments if str(row.get("county") or "").strip()},key=str.casefold)
+ constituencies=sorted({str(row.get("constituency") or "").strip() for row in assignments
+                         if matches(row,("county",)) and str(row.get("constituency") or "").strip()},key=str.casefold)
+ wards=sorted({str(row.get("ward") or "").strip() for row in assignments
+               if matches(row,("county","constituency")) and str(row.get("ward") or "").strip()},key=str.casefold)
+ polling_stations=sorted({str(row.get("polling_station") or "").strip() for row in assignments
+                          if matches(row,("county","constituency","ward")) and str(row.get("polling_station") or "").strip()},key=str.casefold)
  token=session.get("terminal_reset_csrf")
  if not token:
   token=secrets.token_urlsafe(32);session["terminal_reset_csrf"]=token
@@ -7261,9 +7273,13 @@ def admin_terminal_resets():
    except Exception:
     app.logger.exception("Station terminal admin reset failed")
     flash("The Verification service could not be reached. No terminal session was changed. Retry shortly.","error")
-  return redirect(url_for("admin_terminal_resets"))
+  return redirect(url_for("admin_terminal_resets",**{key:value for key,value in filters.items() if value}))
  terminals=[];error=None
- if not AGENT_SSO_SECRET:
+ if not filters["county"]:
+  # Do not request or render the nationwide active-terminal list. The admin
+  # must narrow the page to a county first, then may continue to station level.
+  pass
+ elif not AGENT_SSO_SECRET:
   error="Terminal reset bridge is not configured. Set the same AGENT_SSO_SECRET on both Render services."
  else:
   try:
@@ -7272,11 +7288,27 @@ def admin_terminal_resets():
    payload=response.json() if response.content else {}
    if not response.ok or not payload.get("ok"):
     raise RuntimeError(str(payload.get("error") or f"HTTP {response.status_code}"))
-   terminals=payload.get("terminals") or []
+   active_terminals=payload.get("terminals") or []
+   assignments_by_id={str(row.get("entrance_id") or "").strip():row for row in assignments
+                      if str(row.get("entrance_id") or "").strip()}
+   assignments_by_station_stream={
+    (station_key(row.get("polling_station")),station_key(row.get("stream"))):row for row in assignments
+   }
+   for terminal in active_terminals:
+    terminal_id=str(terminal.get("terminal_id") or "").strip()
+    assignment=assignments_by_id.get(terminal_id) or assignments_by_station_stream.get(
+     (station_key(terminal.get("polling_station")),station_key(terminal.get("stream")))) or {}
+    enriched=dict(terminal)
+    for key in filter_keys:
+     if assignment.get(key):enriched[key]=assignment[key]
+    if matches(enriched,filter_keys):terminals.append(enriched)
+   terminals.sort(key=lambda row:(station_key(row.get("polling_station")),station_key(row.get("stream")),str(row.get("terminal_id") or "")))
   except Exception:
    app.logger.exception("Active station terminals could not be loaded")
    error="Active terminals could not be loaded from the Verification service. No session was changed. Retry shortly."
- return render_template("admin_terminal_resets.html",terminals=terminals,error=error,csrf_token=token)
+ return render_template("admin_terminal_resets.html",terminals=terminals,error=error,csrf_token=token,
+                        filters=filters,counties=counties,constituencies=constituencies,
+                        wards=wards,polling_stations=polling_stations)
 
 
 @app.route("/admin/data-files",methods=["GET","POST"])
