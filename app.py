@@ -2739,6 +2739,34 @@ def paper_tally_submission(ref):
       ref.get("poll_station") or "",ref.get("stream") or ""))
    return cur.fetchone()
 
+def paper_tally_submission_has_votes(submission):
+ """True when a locked paper submission contains at least one valid vote.
+
+ Individual election categories may legitimately be zero because a paper
+ voter can skip a contest.  However, when paper voters exist, an all-zero
+ submission must never unlock final reports.
+ """
+ if not submission:return False
+ totals=submission.get("category_totals") if hasattr(submission,"get") else None
+ if isinstance(totals,str):
+  try:totals=json.loads(totals)
+  except (TypeError,ValueError):totals={}
+ if not isinstance(totals,dict):return False
+ for value in totals.values():
+  try:
+   if int(value or 0)>0:return True
+  except (TypeError,ValueError):
+   continue
+ return False
+
+def paper_tally_is_report_ready(ref,paper_voter_limit=None):
+ """Require a paper submission, and non-zero entries when paper voters exist."""
+ submission=paper_tally_submission(ref)
+ if not submission:return False
+ if paper_voter_limit is None:
+  paper_voter_limit=authoritative_paper_voter_count(ref)
+ return int(paper_voter_limit or 0)<=0 or paper_tally_submission_has_votes(submission)
+
 def authoritative_precast_voter_count(ref,before_opened_at=None):
  """Count completed voters already recorded for a stream before it opens.
 
@@ -3475,6 +3503,13 @@ def paper_tally():
   app.logger.exception("Paper tally page could not be prepared for %s / %s",ref["poll_station"],ref["stream"])
   return render_template("paper_tally_unavailable.html",ref=ref),503
  electronic={(str(r.get("election") or ""),str(r.get("candidate_id") or "")):int(r.get("votes") or 0) for r in electronic_rows}
+ # Earlier builds accepted and locked an all-zero paper submission even when
+ # the verification service recorded paper voters.  Treat that legacy state
+ # as incomplete so the terminal can correct it instead of generating a false
+ # electronic-only final report.
+ repairing_empty_submission=bool(existing and paper_voter_limit>0 and not paper_tally_submission_has_votes(existing))
+ if repairing_empty_submission:
+  existing=None
  csrf=session.get("paper_tally_csrf")
  if not csrf:csrf=secrets.token_urlsafe(32);session["paper_tally_csrf"]=csrf
  error=""
@@ -3500,6 +3535,10 @@ def paper_tally():
      if votes<0:error="Paper vote totals cannot be negative.";break
      entries.append((election,cid,allowed[key],votes));category_totals[election]+=votes
    if not error and seen!=set(allowed):error="Enter paper totals for every approved candidate."
+   if not error and paper_voter_limit>0 and sum(category_totals.values())<=0:
+    error=(f"Paper Voting was selected by {paper_voter_limit:,} voter(s). "
+           "Enter the counted paper votes before generating final reports. "
+           "A skipped category may remain zero, but the entire paper tally cannot be zero.")
    if not error:
     category_titles={key:title for key,title,_ in ELECTIONS}
     for election,total in category_totals.items():
@@ -3513,6 +3552,21 @@ def paper_tally():
      init_repository_db()
      with repository_db() as conn:
       with conn.cursor() as cur:
+       if repairing_empty_submission:
+        # Remove the invalid legacy lock and any electronic-only PDFs it
+        # allowed. Corrected reports will be regenerated from combined totals.
+        cur.execute("""DELETE FROM simulation_pdf_reports
+         WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+         (ref["session_date"],ref["poll_station"],ref["stream"]))
+        cur.execute("""DELETE FROM simulation_certified_stream_tallies
+         WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+         (ref["session_date"],ref["poll_station"],ref["stream"]))
+        cur.execute("""DELETE FROM simulation_paper_vote_tallies
+         WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+         (ref["session_date"],ref["poll_station"],ref["stream"]))
+        cur.execute("""DELETE FROM simulation_paper_tally_submissions
+         WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+         (ref["session_date"],ref["poll_station"],ref["stream"]))
        cur.execute("""INSERT INTO simulation_paper_tally_submissions(
         session_date,county,constituency,ward,poll_station,stream,category_totals,submitted_by)
         VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING RETURNING submitted_at""",
@@ -3528,6 +3582,7 @@ def paper_tally():
          (ref["session_date"],election,ref["county"],ref["constituency"],ref["ward"],ref["poll_station"],ref["stream"],
           cid,name,votes,str(agent.get("agent_id") or "Voting Terminal")))
       conn.commit()
+     if repairing_empty_submission:invalidate_repository_cache()
      for cache in (_GOV_DASHBOARD_CACHE,_SEN_DASHBOARD_CACHE,_PRES_DASHBOARD_CACHE,_WOMAN_REP_DASHBOARD_CACHE,_MNA_DASHBOARD_CACHE,_MCA_DASHBOARD_CACHE):cache["payload"]=None
      return redirect(url_for("tallies"))
     except Exception as exc:
@@ -5118,7 +5173,13 @@ def tallies():
    official_close_time="08:00 (8:00 AM)"
   ),403
 
- if not paper_tally_submission(lock):
+ try:
+  paper_voter_limit=authoritative_paper_voter_count(lock)
+  paper_ready=paper_tally_is_report_ready(lock,paper_voter_limit)
+ except Exception as exc:
+  app.logger.exception("Paper-voter readiness could not be confirmed before tally generation")
+  return render_template("paper_tally_unavailable.html",ref=lock),503
+ if not paper_ready:
   return redirect(url_for("paper_tally"))
 
  # Do not generate or display any tally/general report for a closed stream
@@ -5642,6 +5703,17 @@ def deposit_report():
  data=request.get_json(silent=True) or {}; election=str(data.get("election","")).strip().lower(); report_html=str(data.get("report_html","")).strip()
  allowed={k:t for k,t,_ in ELECTIONS}
  if election not in allowed or not report_html:return jsonify({"ok":False,"error":"Invalid report."}),400
+ try:
+  paper_voter_limit=authoritative_paper_voter_count(ref)
+  if not paper_tally_is_report_ready(ref,paper_voter_limit):
+   return jsonify({
+    "ok":False,"paper_tally_required":True,
+    "error":("Final report blocked: paper voters are recorded for this stream, "
+             "but valid paper vote totals have not been submitted.")
+   }),409
+ except Exception as exc:
+  app.logger.warning("Paper-tally readiness check failed before report deposit: %s",exc)
+  return jsonify({"ok":False,"error":"Final report paused: paper-voter records could not be confirmed."}),503
  # Never create an empty repository report. A formally closed stream must
  # also have at least one completed simulated voter session.
  participants=stream_distinct_voter_count(ref)
