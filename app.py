@@ -6534,6 +6534,102 @@ def _register_scope_label(filters):
  if filters.get("county"):return "in "+filters["county"]+" County"
  return "in the selected register"
 
+VOTER_TOTAL_LEVELS={
+ "county":("County",("county",),()),
+ "constituency":("Constituency",("county","constituency"),("county",)),
+ "ward":("Ward",("county","constituency","ward"),("county","constituency")),
+ "polling_station":("Polling Station",("county","constituency","ward","polling_station"),("county","constituency","ward")),
+}
+
+def _voter_totals_request():
+ level=str(request.args.get("level") or "county").strip()
+ if level not in VOTER_TOTAL_LEVELS:level="county"
+ filters={key:str(request.args.get(key) or "").strip()
+          for key in ("county","constituency","ward","polling_station")}
+ return level,filters
+
+def _voter_totals_missing_parent(level,filters):
+ _label,_fields,required=VOTER_TOTAL_LEVELS[level]
+ return next((key for key in required if not filters.get(key)),None)
+
+def combined_voter_totals(level,filters):
+ """Return exact grouped totals from master voters plus legacy-only members."""
+ label,fields,_required=VOTER_TOTAL_LEVELS[level]
+ missing=_voter_totals_missing_parent(level,filters)
+ if missing:
+  raise ValueError(f"Select a {missing.replace('_',' ')} before generating totals per {label.lower()}.")
+ grouped={}
+ display={}
+ database_records=0
+ if master_register.configured():
+  database_rows=master_register.voters_register_grouped_totals(fields,filters)
+  for row in database_rows:
+   values=tuple(str(row.get(field) or "").strip() for field in fields)
+   key=tuple(station_key(value) for value in values)
+   count=to_int(row.get("registered_voters"))
+   grouped[key]=grouped.get(key,0)+count;display.setdefault(key,values);database_records+=count
+  legacy_members=_csv_only_register_members(filters)
+ else:
+  legacy_members,_stats=combined_voters_register(filters)
+ for member in legacy_members:
+  values=tuple(str(member.get(field) or "").strip() for field in fields)
+  key=tuple(station_key(value) for value in values)
+  grouped[key]=grouped.get(key,0)+1;display.setdefault(key,values)
+ rows=[]
+ for key,count in grouped.items():
+  values=display[key]
+  rows.append({**{field:values[index] for index,field in enumerate(fields)},
+               "registered_voters":int(count)})
+ rows.sort(key=lambda row:tuple(station_key(row.get(field)) for field in fields))
+ return rows,{"level":level,"level_label":label,"fields":fields,
+              "database_records":database_records,"legacy_records":len(legacy_members),
+              "total":sum(row["registered_voters"] for row in rows)}
+
+def voter_totals_pdf(rows,meta,filters):
+ output=BytesIO();styles=getSampleStyleSheet();page_width,_=A4
+ title_style=ParagraphStyle("VoterTotalsTitle",parent=styles["Title"],fontName="Helvetica-Bold",
+  fontSize=16,leading=19,alignment=TA_CENTER,textColor=colors.HexColor("#14213d"),spaceAfter=5)
+ subtitle=ParagraphStyle("VoterTotalsSubtitle",parent=styles["BodyText"],fontSize=9,leading=12,
+  alignment=TA_CENTER,textColor=colors.HexColor("#444444"),spaceAfter=6)
+ small=ParagraphStyle("VoterTotalsSmall",parent=styles["BodyText"],fontSize=8,leading=10)
+ header=ParagraphStyle("VoterTotalsHeader",parent=small,fontName="Helvetica-Bold",textColor=colors.white,alignment=TA_CENTER)
+ def footer(canvas,doc):
+  canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.HexColor("#555555"))
+  canvas.drawString(14*mm,8*mm,"ODM Voter Totals — Administrative Report")
+  canvas.drawRightString(page_width-14*mm,8*mm,f"Page {doc.page}");canvas.restoreState()
+ doc=SimpleDocTemplate(output,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,
+  topMargin=11*mm,bottomMargin=14*mm,title=f"ODM Voter Totals by {meta['level_label']}")
+ story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
+ if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=178*mm,height=30*mm,kind="proportional"))
+ scope_parts=[f"{key.replace('_',' ').title()}: {value}" for key,value in filters.items() if value]
+ scope=" | ".join(scope_parts) if scope_parts else "National register"
+ story.extend([Paragraph(f"REGISTERED VOTERS BY {escape(meta['level_label'].upper())}",title_style),
+  Paragraph(escape(scope),subtitle),
+  Paragraph(f"Generated: {kenya_now().strftime('%d %B %Y, %H:%M:%S')} EAT",subtitle)])
+ fields=meta["fields"]
+ headings=["No.",*[field.replace("_"," ").title() for field in fields],"Registered Voters"]
+ data=[[Paragraph(escape(value),header) for value in headings]]
+ for number,row in enumerate(rows,1):
+  values=[str(number),*[str(row.get(field) or "Not specified") for field in fields],f"{row['registered_voters']:,}"]
+  data.append([Paragraph(escape(value),small) for value in values])
+ total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}"]
+ data.append([Paragraph(escape(value),header if index>=len(total_row)-2 else small)
+              for index,value in enumerate(total_row)])
+ available=178*mm;number_width=12*mm;total_width=31*mm
+ geo_width=(available-number_width-total_width)/max(1,len(fields))
+ table=Table(data,colWidths=[number_width,*([geo_width]*len(fields)),total_width],repeatRows=1,hAlign="LEFT")
+ table.setStyle(TableStyle([
+  ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+  ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#14213d")),("TEXTCOLOR",(0,-1),(-1,-1),colors.white),
+  ("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#999999")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+  ("ALIGN",(-1,1),(-1,-1),"RIGHT"),("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),
+  ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+  ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#f5f7fa")])]))
+ story.extend([table,Spacer(1,5*mm),Paragraph(
+  f"Source: active PostgreSQL master register ({meta['database_records']:,}) plus Kobo/legacy-only members ({meta['legacy_records']:,}); duplicate National IDs use the master record.",small)])
+ doc.build(story,onFirstPage=footer,onLaterPages=footer)
+ return output.getvalue()
+
 def _ballot_candidates_for_position(catalog,position,geo):
  candidates=list(catalog.get(position,[]))
  scope_key={"governor":"county","senator":"county","woman_rep":"county",
@@ -7724,6 +7820,32 @@ def admin_voters_register():
   return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=summary["total"],summary=summary,scope_label=_register_scope_label(filters),displayed=len(members),truncated=truncated,error=None,prompt=None)
  except Exception as exc:
   return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
+
+@app.get("/admin/voter-totals")
+def admin_voter_totals():
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
+ level,filters=_voter_totals_request()
+ return render_template("admin_voter_totals.html",level=level,levels=VOTER_TOTAL_LEVELS,
+                        filters=filters,options=_register_hierarchy_options(filters),
+                        missing_parent=_voter_totals_missing_parent(level,filters))
+
+@app.get("/admin/voter-totals.pdf")
+def download_voter_totals_pdf():
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
+ level,filters=_voter_totals_request()
+ try:
+  rows,meta=combined_voter_totals(level,filters)
+  if not rows:return Response("No voters matched the selected report scope.",status=404,mimetype="text/plain")
+  pdf=voter_totals_pdf(rows,meta,filters)
+  scope=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
+  safe_scope=re.sub(r"[^A-Za-z0-9_-]+","_",scope).strip("_") or "National"
+  filename=f"ODM_Voter_Totals_By_{level.title().replace('_','_')}_{safe_scope}.pdf"
+  return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=True,download_name=filename,max_age=0)
+ except ValueError as exc:
+  return Response(str(exc),status=400,mimetype="text/plain")
+ except Exception as exc:
+  app.logger.exception("Voter totals PDF generation failed")
+  return Response("Voter totals PDF could not be generated: "+str(exc),status=502,mimetype="text/plain")
 
 
 @app.get("/api/voters-register/count")
