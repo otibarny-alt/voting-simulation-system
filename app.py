@@ -6562,7 +6562,26 @@ def combined_voter_totals(level,filters):
  display={}
  database_records=0
  if master_register.configured():
-  database_rows=master_register.voters_register_grouped_totals(fields,filters)
+  grouped_reader=getattr(master_register,"voters_register_grouped_totals",None)
+  if callable(grouped_reader):
+   database_rows=grouped_reader(fields,filters)
+  else:
+   # Compatibility with deployments where app.py updated before the local
+   # master_register.py module. Aggregate the established summary-row API in
+   # memory rather than failing the administrator's PDF with AttributeError.
+   summary_reader=getattr(master_register,"voters_register_summary_rows",None)
+   source_rows=(summary_reader(filters) if callable(summary_reader)
+                else master_register.voters_register_rows(filters))
+   fallback_grouped={};fallback_display={}
+   for source_row in source_rows:
+    values=tuple(str(source_row.get(field) or "").strip() for field in fields)
+    key=tuple(station_key(value) for value in values)
+    fallback_grouped[key]=fallback_grouped.get(key,0)+1
+    fallback_display.setdefault(key,values)
+   database_rows=[{**{field:fallback_display[key][index]
+                      for index,field in enumerate(fields)},
+                   "registered_voters":count}
+                  for key,count in fallback_grouped.items()]
   for row in database_rows:
    values=tuple(str(row.get(field) or "").strip() for field in fields)
    key=tuple(station_key(value) for value in values)
