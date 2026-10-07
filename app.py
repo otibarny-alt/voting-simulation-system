@@ -6537,7 +6537,9 @@ def _register_scope_label(filters):
 VOTER_TOTAL_LEVELS={
  "county":("County",("county",),()),
  "constituency":("Constituency",("county","constituency"),("county",)),
- "ward":("Ward",("county","constituency","ward"),("county","constituency")),
+ # A county may preview every ward across all of its constituencies. Selecting
+ # a constituency remains an optional narrowing filter, not a requirement.
+ "ward":("Ward",("county","constituency","ward"),("county",)),
  "polling_station":("Polling Station",("county","constituency","ward","polling_station"),("county","constituency","ward")),
 }
 
