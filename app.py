@@ -7844,9 +7844,21 @@ def admin_voters_register():
 def admin_voter_totals():
  if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
  level,filters=_voter_totals_request()
+ missing_parent=_voter_totals_missing_parent(level,filters)
+ preview_requested=str(request.args.get("preview") or "").strip()=="1"
+ rows=[];meta=None;preview_error=None
+ if preview_requested and not missing_parent:
+  try:
+   rows,meta=combined_voter_totals(level,filters)
+   if not rows:preview_error="No voters matched the selected report scope."
+  except Exception as exc:
+   app.logger.exception("Voter totals web preview failed")
+   preview_error="Voter totals could not be loaded: "+str(exc)
  return render_template("admin_voter_totals.html",level=level,levels=VOTER_TOTAL_LEVELS,
                         filters=filters,options=_register_hierarchy_options(filters),
-                        missing_parent=_voter_totals_missing_parent(level,filters))
+                        missing_parent=missing_parent,preview_requested=preview_requested,
+                        rows=rows,meta=meta,preview_error=preview_error,
+                        generated_at=kenya_now().strftime("%d %B %Y, %H:%M:%S EAT"))
 
 @app.get("/admin/voter-totals.pdf")
 def download_voter_totals_pdf():
