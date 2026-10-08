@@ -6694,6 +6694,54 @@ def _ballot_candidate_photo(url):
  if not cached:return Paragraph("PHOTO",getSampleStyleSheet()["Normal"])
  return RLImage(BytesIO(cached),width=11*mm,height=11*mm,kind="proportional")
 
+def _draw_emergency_ballot_watermark(canvas,doc):
+ """Paint a restrained ODM security watermark behind every A5 ballot."""
+ page_width,page_height=A5
+ canvas.saveState()
+ try:
+  # Watermark first: candidate text, portraits and mark boxes are drawn over it.
+  # Set the colour before transparency: ReportLab colour setters can reset
+  # alpha in some versions.
+  canvas.setFillColor(colors.HexColor("#ef7d00"))
+  canvas.setStrokeColor(colors.HexColor("#ef7d00"))
+  try:
+   canvas.setFillAlpha(0.065)
+   canvas.setStrokeAlpha(0.085)
+  except Exception:
+   # Older ReportLab builds may not expose transparency. Pale colours retain
+   # legibility while keeping the watermark visible.
+   canvas.setFillColor(colors.HexColor("#f7e3cc"))
+   canvas.setStrokeColor(colors.HexColor("#f3d2ad"))
+  canvas.setLineWidth(1.1)
+  canvas.circle(page_width/2,page_height/2,37*mm,stroke=1,fill=0)
+  canvas.circle(page_width/2,page_height/2,34*mm,stroke=1,fill=0)
+  canvas.translate(page_width/2,page_height/2)
+  canvas.rotate(31)
+  canvas.setFont("Helvetica-Bold",54)
+  canvas.drawCentredString(0,8*mm,"ODM")
+  canvas.setFont("Helvetica-Bold",12)
+  canvas.drawCentredString(0,0,"ORANGE DEMOCRATIC MOVEMENT")
+  canvas.setFont("Helvetica-Bold",8)
+  canvas.drawCentredString(0,-7*mm,"OFFICIAL EMERGENCY BALLOT")
+  canvas.drawCentredString(0,-12*mm,"2027 NOMINATION SYSTEM")
+ finally:
+  canvas.restoreState()
+ # A fine security frame and footer give the printed ballot a formal finish
+ # without competing with the voting boxes.
+ canvas.saveState()
+ try:
+  canvas.setStrokeColor(colors.HexColor("#ef7d00"))
+  canvas.setFillColor(colors.HexColor("#14213d"))
+  try:canvas.setStrokeAlpha(0.32);canvas.setFillAlpha(0.48)
+  except Exception:
+   canvas.setStrokeColor(colors.HexColor("#efb36d"));canvas.setFillColor(colors.HexColor("#687082"))
+  canvas.setLineWidth(0.65)
+  canvas.rect(4*mm,4*mm,page_width-8*mm,page_height-8*mm,stroke=1,fill=0)
+  canvas.setFont("Helvetica-Bold",5.8)
+  canvas.drawCentredString(page_width/2,4.9*mm,"ODM - OFFICIAL EMERGENCY PAPER BALLOT - TRAINING / SIMULATION")
+ finally:
+  canvas.restoreState()
+
 @app.get("/admin/emergency-ballots")
 def admin_emergency_ballots():
  if not repository_admin_logged_in():
@@ -6735,7 +6783,7 @@ def download_emergency_ballots_pdf():
     page_number+=1
     if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=21*mm,kind="proportional"))
     story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
-    story.append(Paragraph("TRAINING / SIMULATION ONLY — use only when authorised after electronic voting failure",small))
+    story.append(Paragraph("TRAINING / SIMULATION ONLY - use only when authorised after electronic voting failure",small))
     station_ref=geo.get("polling_station_code") or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
     details=[[Paragraph("Election position",small),Paragraph(str(escape(title)),name_style)],
              [Paragraph("Polling station",small),Paragraph(str(escape(geo["polling_station"])),name_style)],
@@ -6771,7 +6819,8 @@ def download_emergency_ballots_pdf():
     story.extend([table,Spacer(1,3*mm),Paragraph("Presiding Officer stamp/signature: __________________________________",small),
                   Spacer(1,2*mm),Paragraph("Do not write the voter's name or National ID on this ballot.",small)])
     if page_number<total_pages:story.append(PageBreak())
-  doc.build(story)
+  doc.build(story,onFirstPage=_draw_emergency_ballot_watermark,
+            onLaterPages=_draw_emergency_ballot_watermark)
   output.seek(0)
   filename="A5_emergency_ballots_"+re.sub(r"[^A-Za-z0-9]+","_",geo["polling_station"]).strip("_")+".pdf"
   return send_file(output,mimetype="application/pdf",as_attachment=True,download_name=filename,max_age=0)
