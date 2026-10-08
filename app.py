@@ -6753,7 +6753,7 @@ def _emergency_ballot_sections(geo,requested):
   if candidates:
    candidate_rows=(len(candidates)+1)//2
    sections.append({"key":key,"title":title,"candidates":candidates,
-                    "preview_min_height_mm":210+max(0,candidate_rows-4)*19})
+                    "preview_min_height_mm":210+max(0,candidate_rows-3)*19})
  if not sections:
   raise ValueError("No approved candidates are available for the selected polling station.")
  return sections
@@ -6810,18 +6810,18 @@ def download_emergency_ballots_pdf():
                              textColor=colors.HexColor("#ef7d00"),spaceAfter=3*mm)
   small=ParagraphStyle("BallotSmall",parent=styles["Normal"],fontSize=7.5,leading=9)
   name_style=ParagraphStyle("CandidateName",parent=styles["Normal"],fontSize=9,leading=10.5,fontName="Helvetica-Bold")
-  logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
+  logo_path=os.path.join(app.root_path,"static","odm_2027_nominations_ballot_banner.png")
   for copy_number in range(1,copies+1):
    for section in sections:
     position,title=section["key"],section["title"]
     candidate_rows=(len(section["candidates"])+1)//2
-    page_height=A5[1]+max(0,candidate_rows-4)*19*mm
+    page_height=A5[1]+max(0,candidate_rows-3)*19*mm
     page_output=BytesIO()
     doc=SimpleDocTemplate(page_output,pagesize=(A5[0],page_height),leftMargin=8*mm,rightMargin=8*mm,
                           topMargin=7*mm,bottomMargin=7*mm,
                           title="ODM Emergency Paper Ballot")
     story=[]
-    if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=21*mm,kind="proportional"))
+    if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=42*mm,kind="proportional"))
     story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
     story.append(Paragraph("TRAINING / SIMULATION ONLY - use only when authorised after electronic voting failure",small))
     station_ref=geo.get("polling_station_code") or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
