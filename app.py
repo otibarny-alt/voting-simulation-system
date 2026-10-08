@@ -6788,7 +6788,7 @@ def _emergency_ballot_sections(geo,requested):
   canvas.setLineWidth(0.65)
   canvas.rect(4*mm,4*mm,page_width-8*mm,page_height-8*mm,stroke=1,fill=0)
   canvas.setFont("Helvetica-Bold",5.8)
-  canvas.drawCentredString(page_width/2,4.9*mm,"ODM - OFFICIAL EMERGENCY PAPER BALLOT - TRAINING / SIMULATION")
+  canvas.drawCentredString(page_width/2,4.9*mm,"ODM - OFFICIAL NOMINATION BALLOT - TRAINING / SIMULATION")
  finally:
   canvas.restoreState()
 
@@ -6841,7 +6841,7 @@ def download_emergency_ballots_pdf():
                           title="ODM Emergency Paper Ballot")
     story=[]
     if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=26.1*mm,kind="proportional"))
-    story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
+    story.append(Paragraph(str(escape(title.upper())),title_style))
     story.append(Paragraph("TRAINING / SIMULATION ONLY - use only when authorised after electronic voting failure",small))
     station_ref=full_polling_station_code(geo.get("polling_station_code")) or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
     details=[[Paragraph("Election position",small),Paragraph(str(escape(title)),name_style)],
