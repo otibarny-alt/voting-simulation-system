@@ -6695,7 +6695,7 @@ def _ballot_candidate_photo(url):
  return RLImage(BytesIO(cached),width=11*mm,height=11*mm,kind="proportional")
 
 def _draw_emergency_ballot_watermark(canvas,doc):
- """Paint a restrained ODM security watermark behind every A5 ballot."""
+ """Paint restrained tiled ODM security marks behind every A5 ballot."""
  page_width,page_height=A5
  canvas.saveState()
  try:
@@ -6712,20 +6712,43 @@ def _draw_emergency_ballot_watermark(canvas,doc):
    # legibility while keeping the watermark visible.
    canvas.setFillColor(colors.HexColor("#f7e3cc"))
    canvas.setStrokeColor(colors.HexColor("#f3d2ad"))
-  canvas.setLineWidth(1.1)
-  canvas.circle(page_width/2,page_height/2,37*mm,stroke=1,fill=0)
-  canvas.circle(page_width/2,page_height/2,34*mm,stroke=1,fill=0)
-  canvas.translate(page_width/2,page_height/2)
-  canvas.rotate(31)
-  canvas.setFont("Helvetica-Bold",54)
-  canvas.drawCentredString(0,8*mm,"ODM")
-  canvas.setFont("Helvetica-Bold",12)
-  canvas.drawCentredString(0,0,"ORANGE DEMOCRATIC MOVEMENT")
-  canvas.setFont("Helvetica-Bold",8)
-  canvas.drawCentredString(0,-7*mm,"OFFICIAL EMERGENCY BALLOT")
-  canvas.drawCentredString(0,-12*mm,"2027 NOMINATION SYSTEM")
+  canvas.setLineWidth(0.65)
+  # Three columns by five rows cover the entire A5 sheet. Each compact seal is
+  # deliberately pale so photocopies retain party identity without obscuring
+  # candidate photographs, names or marking boxes.
+  for x in (25*mm,74*mm,123*mm):
+   for y in (22*mm,63*mm,104*mm,145*mm,186*mm):
+    canvas.saveState()
+    canvas.circle(x,y,15*mm,stroke=1,fill=0)
+    canvas.circle(x,y,13.2*mm,stroke=1,fill=0)
+    canvas.translate(x,y);canvas.rotate(30)
+    canvas.setFont("Helvetica-Bold",19)
+    canvas.drawCentredString(0,1.5*mm,"ODM")
+    canvas.setFont("Helvetica-Bold",4.3)
+    canvas.drawCentredString(0,-4*mm,"OFFICIAL BALLOT")
+    canvas.restoreState()
  finally:
   canvas.restoreState()
+
+def _emergency_ballot_sections(geo,requested):
+ """Return the exact approved ballot sections shared by preview and PDF."""
+ valid={key for key,_,_ in ELECTIONS}
+ if requested!="all" and requested not in valid:
+  raise ValueError("Select a valid election position.")
+ catalog=candidate_portal_catalog(geo)
+ sections=[]
+ for key,title,_scope in ELECTIONS:
+  if requested not in ("all",key):continue
+  candidates=[]
+  for candidate in _ballot_candidates_for_position(catalog,key,geo):
+   item=dict(candidate)
+   photo=str(item.get("photo_url") or "").strip()
+   item["preview_photo_url"]=urljoin(CANDIDATE_PORTAL_BASE_URL.rstrip("/")+"/",photo) if photo else ""
+   candidates.append(item)
+  if candidates:sections.append({"key":key,"title":title,"candidates":candidates})
+ if not sections:
+  raise ValueError("No approved candidates are available for the selected polling station.")
+ return sections
  # A fine security frame and footer give the printed ballot a formal finish
  # without competing with the voting boxes.
  canvas.saveState()
@@ -6747,9 +6770,22 @@ def admin_emergency_ballots():
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=request.full_path))
  filters=_emergency_ballot_filters()
+ requested=(request.args.get("position") or "all").strip().lower()
+ copies=max(1,min(50,to_int(request.args.get("copies") or 1)))
+ preview_requested=str(request.args.get("preview") or "").strip()=="1"
+ preview_sections=[];preview_geo=None;preview_error=None
+ if preview_requested:
+  try:
+   preview_geo=_validated_ballot_geo(filters)
+   preview_sections=_emergency_ballot_sections(preview_geo,requested)
+  except Exception as exc:
+   preview_error=str(exc)
  return render_template("admin_emergency_ballots.html",filters=filters,
                         options=_register_hierarchy_options(filters),
-                        positions=[("all","All six positions")]+[(key,title) for key,title,_ in ELECTIONS])
+                        positions=[("all","All six positions")]+[(key,title) for key,title,_ in ELECTIONS],
+                        requested_position=requested,copies=copies,preview_requested=preview_requested,
+                        preview_sections=preview_sections,preview_geo=preview_geo,preview_error=preview_error,
+                        candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL)
 
 @app.get("/admin/emergency-ballots.pdf")
 def download_emergency_ballots_pdf():
@@ -6758,15 +6794,8 @@ def download_emergency_ballots_pdf():
  try:
   geo=_validated_ballot_geo(_emergency_ballot_filters())
   requested=(request.args.get("position") or "all").strip().lower()
-  valid={key for key,_,_ in ELECTIONS}
-  if requested!="all" and requested not in valid:raise ValueError("Select a valid election position.")
   copies=max(1,min(50,to_int(request.args.get("copies") or 1)))
-  selected=[(key,title) for key,title,_ in ELECTIONS if requested in ("all",key)]
-  catalog=candidate_portal_catalog(geo)
-  selected=[(key,title) for key,title in selected
-            if _ballot_candidates_for_position(catalog,key,geo)]
-  if not selected:
-   raise ValueError("No approved candidates are available for the selected polling station.")
+  sections=_emergency_ballot_sections(geo,requested)
   output=BytesIO()
   doc=SimpleDocTemplate(output,pagesize=A5,leftMargin=8*mm,rightMargin=8*mm,
                         topMargin=7*mm,bottomMargin=7*mm,
@@ -6777,9 +6806,10 @@ def download_emergency_ballots_pdf():
   small=ParagraphStyle("BallotSmall",parent=styles["Normal"],fontSize=7.5,leading=9)
   name_style=ParagraphStyle("CandidateName",parent=styles["Normal"],fontSize=9,leading=10.5,fontName="Helvetica-Bold")
   story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
-  total_pages=copies*len(selected);page_number=0
+  total_pages=copies*len(sections);page_number=0
   for copy_number in range(1,copies+1):
-   for position,title in selected:
+   for section in sections:
+    position,title=section["key"],section["title"]
     page_number+=1
     if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=21*mm,kind="proportional"))
     story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
@@ -6798,7 +6828,7 @@ def download_emergency_ballots_pdf():
     story.extend([Spacer(1,2*mm),detail_table,Spacer(1,3*mm),
                   Paragraph("Place one clear mark in the box beside ONE candidate only.",name_style),Spacer(1,2*mm)])
     cards=[]
-    for number,candidate in enumerate(_ballot_candidates_for_position(catalog,position,geo),1):
+    for number,candidate in enumerate(section["candidates"],1):
      identity="<br/>".join(filter(None,[str(escape(candidate.get("candidate_id") or "")),str(escape(candidate.get("membership_no") or ""))]))
      candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate"))+("<br/><font size='6'>"+identity+"</font>" if identity else ""),
                               ParagraphStyle("CardName",parent=name_style,fontSize=7.5,leading=8.5))
