@@ -5,6 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from datetime import datetime, date, time as dt_time
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from email.message import EmailMessage
 from html import unescape
@@ -1917,6 +1918,24 @@ def polling_register_code_key(value):
   return f"{float(str(value or '').strip()):.5E}"
  except Exception:
   return ""
+
+def full_polling_station_code(value):
+ """Render a polling-station code as full digits, never scientific notation."""
+ raw=str(value or "").strip().replace(",","")
+ if not raw:return ""
+ # Preserve digit-only text exactly, including meaningful leading zeroes.
+ if re.fullmatch(r"[0-9]+",raw):return raw
+ if re.fullmatch(r"[0-9]+\.0+",raw):return raw.split(".",1)[0]
+ if re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[Ee][+-]?[0-9]+",raw):
+  try:
+   expanded=format(Decimal(raw),"f")
+   if "." in expanded:
+    whole,fraction=expanded.split(".",1)
+    if not fraction.strip("0"):expanded=whole
+   return expanded
+  except (InvalidOperation,ValueError):
+   pass
+ return raw
 
 
 _REPORT_VOTERS_REGISTER_CACHE={"loaded_at":0.0,"members":[]}
@@ -6676,7 +6695,7 @@ def _validated_ballot_geo(filters):
                if wanted in {station_key(row.get("name")),station_key(row.get("label"))}),None)
  if not station:raise ValueError("The selected polling station is not valid for this ward.")
  return {**filters,"polling_station":station.get("label") or filters["polling_station"],
-         "polling_station_code":str(station.get("poll_station_code") or "").strip()}
+         "polling_station_code":full_polling_station_code(station.get("poll_station_code"))}
 
 _BALLOT_PHOTO_CACHE={}
 def _ballot_candidate_photo(url):
@@ -6824,7 +6843,7 @@ def download_emergency_ballots_pdf():
     if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=26.1*mm,kind="proportional"))
     story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
     story.append(Paragraph("TRAINING / SIMULATION ONLY - use only when authorised after electronic voting failure",small))
-    station_ref=geo.get("polling_station_code") or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
+    station_ref=full_polling_station_code(geo.get("polling_station_code")) or re.sub(r"[^A-Za-z0-9]+","",geo["polling_station"])[:18]
     details=[[Paragraph("Election position",small),Paragraph(str(escape(title)),name_style)],
              [Paragraph("Polling station",small),Paragraph(str(escape(geo["polling_station"])),name_style)],
              [Paragraph("Ward / Constituency",small),Paragraph(str(escape(geo["ward"]+" / "+geo["constituency"])),small)],
