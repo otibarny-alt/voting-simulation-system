@@ -6677,7 +6677,7 @@ def attach_ballot_checklists(rows):
  return rows
 
 def voter_totals_pdf(rows,meta,filters):
- output=BytesIO();styles=getSampleStyleSheet();page_width,_=A4
+ output=BytesIO();styles=getSampleStyleSheet();page_width,_=landscape(A4)
  title_style=ParagraphStyle("VoterTotalsTitle",parent=styles["Title"],fontName="Helvetica-Bold",
   fontSize=16,leading=19,alignment=TA_CENTER,textColor=colors.HexColor("#14213d"),spaceAfter=5)
  subtitle=ParagraphStyle("VoterTotalsSubtitle",parent=styles["BodyText"],fontSize=9,leading=12,
@@ -6688,7 +6688,7 @@ def voter_totals_pdf(rows,meta,filters):
   canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.HexColor("#555555"))
   canvas.drawString(14*mm,8*mm,"ODM Voter Totals — Administrative Report")
   canvas.drawRightString(page_width-14*mm,8*mm,f"Page {doc.page}");canvas.restoreState()
- doc=SimpleDocTemplate(output,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,
+ doc=SimpleDocTemplate(output,pagesize=landscape(A4),rightMargin=14*mm,leftMargin=14*mm,
   topMargin=11*mm,bottomMargin=14*mm,title=f"ODM Voter Totals by {meta['level_label']}")
  story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
  if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=178*mm,height=30*mm,kind="proportional"))
@@ -6698,25 +6698,44 @@ def voter_totals_pdf(rows,meta,filters):
   Paragraph(escape(scope),subtitle),
   Paragraph(f"Generated: {kenya_now().strftime('%d %B %Y, %H:%M:%S')} EAT",subtitle)])
  fields=meta["fields"]
- headings=["No.",*[field.replace("_"," ").title() for field in fields],"Registered Voters"]
+ pdf_position_labels={"president":"President","governor":"Governor","senator":"Senator",
+                      "woman_rep":"Woman Rep","mna":"MNA","mca":"MCA"}
+ headings=["No.",*[field.replace("_"," ").title() for field in fields],"Registered Voters",
+           *[pdf_position_labels[key] for key,_label in BALLOT_CHECKLIST_POSITIONS]]
  data=[[Paragraph(escape(value),header) for value in headings]]
  for number,row in enumerate(rows,1):
-  values=[str(number),*[str(row.get(field) or "Not specified") for field in fields],f"{row['registered_voters']:,}"]
+  statuses=row.get("ballot_statuses",{})
+  values=[str(number),*[str(row.get(field) or "Not specified") for field in fields],f"{row['registered_voters']:,}",
+          *[("YES" if statuses.get(key,{}).get("exists") else "NO")
+            for key,_label in BALLOT_CHECKLIST_POSITIONS]]
   data.append([Paragraph(escape(value),small) for value in values])
- total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}"]
- data.append([Paragraph(escape(value),header if index>=len(total_row)-2 else small)
+ total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}",*([""]*6)]
+ data.append([Paragraph(escape(value),header if index in (len(fields),len(fields)+1) else small)
               for index,value in enumerate(total_row)])
- available=178*mm;number_width=12*mm;total_width=31*mm
- geo_width=(available-number_width-total_width)/max(1,len(fields))
- table=Table(data,colWidths=[number_width,*([geo_width]*len(fields)),total_width],repeatRows=1,hAlign="LEFT")
- table.setStyle(TableStyle([
+ available=269*mm;number_width=10*mm;total_width=29*mm
+ status_widths=[18*mm,18*mm,18*mm,24*mm,16*mm,16*mm]
+ geo_width=(available-number_width-total_width-sum(status_widths))/max(1,len(fields))
+ table=Table(data,colWidths=[number_width,*([geo_width]*len(fields)),total_width,*status_widths],repeatRows=1,hAlign="LEFT")
+ voter_column=len(fields)+1;status_start=voter_column+1
+ table_style=[
   ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
   ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#14213d")),("TEXTCOLOR",(0,-1),(-1,-1),colors.white),
   ("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#999999")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-  ("ALIGN",(-1,1),(-1,-1),"RIGHT"),("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4),
+  ("ALIGN",(voter_column,1),(voter_column,-1),"RIGHT"),("ALIGN",(status_start,1),(-1,-1),"CENTER"),
+  ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
   ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-  ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#f5f7fa")])]))
+  ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#f5f7fa")])]
+ for row_index,row in enumerate(rows,1):
+  statuses=row.get("ballot_statuses",{})
+  for offset,(key,_label) in enumerate(BALLOT_CHECKLIST_POSITIONS):
+   exists=bool(statuses.get(key,{}).get("exists"))
+   cell=(status_start+offset,row_index)
+   table_style.extend([("BACKGROUND",cell,cell,colors.HexColor("#e8f7ec") if exists else colors.HexColor("#fdeaea")),
+                       ("TEXTCOLOR",cell,cell,colors.HexColor("#176b2c") if exists else colors.HexColor("#9b1c1c")),
+                       ("FONTNAME",cell,cell,"Helvetica-Bold")])
+ table.setStyle(TableStyle(table_style))
  story.extend([table,Spacer(1,5*mm),Paragraph(
+  "Ballot checks: YES = approved ballot exists; NO = no approved candidates for that row's exact electoral scope.",small),Spacer(1,2*mm),Paragraph(
   f"Source: active PostgreSQL master register ({meta['database_records']:,}) plus Kobo/legacy-only members ({meta['legacy_records']:,}); duplicate National IDs use the master record.",small)])
  doc.build(story,onFirstPage=footer,onLaterPages=footer)
  return output.getvalue()
@@ -8041,6 +8060,7 @@ def download_voter_totals_pdf():
  try:
   rows,meta=combined_voter_totals(level,filters)
   if not rows:return Response("No voters matched the selected report scope.",status=404,mimetype="text/plain")
+  attach_ballot_checklists(rows)
   pdf=voter_totals_pdf(rows,meta,filters)
   scope=next((filters[key] for key in ("polling_station","ward","constituency","county") if filters.get(key)),"National")
   safe_scope=re.sub(r"[^A-Za-z0-9_-]+","_",scope).strip("_") or "National"
