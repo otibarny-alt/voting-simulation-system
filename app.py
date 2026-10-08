@@ -6719,6 +6719,10 @@ def _draw_emergency_ballot_watermark(canvas,doc):
  page_width,page_height=canvas._pagesize
  canvas.saveState()
  try:
+  # Give the complete ballot sheet a very light orange paper tint before any
+  # watermark, text, portrait or voting box is painted.
+  canvas.setFillColor(colors.HexColor("#fff7ed"))
+  canvas.rect(0,0,page_width,page_height,stroke=0,fill=1)
   # Watermark first: candidate text, portraits and mark boxes are drawn over it.
   # Set the colour before transparency: ReportLab colour setters can reset
   # alpha in some versions.
