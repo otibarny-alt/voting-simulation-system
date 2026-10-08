@@ -6705,8 +6705,8 @@ def voter_totals_pdf(rows,meta,filters):
   canvas.drawRightString(page_width-14*mm,8*mm,f"Page {doc.page}");canvas.restoreState()
  doc=SimpleDocTemplate(output,pagesize=landscape(A4),rightMargin=14*mm,leftMargin=14*mm,
   topMargin=11*mm,bottomMargin=14*mm,title=f"ODM Voter Totals by {meta['level_label']}")
- story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
- if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=178*mm,height=30*mm,kind="proportional"))
+ story=[];logo_path=os.path.join(app.root_path,"static","voter_totals_pdf_header.png")
+ if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=178*mm,height=36.8*mm,kind="proportional"))
  scope_parts=[f"{key.replace('_',' ').title()}: {value}" for key,value in filters.items() if value]
  scope=" | ".join(scope_parts) if scope_parts else "National register"
  story.extend([Paragraph(f"REGISTERED VOTERS BY {escape(meta['level_label'].upper())}",title_style),
