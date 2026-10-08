@@ -6645,22 +6645,33 @@ def attach_ballot_checklists(rows):
   if key and key not in county_labels:county_labels[key]=county
  for key,county in county_labels.items():
   county_catalogs[key]=candidate_portal_catalog({"county":county})
- scopes={"president":(),"governor":("county",),"senator":("county",),
-         "woman_rep":("county",),"mna":("county","constituency"),
-         "mca":("county","constituency","ward")}
+ constituency_catalogs={};ward_catalogs={}
  for row in rows:
   county_key=station_key(row.get("county"))
   county_catalog=county_catalogs.get(county_key,{})
   statuses={}
   for position,label in BALLOT_CHECKLIST_POSITIONS:
-   candidates=list((national_catalog if position=="president" else county_catalog).get(position,[]))
-   # County has already been enforced by the scoped API request. Apply only
-   # the narrower constituency/ward fields locally for MNA and MCA rows.
-   required=[field for field in scopes[position]
-             if field!="county" and str(row.get(field) or "").strip()]
-   count=sum(1 for candidate in candidates
-             if all(station_key(candidate.get(field))==station_key(row.get(field))
-                    for field in required))
+   if position=="president":
+    count=len(national_catalog.get(position,[]))
+   elif position in ("governor","senator","woman_rep"):
+    count=len(county_catalog.get(position,[]))
+   elif position=="mna":
+    constituency=str(row.get("constituency") or "").strip()
+    scope_key=(county_key,station_key(constituency))
+    if scope_key not in constituency_catalogs:
+     constituency_catalogs[scope_key]=candidate_portal_catalog({
+      "county":str(row.get("county") or "").strip(),
+      "constituency":constituency}) if constituency else {}
+    count=len(constituency_catalogs[scope_key].get(position,[]))
+   else:
+    constituency=str(row.get("constituency") or "").strip()
+    ward=str(row.get("ward") or "").strip()
+    scope_key=(county_key,station_key(constituency),station_key(ward))
+    if scope_key not in ward_catalogs:
+     ward_catalogs[scope_key]=candidate_portal_catalog({
+      "county":str(row.get("county") or "").strip(),
+      "constituency":constituency,"ward":ward}) if constituency and ward else {}
+    count=len(ward_catalogs[scope_key].get(position,[]))
    statuses[position]={"label":label,"exists":count>0,"count":count}
   row["ballot_statuses"]=statuses
  return rows
