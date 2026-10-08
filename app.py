@@ -6626,6 +6626,34 @@ def combined_voter_totals(level,filters):
               "database_records":database_records,"legacy_records":len(legacy_members),
               "total":sum(row["registered_voters"] for row in rows)}
 
+BALLOT_CHECKLIST_POSITIONS=(
+ ("president","President"),("governor","Governor"),("senator","Senator"),
+ ("woman_rep","Woman Representative"),("mna","MNA"),("mca","MCA")
+)
+
+def county_ballot_checklist(counties):
+ """Return approved-candidate ballot availability for each requested county."""
+ ordered=[];seen=set()
+ for value in counties:
+  county=str(value or "").strip();key=station_key(county)
+  if county and key and key not in seen:seen.add(key);ordered.append((key,county))
+ if not ordered:return []
+ # One unfiltered catalogue request is intentionally shared by every county;
+ # this prevents a 47-county preview from making 47 remote API calls.
+ catalog=candidate_portal_catalog({})
+ presidential_count=len(catalog.get("president",[]))
+ result=[]
+ for county_key,county in ordered:
+  statuses={}
+  for position,label in BALLOT_CHECKLIST_POSITIONS:
+   candidates=list(catalog.get(position,[]))
+   if position=="president":count=presidential_count
+   else:count=sum(1 for candidate in candidates
+                  if station_key(candidate.get("county"))==county_key)
+   statuses[position]={"label":label,"exists":count>0,"count":count}
+  result.append({"county":county,"statuses":statuses})
+ return result
+
 def voter_totals_pdf(rows,meta,filters):
  output=BytesIO();styles=getSampleStyleSheet();page_width,_=A4
  title_style=ParagraphStyle("VoterTotalsTitle",parent=styles["Title"],fontName="Helvetica-Bold",
@@ -7963,11 +7991,17 @@ def admin_voter_totals():
  level,filters=_voter_totals_request()
  missing_parent=_voter_totals_missing_parent(level,filters)
  preview_requested=str(request.args.get("preview") or "").strip()=="1"
- rows=[];meta=None;preview_error=None
+ rows=[];meta=None;preview_error=None;ballot_checklist=[];ballot_checklist_error=None
  if preview_requested and not missing_parent:
   try:
    rows,meta=combined_voter_totals(level,filters)
    if not rows:preview_error="No voters matched the selected report scope."
+   else:
+    counties=[row.get("county") for row in rows]
+    try:ballot_checklist=county_ballot_checklist(counties)
+    except Exception as exc:
+     app.logger.exception("County ballot checklist failed")
+     ballot_checklist_error="Ballot availability could not be checked: "+str(exc)
   except Exception as exc:
    app.logger.exception("Voter totals web preview failed")
    preview_error="Voter totals could not be loaded: "+str(exc)
@@ -7975,6 +8009,9 @@ def admin_voter_totals():
                         filters=filters,options=_register_hierarchy_options(filters),
                         missing_parent=missing_parent,preview_requested=preview_requested,
                         rows=rows,meta=meta,preview_error=preview_error,
+                        ballot_checklist=ballot_checklist,
+                        ballot_checklist_positions=BALLOT_CHECKLIST_POSITIONS,
+                        ballot_checklist_error=ballot_checklist_error,
                         generated_at=kenya_now().strftime("%d %B %Y, %H:%M:%S EAT"))
 
 @app.get("/admin/voter-totals.pdf")
