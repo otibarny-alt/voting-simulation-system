@@ -6692,7 +6692,7 @@ def _ballot_candidate_photo(url):
    cached=b""
   _BALLOT_PHOTO_CACHE[absolute]=cached
  if not cached:return Paragraph("PHOTO",getSampleStyleSheet()["Normal"])
- return RLImage(BytesIO(cached),width=11*mm,height=11*mm,kind="proportional")
+ return RLImage(BytesIO(cached),width=15.5*mm,height=15.5*mm,kind="proportional")
 
 def _draw_emergency_ballot_watermark(canvas,doc):
  """Paint restrained tiled ODM security marks behind every A5 ballot."""
@@ -6713,19 +6713,19 @@ def _draw_emergency_ballot_watermark(canvas,doc):
    canvas.setFillColor(colors.HexColor("#f7e3cc"))
    canvas.setStrokeColor(colors.HexColor("#f3d2ad"))
   canvas.setLineWidth(0.65)
-  # Three columns by five rows cover the entire A5 sheet. Each compact seal is
-  # deliberately pale so photocopies retain party identity without obscuring
-  # candidate photographs, names or marking boxes.
-  for x in (25*mm,74*mm,123*mm):
-   for y in (22*mm,63*mm,104*mm,145*mm,186*mm):
+  # Four columns by seven rows create a tighter, more condensed security field.
+  # The smaller seals remain deliberately pale so candidate portraits and mark
+  # boxes are visually dominant on both originals and photocopies.
+  for x in (18*mm,55*mm,92*mm,129*mm):
+   for y in (15*mm,45*mm,75*mm,105*mm,135*mm,165*mm,195*mm):
     canvas.saveState()
-    canvas.circle(x,y,15*mm,stroke=1,fill=0)
-    canvas.circle(x,y,13.2*mm,stroke=1,fill=0)
+    canvas.circle(x,y,10.5*mm,stroke=1,fill=0)
+    canvas.circle(x,y,9.2*mm,stroke=1,fill=0)
     canvas.translate(x,y);canvas.rotate(30)
-    canvas.setFont("Helvetica-Bold",19)
-    canvas.drawCentredString(0,1.5*mm,"ODM")
-    canvas.setFont("Helvetica-Bold",4.3)
-    canvas.drawCentredString(0,-4*mm,"OFFICIAL BALLOT")
+    canvas.setFont("Helvetica-Bold",13)
+    canvas.drawCentredString(0,1.1*mm,"ODM")
+    canvas.setFont("Helvetica-Bold",3.2)
+    canvas.drawCentredString(0,-2.8*mm,"OFFICIAL BALLOT")
     canvas.restoreState()
  finally:
   canvas.restoreState()
@@ -6830,11 +6830,11 @@ def download_emergency_ballots_pdf():
     cards=[]
     for number,candidate in enumerate(section["candidates"],1):
      identity="<br/>".join(filter(None,[str(escape(candidate.get("candidate_id") or "")),str(escape(candidate.get("membership_no") or ""))]))
-     candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate"))+("<br/><font size='6'>"+identity+"</font>" if identity else ""),
-                              ParagraphStyle("CardName",parent=name_style,fontSize=7.5,leading=8.5))
+     candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate"))+("<br/><font size='5.5'>"+identity+"</font>" if identity else ""),
+                              ParagraphStyle("CardName",parent=name_style,fontSize=6.6,leading=7.3,fontName="Helvetica"))
      card=Table([[Paragraph(str(number),name_style),_ballot_candidate_photo(candidate.get("photo_url")),candidate_text,
                   Paragraph("[&nbsp;&nbsp;]",ParagraphStyle("VoteBox",parent=styles["Normal"],fontSize=13,alignment=TA_CENTER))]],
-                colWidths=[6*mm,13*mm,35*mm,9*mm],rowHeights=[14*mm])
+                colWidths=[5*mm,18*mm,31*mm,9*mm],rowHeights=[17*mm])
      card.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.8,colors.black),("INNERGRID",(0,0),(-1,-1),0.35,colors.grey),
                                ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,0),"CENTER"),
                                ("ALIGN",(-1,0),(-1,0),"CENTER"),("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2)]))
