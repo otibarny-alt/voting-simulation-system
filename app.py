@@ -27,6 +27,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
 from PIL import Image as PILImage
+from pypdf import PdfReader, PdfWriter
 import master_register as master_register
 import import_master_register as master_register_import
 
@@ -6696,7 +6697,7 @@ def _ballot_candidate_photo(url):
 
 def _draw_emergency_ballot_watermark(canvas,doc):
  """Paint restrained tiled ODM security marks behind every A5 ballot."""
- page_width,page_height=A5
+ page_width,page_height=canvas._pagesize
  canvas.saveState()
  try:
   # Watermark first: candidate text, portraits and mark boxes are drawn over it.
@@ -6716,8 +6717,12 @@ def _draw_emergency_ballot_watermark(canvas,doc):
   # Four columns by seven rows create a tighter, more condensed security field.
   # The smaller seals remain deliberately pale so candidate portraits and mark
   # boxes are visually dominant on both originals and photocopies.
-  for x in (18*mm,55*mm,92*mm,129*mm):
-   for y in (15*mm,45*mm,75*mm,105*mm,135*mm,165*mm,195*mm):
+  x_positions=[18*mm+x*37*mm for x in range(max(1,int((page_width-18*mm)//(37*mm))+1))]
+  y_positions=[];watermark_y=15*mm
+  while watermark_y<=page_height-15*mm:
+   y_positions.append(watermark_y);watermark_y+=30*mm
+  for x in x_positions:
+   for y in y_positions:
     canvas.saveState()
     canvas.circle(x,y,10.5*mm,stroke=1,fill=0)
     canvas.circle(x,y,9.2*mm,stroke=1,fill=0)
@@ -6745,7 +6750,10 @@ def _emergency_ballot_sections(geo,requested):
    photo=str(item.get("photo_url") or "").strip()
    item["preview_photo_url"]=urljoin(CANDIDATE_PORTAL_BASE_URL.rstrip("/")+"/",photo) if photo else ""
    candidates.append(item)
-  if candidates:sections.append({"key":key,"title":title,"candidates":candidates})
+  if candidates:
+   candidate_rows=(len(candidates)+1)//2
+   sections.append({"key":key,"title":title,"candidates":candidates,
+                    "preview_min_height_mm":210+max(0,candidate_rows-4)*19})
  if not sections:
   raise ValueError("No approved candidates are available for the selected polling station.")
  return sections
@@ -6796,21 +6804,23 @@ def download_emergency_ballots_pdf():
   requested=(request.args.get("position") or "all").strip().lower()
   copies=max(1,min(50,to_int(request.args.get("copies") or 1)))
   sections=_emergency_ballot_sections(geo,requested)
-  output=BytesIO()
-  doc=SimpleDocTemplate(output,pagesize=A5,leftMargin=8*mm,rightMargin=8*mm,
-                        topMargin=7*mm,bottomMargin=7*mm,
-                        title="ODM Emergency Paper Ballots")
+  output=BytesIO();writer=PdfWriter()
   styles=getSampleStyleSheet()
   title_style=ParagraphStyle("BallotTitle",parent=styles["Title"],fontSize=15,leading=17,
                              textColor=colors.HexColor("#ef7d00"),spaceAfter=3*mm)
   small=ParagraphStyle("BallotSmall",parent=styles["Normal"],fontSize=7.5,leading=9)
   name_style=ParagraphStyle("CandidateName",parent=styles["Normal"],fontSize=9,leading=10.5,fontName="Helvetica-Bold")
-  story=[];logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
-  total_pages=copies*len(sections);page_number=0
+  logo_path=os.path.join(app.root_path,"static","brand_odm_header.png")
   for copy_number in range(1,copies+1):
    for section in sections:
     position,title=section["key"],section["title"]
-    page_number+=1
+    candidate_rows=(len(section["candidates"])+1)//2
+    page_height=A5[1]+max(0,candidate_rows-4)*19*mm
+    page_output=BytesIO()
+    doc=SimpleDocTemplate(page_output,pagesize=(A5[0],page_height),leftMargin=8*mm,rightMargin=8*mm,
+                          topMargin=7*mm,bottomMargin=7*mm,
+                          title="ODM Emergency Paper Ballot")
+    story=[]
     if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=126*mm,height=21*mm,kind="proportional"))
     story.append(Paragraph("EMERGENCY PAPER BALLOT",title_style))
     story.append(Paragraph("TRAINING / SIMULATION ONLY - use only when authorised after electronic voting failure",small))
@@ -6829,12 +6839,11 @@ def download_emergency_ballots_pdf():
                   Paragraph("Place one clear mark in the box beside ONE candidate only.",name_style),Spacer(1,2*mm)])
     cards=[]
     for number,candidate in enumerate(section["candidates"],1):
-     identity="<br/>".join(filter(None,[str(escape(candidate.get("candidate_id") or "")),str(escape(candidate.get("membership_no") or ""))]))
-     candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate"))+("<br/><font size='5.5'>"+identity+"</font>" if identity else ""),
+     candidate_text=Paragraph(str(escape(candidate.get("name") or "Unnamed candidate")),
                               ParagraphStyle("CardName",parent=name_style,fontSize=6.6,leading=7.3,fontName="Helvetica"))
-     card=Table([[Paragraph(str(number),name_style),_ballot_candidate_photo(candidate.get("photo_url")),candidate_text,
+     card=Table([[_ballot_candidate_photo(candidate.get("photo_url")),candidate_text,
                   Paragraph("[&nbsp;&nbsp;]",ParagraphStyle("VoteBox",parent=styles["Normal"],fontSize=13,alignment=TA_CENTER))]],
-                colWidths=[5*mm,18*mm,31*mm,9*mm],rowHeights=[17*mm])
+                colWidths=[18*mm,30*mm,15*mm],rowHeights=[17*mm])
      card.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.8,colors.black),("INNERGRID",(0,0),(-1,-1),0.35,colors.grey),
                                ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,0),"CENTER"),
                                ("ALIGN",(-1,0),(-1,0),"CENTER"),("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2)]))
@@ -6848,9 +6857,13 @@ def download_emergency_ballots_pdf():
                                ("BOTTOMPADDING",(0,0),(-1,-1),1)]))
     story.extend([table,Spacer(1,3*mm),Paragraph("Presiding Officer stamp/signature: __________________________________",small),
                   Spacer(1,2*mm),Paragraph("Do not write the voter's name or National ID on this ballot.",small)])
-    if page_number<total_pages:story.append(PageBreak())
-  doc.build(story,onFirstPage=_draw_emergency_ballot_watermark,
-            onLaterPages=_draw_emergency_ballot_watermark)
+    doc.build(story,onFirstPage=_draw_emergency_ballot_watermark,
+              onLaterPages=_draw_emergency_ballot_watermark)
+    page_output.seek(0);reader=PdfReader(page_output)
+    if len(reader.pages)!=1:
+     raise ValueError(f"The {title} ballot could not fit on one page.")
+    writer.add_page(reader.pages[0])
+  writer.write(output)
   output.seek(0)
   filename="A5_emergency_ballots_"+re.sub(r"[^A-Za-z0-9]+","_",geo["polling_station"]).strip("_")+".pdf"
   return send_file(output,mimetype="application/pdf",as_attachment=True,download_name=filename,max_age=0)
