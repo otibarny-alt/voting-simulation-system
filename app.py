@@ -6634,16 +6634,30 @@ BALLOT_CHECKLIST_POSITIONS=(
 def attach_ballot_checklists(rows):
  """Attach six scope-aware ballot availability checks to voter-total rows."""
  if not rows:return rows
- # One unfiltered catalogue request is shared by every displayed row.
- catalog=candidate_portal_catalog({})
+ # The candidate API intentionally returns only national candidates when no
+ # county is supplied. Load President once nationally, then load the complete
+ # approved catalogue once for each county represented by the displayed rows.
+ national_catalog=candidate_portal_catalog({})
+ county_catalogs={}
+ county_labels={}
+ for row in rows:
+  county=str(row.get("county") or "").strip();key=station_key(county)
+  if key and key not in county_labels:county_labels[key]=county
+ for key,county in county_labels.items():
+  county_catalogs[key]=candidate_portal_catalog({"county":county})
  scopes={"president":(),"governor":("county",),"senator":("county",),
          "woman_rep":("county",),"mna":("county","constituency"),
          "mca":("county","constituency","ward")}
  for row in rows:
+  county_key=station_key(row.get("county"))
+  county_catalog=county_catalogs.get(county_key,{})
   statuses={}
   for position,label in BALLOT_CHECKLIST_POSITIONS:
-   candidates=list(catalog.get(position,[]))
-   required=[field for field in scopes[position] if str(row.get(field) or "").strip()]
+   candidates=list((national_catalog if position=="president" else county_catalog).get(position,[]))
+   # County has already been enforced by the scoped API request. Apply only
+   # the narrower constituency/ward fields locally for MNA and MCA rows.
+   required=[field for field in scopes[position]
+             if field!="county" and str(row.get(field) or "").strip()]
    count=sum(1 for candidate in candidates
              if all(station_key(candidate.get(field))==station_key(row.get(field))
                     for field in required))
