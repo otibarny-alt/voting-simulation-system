@@ -27,6 +27,8 @@ from reportlab.lib.pagesizes import A4, A5, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image as PILImage
 from pypdf import PdfReader, PdfWriter
 import master_register as master_register
@@ -6678,12 +6680,25 @@ def attach_ballot_checklists(rows):
 
 def voter_totals_pdf(rows,meta,filters):
  output=BytesIO();styles=getSampleStyleSheet();page_width,_=landscape(A4)
+ font_dir=os.path.join(app.root_path,"static","fonts")
+ regular_font=os.path.join(font_dir,"DejaVuSans.ttf")
+ bold_font=os.path.join(font_dir,"DejaVuSans-Bold.ttf")
+ pdf_font="Helvetica";pdf_bold_font="Helvetica-Bold"
+ if os.path.isfile(regular_font) and os.path.isfile(bold_font):
+  if "DejaVuSans" not in pdfmetrics.getRegisteredFontNames():
+   pdfmetrics.registerFont(TTFont("DejaVuSans",regular_font))
+  if "DejaVuSans-Bold" not in pdfmetrics.getRegisteredFontNames():
+   pdfmetrics.registerFont(TTFont("DejaVuSans-Bold",bold_font))
+  pdf_font="DejaVuSans";pdf_bold_font="DejaVuSans-Bold"
  title_style=ParagraphStyle("VoterTotalsTitle",parent=styles["Title"],fontName="Helvetica-Bold",
   fontSize=16,leading=19,alignment=TA_CENTER,textColor=colors.HexColor("#14213d"),spaceAfter=5)
  subtitle=ParagraphStyle("VoterTotalsSubtitle",parent=styles["BodyText"],fontSize=9,leading=12,
   alignment=TA_CENTER,textColor=colors.HexColor("#444444"),spaceAfter=6)
  small=ParagraphStyle("VoterTotalsSmall",parent=styles["BodyText"],fontSize=8,leading=10)
  header=ParagraphStyle("VoterTotalsHeader",parent=small,fontName="Helvetica-Bold",textColor=colors.white,alignment=TA_CENTER)
+ mark_style=ParagraphStyle("VoterTotalsMark",parent=small,fontName=pdf_bold_font,fontSize=13,
+  leading=14,alignment=TA_CENTER)
+ summary_label=ParagraphStyle("VoterTotalsSummaryLabel",parent=small,fontName=pdf_bold_font)
  def footer(canvas,doc):
   canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.HexColor("#555555"))
   canvas.drawString(14*mm,8*mm,"ODM Voter Totals — Administrative Report")
@@ -6705,10 +6720,11 @@ def voter_totals_pdf(rows,meta,filters):
  data=[[Paragraph(escape(value),header) for value in headings]]
  for number,row in enumerate(rows,1):
   statuses=row.get("ballot_statuses",{})
-  values=[str(number),*[str(row.get(field) or "Not specified") for field in fields],f"{row['registered_voters']:,}",
-          *[("YES" if statuses.get(key,{}).get("exists") else "NO")
-            for key,_label in BALLOT_CHECKLIST_POSITIONS]]
-  data.append([Paragraph(escape(value),small) for value in values])
+  values=[str(number),*[str(row.get(field) or "Not specified") for field in fields],f"{row['registered_voters']:,}"]
+  cells=[Paragraph(escape(value),small) for value in values]
+  cells.extend(Paragraph("✓" if statuses.get(key,{}).get("exists") else "✕",mark_style)
+               for key,_label in BALLOT_CHECKLIST_POSITIONS)
+  data.append(cells)
  total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}",*([""]*6)]
  data.append([Paragraph(escape(value),header if index in (len(fields),len(fields)+1) else small)
               for index,value in enumerate(total_row)])
@@ -6734,8 +6750,30 @@ def voter_totals_pdf(rows,meta,filters):
                        ("TEXTCOLOR",cell,cell,colors.HexColor("#176b2c") if exists else colors.HexColor("#9b1c1c")),
                        ("FONTNAME",cell,cell,"Helvetica-Bold")])
  table.setStyle(TableStyle(table_style))
+ ballot_quantities={key:sum(int(row.get("registered_voters") or 0)
+                            for row in rows
+                            if row.get("ballot_statuses",{}).get(key,{}).get("exists"))
+                    for key,_label in BALLOT_CHECKLIST_POSITIONS}
+ quantity_data=[[Paragraph("Ballot Category",header),Paragraph("Required Ballots to Print",header)]]
+ for key,label in BALLOT_CHECKLIST_POSITIONS:
+  quantity_data.append([Paragraph(escape(label),summary_label),
+                        Paragraph(f"{ballot_quantities[key]:,}",summary_label)])
+ total_ballot_sheets=sum(ballot_quantities.values())
+ quantity_data.append([Paragraph("TOTAL BALLOT PAPERS",header),
+                       Paragraph(f"{total_ballot_sheets:,}",header)])
+ quantity_table=Table(quantity_data,colWidths=[78*mm,58*mm],hAlign="LEFT",repeatRows=1)
+ quantity_table.setStyle(TableStyle([
+  ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+  ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#14213d")),("TEXTCOLOR",(0,-1),(-1,-1),colors.white),
+  ("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#999999")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+  ("ALIGN",(1,1),(1,-1),"RIGHT"),("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#f5f7fa")]),
+  ("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),
+  ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
  story.extend([table,Spacer(1,5*mm),Paragraph(
-  "Ballot checks: YES = approved ballot exists; NO = no approved candidates for that row's exact electoral scope.",small),Spacer(1,2*mm),Paragraph(
+  "Ballot checks: ✓ = approved ballot exists; ✕ = no approved candidates for that row's exact electoral scope.",small),
+  Spacer(1,4*mm),Paragraph("BALLOT PAPERS REQUIRED FOR THIS FILTER",title_style),
+  Paragraph("Each voter requires one ballot in every available category. A category with no approved ballot in a row contributes zero to its print quantity.",small),
+  Spacer(1,2*mm),quantity_table,Spacer(1,3*mm),Paragraph(
   f"Source: active PostgreSQL master register ({meta['database_records']:,}) plus Kobo/legacy-only members ({meta['legacy_records']:,}); duplicate National IDs use the master record.",small)])
  doc.build(story,onFirstPage=footer,onLaterPages=footer)
  return output.getvalue()
