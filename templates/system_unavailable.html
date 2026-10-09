@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Connection Interrupted</title>
+ <style>
+  *{box-sizing:border-box}body{margin:0;background:#f6f2ed;color:#20150d;font-family:Arial,sans-serif;min-height:100vh;display:grid;place-items:center;padding:18px}
+  .card{width:min(680px,100%);background:#fff;border:2px solid #ef7d00;border-radius:18px;box-shadow:0 12px 38px #4b250d25;overflow:hidden;text-align:center}
+  .banner{display:block;width:100%;max-height:124px;object-fit:contain;background:#fff;padding:5px}
+  .body{padding:27px 24px 30px}.status{display:inline-block;background:#fff3df;color:#8b4300;border:1px solid #efb56d;border-radius:999px;padding:7px 13px;font-weight:800}
+  h1{font-size:clamp(25px,5vw,36px);margin:18px 0 10px}p{font-size:17px;line-height:1.5;margin:8px auto;max-width:540px}.note{color:#67584f;font-size:14px}
+  .actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:23px}.button{border:3px solid #ef7d00;border-radius:10px;padding:12px 20px;font-size:16px;font-weight:850;text-decoration:none;cursor:pointer}.retry{background:#111;color:#fff}.home{background:#fff;color:#111}
+  #countdown{font-weight:800;color:#a44e00}.online{color:#18702a}.offline{color:#a51d1d}
+ </style>
+</head>
+<body>
+ <main class="card" role="alert">
+  <img class="banner" src="/voter-lookup-banner-v23-212.png" alt="ODM Voters Verification System">
+  <section class="body">
+   <span class="status">Temporary connection interruption</span>
+   <h1>The voting system is reconnecting</h1>
+   <p>Your terminal has not been logged out. Please keep this page open while the secure connection is restored.</p>
+   <p class="note">Automatic retry in <span id="countdown">15</span> seconds · Network: <strong id="network">checking</strong></p>
+   <div class="actions">
+    <button class="button retry" type="button" onclick="location.reload()">Retry Now</button>
+    <a class="button home" href="/main-navigation-dashboard">Main Dashboard</a>
+   </div>
+  </section>
+ </main>
+ <script>
+  let remaining=15;const counter=document.getElementById("countdown"),network=document.getElementById("network");
+  function showNetwork(){const connected=navigator.onLine;network.textContent=connected?"connected":"offline";network.className=connected?"online":"offline"}
+  showNetwork();addEventListener("online",()=>{showNetwork();setTimeout(()=>location.reload(),800)});addEventListener("offline",showNetwork);
+  setInterval(()=>{remaining-=1;counter.textContent=Math.max(remaining,0);if(remaining<=0)location.reload()},1000);
+ </script>
+</body>
+</html>

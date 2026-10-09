@@ -415,6 +415,43 @@ def voter_lookup_banner_v23_212():
  return response
 
 
+@app.get("/system-unavailable-v23-213")
+def system_unavailable_v23_213():
+ """Cacheable terminal recovery screen used when Render returns a gateway error."""
+ response=make_response(render_template("system_unavailable.html"))
+ response.headers["Cache-Control"]="public, max-age=86400"
+ return response
+
+
+@app.get("/service-worker-v23-213.js")
+def service_worker_v23_213():
+ """Replace upstream 502/503/504 navigation responses with a cached recovery UI."""
+ script=r'''const CACHE="odm-terminal-fallback-v23-213";
+const FALLBACK="/system-unavailable-v23-213";
+const PRECACHE=[FALLBACK,"/voter-lookup-banner-v23-212.png"];
+self.addEventListener("install",event=>{
+ event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(PRECACHE)).then(()=>self.skipWaiting()));
+});
+self.addEventListener("activate",event=>{
+ event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith("odm-terminal-fallback-")&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));
+});
+self.addEventListener("fetch",event=>{
+ const request=event.request;
+ if(request.method!=="GET"||request.mode!=="navigate")return;
+ event.respondWith((async()=>{
+  try{
+   const response=await fetch(request);
+   if(![502,503,504].includes(response.status))return response;
+  }catch(error){}
+  return (await caches.match(FALLBACK))||new Response("Service temporarily unavailable. Please retry.",{status:503,headers:{"Content-Type":"text/plain; charset=utf-8"}});
+ })());
+});'''
+ response=Response(script,mimetype="application/javascript")
+ response.headers["Cache-Control"]="no-cache, no-store, must-revalidate"
+ response.headers["Service-Worker-Allowed"]="/"
+ return response
+
+
 @app.get("/main-navigation-dashboard")
 def main_navigation_dashboard():
  """Stable local link to the nomination system's shared navigation hub."""
@@ -495,7 +532,8 @@ def apply_party_branding_to_html(response):
   #global-main-dashboard-link:hover,#global-main-dashboard-link:focus{{background:var(--party-primary,#ef7d00);color:#111!important;outline:2px solid #111;outline-offset:2px}}
   @media(max-width:600px){{#global-main-dashboard-link{{right:10px;bottom:10px;padding:9px 12px;font-size:13px}}}}
   @media print{{#global-main-dashboard-link{{display:none!important}}}}</style>
-  <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>'''
+  <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>
+  <script id="render-fallback-worker">if("serviceWorker" in navigator){{window.addEventListener("load",()=>navigator.serviceWorker.register("/service-worker-v23-213.js",{{scope:"/"}}).catch(()=>{{}}));}}</script>'''
   html=html.replace("</head>",addon+"</head>")
   if 'id="global-main-dashboard-link"' not in html:
    dashboard_link=f'''<a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Main Dashboard" title="Return to Main Navigation Dashboard">⌂ Main Dashboard</a>'''
