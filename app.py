@@ -116,7 +116,7 @@ AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 DATA_UPLOAD_DIR = os.getenv("DATA_UPLOAD_DIR", "").strip()
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
-REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
+REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_voting_system_header.png").strip()
 KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip("/")
 MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
@@ -170,7 +170,7 @@ PARTY_BRANDS={
   "code":"ODM","name":"Orange Democratic Movement","abbreviation":"ODM",
   "slogan":"Tuko Tayari","membership_prefix":"ODM",
   "primary":"#ef7d00","secondary":"#111111","accent":"#fff2df",
-  "header_file":"brand_odm_header.png"
+  "header_file":"odm_voting_system_header.png"
  },
  "UDA":{
   "code":"UDA","name":"United Democratic Alliance","abbreviation":"UDA",

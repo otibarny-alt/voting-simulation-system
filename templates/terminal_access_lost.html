@@ -9,7 +9,7 @@
  </style>
 </head>
 <body><main class="notice-wrap"><section class="notice-card" role="alert">
- <img class="notice-logo" src="{{ url_for('static',filename='odm_screen_header.png') }}" alt="Orange Democratic Movement">
+ <img class="notice-logo" src="{{ url_for('static',filename='odm_voting_system_header.png') }}" alt="Orange Democratic Movement">
  <h1>Voting Terminal Login Required</h1>
  <div class="notice-message">{% if replaced %}This Voting Terminal login has been released or replaced.{% else %}The Voting Terminal session is no longer active.{% endif %} Confirm that the Entrance Verification Terminal is logged in first, then sign in to the Voting Terminal again.</div>
  <a class="login-btn" href="{{ voter_verification_base_url }}/login?mode=voting">Open Voting Terminal Login</a>

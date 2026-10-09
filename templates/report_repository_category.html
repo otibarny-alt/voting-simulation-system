@@ -1,7 +1,7 @@
 <!doctype html><link rel=stylesheet href=/static/style.css><script src="/static/repository_email.js" defer></script><meta name=viewport content="width=device-width,initial-scale=1">
 <header><b>Central PDF Report Repository</b><a href=/report-repository>All Categories</a>{% if is_admin %}<a href="{{ url_for('admin_data_files') }}">Admin Data Files</a><span class="repo-admin-status">Admin</span><form method="post" action="{{ url_for('repository_admin_logout') }}" style="display:inline"><button type="submit" class="repo-admin-link">Admin Logout</button></form>{% else %}<a href="{{ url_for('repository_admin_login', next=request.full_path) }}">Admin Login</a>{% endif %}</header>
 <div class=demo>TRAINING / SIMULATION ONLY — central archive of formally closed stream reports.</div>
-<div class=wrap><div class="odm-screen-header project-screen-brand"><img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
+<div class=wrap><div class="odm-screen-header project-screen-brand"><img src="/static/odm_voting_system_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image"></div>
 {% set tab_qs='county='+filters.county|urlencode+'&constituency='+filters.constituency|urlencode+'&ward='+filters.ward|urlencode+'&poll_station='+filters.poll_station|urlencode+'&stream='+filters.stream|urlencode %}
 <nav class="report-category-tabs" aria-label="Report categories">
  {% for tab_key,tab_label in report_tabs %}<a class="report-category-tab{% if election==tab_key %} active{% endif %}" href="{{ url_for('report_repository_category',election=tab_key) }}?{{tab_qs}}" {% if election==tab_key %}aria-current="page"{% endif %}>{{tab_label}}</a>{% endfor %}
