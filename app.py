@@ -528,15 +528,17 @@ def apply_party_branding_to_html(response):
   addon=f'''<style id="party-brand-theme">:root{{--party-primary:{brand['primary']};--party-secondary:{brand['secondary']};--party-accent:{brand['accent']}}}
   header{{border-bottom-color:var(--party-primary)!important}} a.button,button,.btn,.save,.master-action,.verification-admin-link{{border-color:var(--party-primary)}}
   .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}
-  #global-main-dashboard-link{{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:inline-flex;align-items:center;gap:7px;padding:10px 15px;border:3px solid var(--party-primary,#ef7d00);border-radius:999px;background:#111;color:#fff!important;text-decoration:none;font:800 14px/1.1 Arial,sans-serif;box-shadow:0 5px 18px #0005}}
+  #global-main-dashboard-nav{{box-sizing:border-box;width:calc(100% - 36px);max-width:620px;margin:20px auto 12px;display:flex;justify-content:flex-start;position:relative;z-index:20}}
+  .voting-terminal-screen #global-main-dashboard-nav{{max-width:1240px}}
+  #global-main-dashboard-link{{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 16px;border:3px solid var(--party-primary,#ef7d00);border-radius:10px;background:#111;color:#fff!important;text-decoration:none;font:800 16px/1.2 Arial,sans-serif;box-shadow:0 4px 14px #0003}}
   #global-main-dashboard-link:hover,#global-main-dashboard-link:focus{{background:var(--party-primary,#ef7d00);color:#111!important;outline:2px solid #111;outline-offset:2px}}
-  @media(max-width:600px){{#global-main-dashboard-link{{right:10px;bottom:10px;padding:9px 12px;font-size:13px}}}}
-  @media print{{#global-main-dashboard-link{{display:none!important}}}}</style>
+  @media(max-width:600px){{#global-main-dashboard-nav{{width:calc(100% - 24px);margin:12px auto 10px}}#global-main-dashboard-link{{box-sizing:border-box;width:100%;padding:12px 14px;font-size:16px;text-align:center}}}}
+  @media print{{#global-main-dashboard-nav{{display:none!important}}}}</style>
   <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>
   <script id="render-fallback-worker">if("serviceWorker" in navigator){{window.addEventListener("load",()=>navigator.serviceWorker.register("/service-worker-v23-213.js",{{scope:"/"}}).catch(()=>{{}}));}}</script>'''
   html=html.replace("</head>",addon+"</head>")
   if 'id="global-main-dashboard-link"' not in html:
-   dashboard_link=f'''<a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Back to Main Navigation" title="Return to Main Navigation Dashboard">← Back to Main Navigation</a>'''
+   dashboard_link=f'''<nav id="global-main-dashboard-nav" aria-label="Main navigation"><a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Back to Main Navigation" title="Return to Main Navigation Dashboard">← Back to Main Navigation</a></nav>'''
    html=re.sub(r"(?i)(<body(?:\s[^>]*)?>)",lambda match:match.group(1)+dashboard_link,html,count=1)
   response.set_data(html)
   response.headers["Content-Length"]=str(len(response.get_data()))
