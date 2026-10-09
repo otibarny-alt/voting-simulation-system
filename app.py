@@ -1,5 +1,6 @@
 # V23.93: protected full clean-test reset across voting and candidate services.
 import os, sqlite3, csv, json, re, hmac, secrets, hashlib, smtplib, threading, time, shutil, tempfile, copy, gc, uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import psycopg
 from psycopg.rows import dict_row
@@ -683,6 +684,13 @@ def close_time_message():
 
 _CANDIDATE_CATALOG_CACHE={}
 _CANDIDATE_CATALOG_CACHE_LOCK=threading.Lock()
+_CANDIDATE_CATALOG_KEY_LOCKS={}
+
+def _candidate_catalog_key_lock(cache_key):
+ # Different constituencies/wards may be loaded concurrently for a county-wide
+ # report, while identical requests still use single-flight.
+ with _CANDIDATE_CATALOG_CACHE_LOCK:
+  return _CANDIDATE_CATALOG_KEY_LOCKS.setdefault(cache_key,threading.Lock())
 
 def candidate_portal_catalog(geo):
  cache_key=tuple(norm_key(geo.get(k,"")) for k in ("county","constituency","ward"))
@@ -690,7 +698,7 @@ def candidate_portal_catalog(geo):
  cached=_CANDIDATE_CATALOG_CACHE.get(cache_key)
  if cached and now-cached[0] < CANDIDATE_CATALOG_CACHE_SECONDS:
   return copy.deepcopy(cached[1])
- with _CANDIDATE_CATALOG_CACHE_LOCK:
+ with _candidate_catalog_key_lock(cache_key):
   # Single-flight the remote catalogue request. Without this guard, concurrent
   # Presidential and MCA refreshes can make identical calls and exhaust the
   # small Render worker while both wait on the candidate service.
@@ -8122,46 +8130,64 @@ def _unopposed_candidates(filters,requested_position="all"):
                "county":county,"constituency":constituency,"ward":ward,
                "scope":scope,"status":"Direct nomination — unopposed"})
 
- if requested_position in ("all","president"):
-  national=candidate_portal_catalog({})
-  add_if_single("president","President",national.get("president",[]),"National")
-
  county=str(filters.get("county") or "").strip()
- local_positions={"governor","senator","woman_rep","mna","mca"}
- if requested_position=="all" or requested_position in local_positions:
-  if not county:
-   if requested_position!="president":
-    raise ValueError("Select a county to identify unopposed county, constituency and ward contests.")
-  else:
-   geo={"county":county}
-   if filters.get("constituency"):geo["constituency"]=filters["constituency"]
-   if filters.get("ward"):geo["ward"]=filters["ward"]
-   catalog=candidate_portal_catalog(geo)
-   for position,title in (("governor","Governor"),("senator","Senator"),("woman_rep","Woman Representative")):
-    if requested_position not in ("all",position):continue
-    candidates=[c for c in catalog.get(position,[]) if not station_key(c.get("county")) or station_key(c.get("county"))==station_key(county)]
-    add_if_single(position,title,candidates,f"{county} County",county=county)
-   if requested_position in ("all","mna"):
-    groups={}
-    for candidate in catalog.get("mna",[]):
-     constituency=str(candidate.get("constituency") or filters.get("constituency") or "").strip()
-     if not constituency:continue
-     if filters.get("constituency") and station_key(constituency)!=station_key(filters["constituency"]):continue
-     groups.setdefault(station_key(constituency),{"label":constituency,"candidates":[]})["candidates"].append(candidate)
-    for group in groups.values():
-     add_if_single("mna","MNA",group["candidates"],f"{group['label']} Constituency",county=county,constituency=group["label"])
-   if requested_position in ("all","mca"):
-    groups={}
-    for candidate in catalog.get("mca",[]):
-     constituency=str(candidate.get("constituency") or filters.get("constituency") or "").strip()
-     ward=str(candidate.get("ward") or filters.get("ward") or "").strip()
-     if not constituency or not ward:continue
-     if filters.get("constituency") and station_key(constituency)!=station_key(filters["constituency"]):continue
-     if filters.get("ward") and station_key(ward)!=station_key(filters["ward"]):continue
-     key=(station_key(constituency),station_key(ward))
-     groups.setdefault(key,{"constituency":constituency,"ward":ward,"candidates":[]})["candidates"].append(candidate)
-    for group in groups.values():
-     add_if_single("mca","MCA",group["candidates"],f"{group['ward']} Ward",county=county,constituency=group["constituency"],ward=group["ward"])
+ if not county:
+  raise ValueError("Select a county first. The county view lists every unopposed position from President to MCA.")
+
+ # The Candidate Registration API returns MNA only for an exact constituency
+ # and MCA only for an exact ward. Expand the chosen county using county_main.
+ hierarchy=_hierarchy_cache()
+ county_row=next((item for item in hierarchy.get("counties",[])
+                  if station_key(county) in {station_key(item.get("name")),station_key(item.get("label"))}),None)
+ if not county_row:raise ValueError("The selected county is not available in county_main.csv.")
+ county_label=str(county_row.get("label") or county_row.get("name") or county).strip()
+ county_name=str(county_row.get("name") or county_label).strip()
+ constituency_rows=list(hierarchy.get("constituencies",{}).get(norm_key(county_name),[]))
+ selected_constituency=str(filters.get("constituency") or "").strip()
+ if selected_constituency:
+  constituency_rows=[item for item in constituency_rows
+                     if station_key(selected_constituency) in {station_key(item.get("name")),station_key(item.get("label"))}]
+  if not constituency_rows:raise ValueError("The selected constituency is not in this county.")
+ selected_ward=str(filters.get("ward") or "").strip()
+ scopes=[("national",{},"",""),("county",{"county":county_label},"","")]
+ for constituency_row in constituency_rows:
+  constituency_label=str(constituency_row.get("label") or constituency_row.get("name") or "").strip()
+  constituency_name=str(constituency_row.get("name") or constituency_label).strip()
+  scopes.append(("constituency",{"county":county_label,"constituency":constituency_label},constituency_label,""))
+  ward_rows=list(hierarchy.get("wards",{}).get(norm_key(constituency_name),[]))
+  if selected_ward:
+   ward_rows=[item for item in ward_rows
+              if station_key(selected_ward) in {station_key(item.get("name")),station_key(item.get("label"))}]
+   if not ward_rows:raise ValueError("The selected ward is not in this constituency.")
+  for ward_row in ward_rows:
+   ward_label=str(ward_row.get("label") or ward_row.get("name") or "").strip()
+   scopes.append(("ward",{"county":county_label,"constituency":constituency_label,"ward":ward_label},constituency_label,ward_label))
+
+ catalogs={}
+ with ThreadPoolExecutor(max_workers=min(6,max(1,len(scopes)))) as executor:
+  pending={executor.submit(candidate_portal_catalog,geo):(scope,geo,constituency,ward)
+           for scope,geo,constituency,ward in scopes}
+  for future in as_completed(pending):
+   scope,geo,constituency,ward=pending[future]
+   catalogs[(scope,station_key(constituency),station_key(ward))]=(future.result(),geo,constituency,ward)
+
+ if requested_position in ("all","president"):
+  national=catalogs[("national","","")][0]
+  add_if_single("president","President",national.get("president",[]),"National",county=county_label)
+ county_catalog=catalogs[("county","","")][0]
+ for position,title in (("governor","Governor"),("senator","Senator"),("woman_rep","Woman Representative")):
+  if requested_position not in ("all",position):continue
+  add_if_single(position,title,county_catalog.get(position,[]),f"{county_label} County",county=county_label)
+ if requested_position in ("all","mna"):
+  for scope,catalog_info in catalogs.items():
+   if scope[0]!="constituency":continue
+   catalog,_geo,constituency,_ward=catalog_info
+   add_if_single("mna","MNA",catalog.get("mna",[]),f"{constituency} Constituency",county=county_label,constituency=constituency)
+ if requested_position in ("all","mca"):
+  for scope,catalog_info in catalogs.items():
+   if scope[0]!="ward":continue
+   catalog,_geo,constituency,ward=catalog_info
+   add_if_single("mca","MCA",catalog.get("mca",[]),f"{ward} Ward",county=county_label,constituency=constituency,ward=ward)
  rows.sort(key=lambda row:(next((i for i,(key,_title,_step) in enumerate(ELECTIONS) if key==row["position"]),99),station_key(row["county"]),station_key(row["constituency"]),station_key(row["ward"]),row["candidate_name"].lower()))
  return rows
 
