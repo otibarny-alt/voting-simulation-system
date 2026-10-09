@@ -8191,12 +8191,55 @@ def _unopposed_candidates(filters,requested_position="all"):
  rows.sort(key=lambda row:(next((i for i,(key,_title,_step) in enumerate(ELECTIONS) if key==row["position"]),99),station_key(row["county"]),station_key(row["constituency"]),station_key(row["ward"]),row["candidate_name"].lower()))
  return rows
 
+def unopposed_candidates_pdf(rows,filters,position):
+ """Create the printable direct-nomination list for the selected filters."""
+ output=BytesIO();styles=getSampleStyleSheet();page_width,_=landscape(A4)
+ title_style=ParagraphStyle("UnopposedTitle",parent=styles["Title"],fontName="Helvetica-Bold",
+  fontSize=16,leading=19,alignment=TA_CENTER,textColor=colors.HexColor("#14213d"),spaceAfter=5)
+ small=ParagraphStyle("UnopposedSmall",parent=styles["BodyText"],fontSize=8,leading=10)
+ header=ParagraphStyle("UnopposedHeader",parent=small,fontName="Helvetica-Bold",textColor=colors.white,alignment=TA_CENTER)
+ cell=ParagraphStyle("UnopposedCell",parent=small,fontSize=7.5,leading=9)
+ mark=ParagraphStyle("UnopposedMark",parent=small,fontName="Helvetica-Bold",fontSize=13,alignment=TA_CENTER,textColor=colors.HexColor("#9b1c1c"))
+ def footer(canvas,doc):
+  canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.HexColor("#555555"))
+  canvas.drawString(14*mm,8*mm,"ODM Unopposed Candidates — Administrative Direct-Nomination Report")
+  canvas.drawRightString(page_width-14*mm,8*mm,f"Page {doc.page}");canvas.restoreState()
+ doc=SimpleDocTemplate(output,pagesize=landscape(A4),rightMargin=12*mm,leftMargin=12*mm,
+  topMargin=10*mm,bottomMargin=14*mm,title="ODM Unopposed Candidates / Direct Nomination")
+ story=[];logo_path=os.path.join(app.root_path,"static","voter_totals_pdf_header.png")
+ if os.path.isfile(logo_path):story.append(RLImage(logo_path,width=178*mm,height=36.8*mm,kind="proportional"))
+ scope_parts=[f"{key.replace('_',' ').title()}: {value}" for key,value in filters.items() if value]
+ if position!="all":scope_parts.append("Position: "+next((title for key,title,_step in ELECTIONS if key==position),position.upper()))
+ story.extend([Paragraph("UNOPPOSED CANDIDATES / DIRECT NOMINATION",title_style),
+  Paragraph(escape(" | ".join(scope_parts)),small),
+  Paragraph(f"Generated: {kenya_now().strftime('%d %B %Y, %H:%M:%S')} EAT",small),Spacer(1,3*mm)])
+ headings=["No.","Position","Candidate","Candidate ID","Electoral Scope","County","Constituency","Ward","Ballot","Administrative Action"]
+ data=[[Paragraph(escape(value),header) for value in headings]]
+ for number,row in enumerate(rows,1):
+  values=[str(number),row["position_label"],row["candidate_name"],row["candidate_id"] or "—",row["scope"],row["county"] or "National",row["constituency"] or "—",row["ward"] or "—"]
+  data.append([*[Paragraph(escape(str(value)),cell) for value in values],Paragraph("X",mark),Paragraph("Direct nomination — unopposed",cell)])
+ widths=[10,18,40,28,35,25,31,25,14,43]
+ table=Table(data,colWidths=[value*mm for value in widths],repeatRows=1,hAlign="LEFT")
+ table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#ef7d00")),
+  ("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#999999")),
+  ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f5f7fa")]),
+  ("BACKGROUND",(8,1),(8,-1),colors.HexColor("#fdeaea")),("ALIGN",(8,1),(8,-1),"CENTER"),
+  ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
+  ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+ story.extend([table,Spacer(1,4*mm),Paragraph(
+  f"Total unopposed positions: {len(rows):,}. These candidates remain in the electronic voting system. Paper-ballot printing is blocked because each listed electoral scope has exactly one approved candidate.",small)])
+ doc.build(story,onFirstPage=footer,onLaterPages=footer)
+ return output.getvalue()
+
 @app.get("/admin/unopposed-candidates")
 def admin_unopposed_candidates():
  if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
  filters={key:str(request.args.get(key) or "").strip() for key in ("county","constituency","ward")}
  position=str(request.args.get("position") or "all").strip().lower()
  search_requested=str(request.args.get("search") or "").strip()=="1"
+ token=session.get("unopposed_candidates_csrf")
+ if not token:
+  token=secrets.token_urlsafe(32);session["unopposed_candidates_csrf"]=token
  rows=[];error=None
  if search_requested:
   try:rows=_unopposed_candidates(filters,position)
@@ -8207,7 +8250,51 @@ def admin_unopposed_candidates():
                         options=_register_hierarchy_options(filters),position=position,
                         positions=[("all","All positions")]+[(key,title) for key,title,_step in ELECTIONS],
                         search_requested=search_requested,rows=rows,error=error,
+                        csrf_token=token,
                         generated_at=kenya_now().strftime("%d %B %Y, %H:%M:%S EAT"))
+
+@app.get("/admin/unopposed-candidates.pdf")
+def download_unopposed_candidates_pdf():
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters={key:str(request.args.get(key) or "").strip() for key in ("county","constituency","ward")}
+ position=str(request.args.get("position") or "all").strip().lower()
+ try:
+  rows=_unopposed_candidates(filters,position)
+  if not rows:return Response("No unopposed candidates matched the selected filters.",status=404,mimetype="text/plain")
+  pdf=unopposed_candidates_pdf(rows,filters,position)
+  area=filters.get("ward") or filters.get("constituency") or filters.get("county") or "Selected_Area"
+  safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
+  return send_file(BytesIO(pdf),mimetype="application/pdf",as_attachment=False,
+                   download_name=f"ODM_Unopposed_Candidates_{safe_area}.pdf",max_age=0)
+ except ValueError as exc:return Response(str(exc),status=400,mimetype="text/plain")
+ except Exception as exc:
+  app.logger.exception("Unopposed candidates PDF generation failed")
+  return Response("The unopposed-candidates PDF could not be generated.",status=502,mimetype="text/plain")
+
+@app.post("/api/admin/unopposed-candidates/email")
+def email_unopposed_candidates_pdf():
+ if not repository_admin_logged_in():return jsonify({"ok":False,"error":"Administrator login required."}),403
+ data=request.get_json(silent=True) or {}
+ supplied=str(data.get("csrf_token") or "");expected=str(session.get("unopposed_candidates_csrf") or "")
+ if not supplied or not expected or not hmac.compare_digest(supplied,expected):
+  return jsonify({"ok":False,"error":"Security token expired. Reload the page and try again."}),403
+ recipient=str(data.get("email") or "").strip()
+ filters={key:str(data.get(key) or "").strip() for key in ("county","constituency","ward")}
+ position=str(data.get("position") or "all").strip().lower()
+ try:
+  rows=_unopposed_candidates(filters,position)
+  if not rows:return jsonify({"ok":False,"error":"No unopposed candidates matched the selected filters."}),404
+  pdf=unopposed_candidates_pdf(rows,filters,position)
+  area=filters.get("ward") or filters.get("constituency") or filters.get("county") or "Selected Area"
+  safe_area=re.sub(r"[^A-Za-z0-9_-]+","_",area).strip("_") or "Selected_Area"
+  return send_stored_repository_pdf(recipient,
+   f"ODM Unopposed Candidates / Direct Nomination - {area}",
+   f"Attached is the filtered administrative list of {len(rows):,} unopposed position(s) for {area}. Each listed position is excluded from paper-ballot printing.",
+   f"ODM_Unopposed_Candidates_{safe_area}.pdf",pdf)
+ except ValueError as exc:return jsonify({"ok":False,"error":str(exc)}),400
+ except Exception:
+  app.logger.exception("Unopposed candidates email generation failed")
+  return jsonify({"ok":False,"error":"The unopposed-candidates PDF could not be generated or emailed."}),502
 
 @app.get("/admin/voter-totals.pdf")
 def download_voter_totals_pdf():
