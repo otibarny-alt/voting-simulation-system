@@ -6945,6 +6945,18 @@ def admin_emergency_ballots():
                         preview_sections=preview_sections,preview_geo=preview_geo,preview_error=preview_error,
                         candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL)
 
+@app.get("/admin/emergency-ballot-banner-v23-209.png")
+def emergency_ballot_banner_v23_209():
+ """Serve the current ballot banner without browser or proxy caching."""
+ if not repository_admin_logged_in():
+  return Response("Administrator login required.",status=403,mimetype="text/plain")
+ path=os.path.join(app.root_path,"static","odm_2027_nominations_ballot_banner_ecc_v2.png")
+ if not os.path.isfile(path):return Response("Ballot banner is unavailable.",status=404,mimetype="text/plain")
+ response=send_file(path,mimetype="image/png",max_age=0,conditional=False)
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+ response.headers["Pragma"]="no-cache";response.headers["Expires"]="0"
+ return response
+
 @app.get("/admin/emergency-ballots.pdf")
 def download_emergency_ballots_pdf():
  if not repository_admin_logged_in():
