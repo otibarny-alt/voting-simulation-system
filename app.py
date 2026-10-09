@@ -404,6 +404,17 @@ def membership_voter_lookup_banner_v23_210():
  return response
 
 
+@app.get("/voter-lookup-banner-v23-212.png")
+def voter_lookup_banner_v23_212():
+ """Serve the voter lookup banner without stale browser/CDN caching."""
+ path=os.path.join(app.root_path,"static","voter_lookup_verification_banner_v23_212.png")
+ if not os.path.isfile(path):return Response("Voter lookup banner is unavailable.",status=404,mimetype="text/plain")
+ response=send_file(path,mimetype="image/png",max_age=0,conditional=False)
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+ response.headers["Pragma"]="no-cache";response.headers["Expires"]="0"
+ return response
+
+
 @app.get("/main-navigation-dashboard")
 def main_navigation_dashboard():
  """Stable local link to the nomination system's shared navigation hub."""
