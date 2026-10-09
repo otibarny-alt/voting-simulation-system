@@ -536,7 +536,7 @@ def apply_party_branding_to_html(response):
   <script id="render-fallback-worker">if("serviceWorker" in navigator){{window.addEventListener("load",()=>navigator.serviceWorker.register("/service-worker-v23-213.js",{{scope:"/"}}).catch(()=>{{}}));}}</script>'''
   html=html.replace("</head>",addon+"</head>")
   if 'id="global-main-dashboard-link"' not in html:
-   dashboard_link=f'''<a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Main Dashboard" title="Return to Main Navigation Dashboard">⌂ Main Dashboard</a>'''
+   dashboard_link=f'''<a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Back to Main Navigation" title="Return to Main Navigation Dashboard">← Back to Main Navigation</a>'''
    html=re.sub(r"(?i)(<body(?:\s[^>]*)?>)",lambda match:match.group(1)+dashboard_link,html,count=1)
   response.set_data(html)
   response.headers["Content-Length"]=str(len(response.get_data()))
