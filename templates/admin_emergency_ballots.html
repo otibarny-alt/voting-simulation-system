@@ -13,7 +13,7 @@
 <main class="ballot-admin">
  <h1>A5 Emergency Paper Ballots</h1>
  <p>Generate station-specific backup ballots for controlled use if electronic voting is formally suspended.</p>
- <div class="ballot-note"><b>Important:</b> Generate ballots only after the candidate list is final. Each position is printed on a separate A5 page. Candidate eligibility follows the selected county, constituency and ward. The PDF is marked <b>TRAINING / SIMULATION ONLY</b>.</div>
+ <div class="ballot-note"><b>Important:</b> Only contested positions with two or more approved candidates can be previewed or printed. A position with one candidate is unopposed, is excluded from the paper ballots and must be processed for direct nomination. The candidate remains available in the electronic voting system.</div>
  <section class="ballot-panel">
   <form method="get" action="{{ url_for('admin_emergency_ballots') }}">
    <div class="ballot-grid">

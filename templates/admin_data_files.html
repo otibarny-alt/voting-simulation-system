@@ -215,9 +215,10 @@
  </section>
  <section class="data-panel">
   <h2>A5 Emergency Paper Ballots</h2>
-  <p>Generate polling-station-specific backup ballots containing only approved candidates eligible for that county, constituency and ward. Use these controlled paper ballots only if electronic voting is formally suspended.</p>
+  <p>Generate polling-station-specific backup ballots only for contested positions with two or more approved candidates. Single-candidate positions are treated as unopposed direct nominations and cannot be printed.</p>
   <div class="verification-admin-actions">
    <a class="verification-admin-link" href="{{ url_for('admin_emergency_ballots') }}">Generate A5 Emergency Ballots</a>
+   <a class="verification-admin-link" href="{{ url_for('admin_unopposed_candidates') }}">Unopposed Candidates / Direct Nomination</a>
   </div>
  </section>
  <section class="data-panel">

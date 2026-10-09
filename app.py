@@ -116,7 +116,7 @@ AGENTS_LOGIN = os.getenv("AGENTS_LOGIN_FILENAME", "agents_login.csv")
 DATA_UPLOAD_DIR = os.getenv("DATA_UPLOAD_DIR", "").strip()
 VOTING_OPEN_TIME = os.getenv("VOTING_OPEN_TIME", "").strip()
 VOTING_CLOSE_TIME = os.getenv("VOTING_CLOSE_TIME", "").strip()
-REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_voting_system_header.png").strip()
+REPORT_HEADER_IMAGE_URL = os.getenv("REPORT_HEADER_IMAGE_URL", "/static/odm_report_header.png").strip()
 KOBO_BASE_URL = os.getenv("KOBO_BASE_URL", "https://kf.kobotoolbox.org").rstrip("/")
 MEMBERSHIP_ASSET_UID = os.getenv("MEMBERSHIP_ASSET_UID", "").strip()
 KOBO_API_TOKEN = os.getenv("KOBO_API_TOKEN", "").strip()
@@ -170,7 +170,7 @@ PARTY_BRANDS={
   "code":"ODM","name":"Orange Democratic Movement","abbreviation":"ODM",
   "slogan":"Tuko Tayari","membership_prefix":"ODM",
   "primary":"#ef7d00","secondary":"#111111","accent":"#fff2df",
-  "header_file":"odm_voting_system_header.png"
+  "header_file":"brand_odm_header.png"
  },
  "UDA":{
   "code":"UDA","name":"United Democratic Alliance","abbreviation":"UDA",
@@ -6674,7 +6674,12 @@ def attach_ballot_checklists(rows):
       "county":str(row.get("county") or "").strip(),
       "constituency":constituency,"ward":ward}) if constituency and ward else {}
     count=len(ward_catalogs[scope_key].get(position,[]))
-   statuses[position]={"label":label,"exists":count>0,"count":count}
+   # A paper ballot is required only for a contested position.  A sole
+   # approved candidate remains in the electronic voting catalogue but is
+   # handled administratively as an unopposed/direct-nomination candidate.
+   state="contested" if count>=2 else ("unopposed" if count==1 else "missing")
+   statuses[position]={"label":label,"exists":count>=2,"count":count,
+                       "state":state,"unopposed":count==1}
   row["ballot_statuses"]=statuses
  return rows
 
@@ -6770,7 +6775,7 @@ def voter_totals_pdf(rows,meta,filters):
   ("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),
   ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
  story.extend([table,Spacer(1,5*mm),Paragraph(
-  "Ballot checks: ✓ = approved ballot exists; ✕ = no approved candidates for that row's exact electoral scope.",small),
+  "Ballot checks: ✓ = contested ballot (two or more approved candidates); ✕ = no printable ballot. A one-candidate contest is unopposed/direct nomination and is not printed.",small),
   Spacer(1,4*mm),Paragraph("BALLOT PAPERS REQUIRED FOR THIS FILTER",title_style),
   Paragraph("Each voter requires one ballot in every available category. A category with no approved ballot in a row contributes zero to its print quantity.",small),
   Spacer(1,2*mm),quantity_table,Spacer(1,3*mm),Paragraph(
@@ -6880,12 +6885,19 @@ def _emergency_ballot_sections(geo,requested):
    photo=str(item.get("photo_url") or "").strip()
    item["preview_photo_url"]=urljoin(CANDIDATE_PORTAL_BASE_URL.rstrip("/")+"/",photo) if photo else ""
    candidates.append(item)
-  if candidates:
+  # Do not remove the sole candidate from the voting catalogue.  This rule is
+  # deliberately confined to paper-ballot generation.
+  if len(candidates)>=2:
    candidate_rows=(len(candidates)+1)//2
    sections.append({"key":key,"title":title,"candidates":candidates,
                     "preview_min_height_mm":210+max(0,candidate_rows-4)*19})
+  elif len(candidates)==1 and requested==key:
+   raise ValueError(
+    f"Ballot printing is not allowed for {title}: {candidates[0].get('name') or 'the approved candidate'} "
+    "is unopposed and must be processed for direct nomination."
+   )
  if not sections:
-  raise ValueError("No approved candidates are available for the selected polling station.")
+  raise ValueError("No contested positions are available for ballot printing at the selected polling station. Positions with one approved candidate are unopposed and must be processed for direct nomination.")
  return sections
  # A fine security frame and footer give the printed ballot a formal finish
  # without competing with the voting boxes.
@@ -8089,6 +8101,86 @@ def admin_voter_totals():
                         rows=rows,meta=meta,preview_error=preview_error,
                         ballot_checklist_positions=BALLOT_CHECKLIST_POSITIONS,
                         ballot_checklist_error=ballot_checklist_error,
+                        generated_at=kenya_now().strftime("%d %B %Y, %H:%M:%S EAT"))
+
+def _unopposed_candidates(filters,requested_position="all"):
+ """Return sole approved candidates grouped by their constitutional scope."""
+ valid={key for key,_title,_step in ELECTIONS}
+ if requested_position not in valid|{"all"}:
+  raise ValueError("Select a valid election position.")
+ rows=[]
+ def add_if_single(position,title,candidates,scope,county="",constituency="",ward=""):
+  # Candidate IDs are stable; de-duplicate defensively in case an upstream API
+  # repeats a record while merging geographic results.
+  unique={str(c.get("candidate_id") or c.get("name") or "").strip():c for c in candidates}
+  unique.pop("",None)
+  if len(unique)!=1:return
+  candidate=next(iter(unique.values()))
+  rows.append({"position":position,"position_label":title,
+               "candidate_id":candidate.get("candidate_id") or "",
+               "candidate_name":candidate.get("name") or "Unnamed candidate",
+               "county":county,"constituency":constituency,"ward":ward,
+               "scope":scope,"status":"Direct nomination — unopposed"})
+
+ if requested_position in ("all","president"):
+  national=candidate_portal_catalog({})
+  add_if_single("president","President",national.get("president",[]),"National")
+
+ county=str(filters.get("county") or "").strip()
+ local_positions={"governor","senator","woman_rep","mna","mca"}
+ if requested_position=="all" or requested_position in local_positions:
+  if not county:
+   if requested_position!="president":
+    raise ValueError("Select a county to identify unopposed county, constituency and ward contests.")
+  else:
+   geo={"county":county}
+   if filters.get("constituency"):geo["constituency"]=filters["constituency"]
+   if filters.get("ward"):geo["ward"]=filters["ward"]
+   catalog=candidate_portal_catalog(geo)
+   for position,title in (("governor","Governor"),("senator","Senator"),("woman_rep","Woman Representative")):
+    if requested_position not in ("all",position):continue
+    candidates=[c for c in catalog.get(position,[]) if not station_key(c.get("county")) or station_key(c.get("county"))==station_key(county)]
+    add_if_single(position,title,candidates,f"{county} County",county=county)
+   if requested_position in ("all","mna"):
+    groups={}
+    for candidate in catalog.get("mna",[]):
+     constituency=str(candidate.get("constituency") or filters.get("constituency") or "").strip()
+     if not constituency:continue
+     if filters.get("constituency") and station_key(constituency)!=station_key(filters["constituency"]):continue
+     groups.setdefault(station_key(constituency),{"label":constituency,"candidates":[]})["candidates"].append(candidate)
+    for group in groups.values():
+     add_if_single("mna","MNA",group["candidates"],f"{group['label']} Constituency",county=county,constituency=group["label"])
+   if requested_position in ("all","mca"):
+    groups={}
+    for candidate in catalog.get("mca",[]):
+     constituency=str(candidate.get("constituency") or filters.get("constituency") or "").strip()
+     ward=str(candidate.get("ward") or filters.get("ward") or "").strip()
+     if not constituency or not ward:continue
+     if filters.get("constituency") and station_key(constituency)!=station_key(filters["constituency"]):continue
+     if filters.get("ward") and station_key(ward)!=station_key(filters["ward"]):continue
+     key=(station_key(constituency),station_key(ward))
+     groups.setdefault(key,{"constituency":constituency,"ward":ward,"candidates":[]})["candidates"].append(candidate)
+    for group in groups.values():
+     add_if_single("mca","MCA",group["candidates"],f"{group['ward']} Ward",county=county,constituency=group["constituency"],ward=group["ward"])
+ rows.sort(key=lambda row:(next((i for i,(key,_title,_step) in enumerate(ELECTIONS) if key==row["position"]),99),station_key(row["county"]),station_key(row["constituency"]),station_key(row["ward"]),row["candidate_name"].lower()))
+ return rows
+
+@app.get("/admin/unopposed-candidates")
+def admin_unopposed_candidates():
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.full_path))
+ filters={key:str(request.args.get(key) or "").strip() for key in ("county","constituency","ward")}
+ position=str(request.args.get("position") or "all").strip().lower()
+ search_requested=str(request.args.get("search") or "").strip()=="1"
+ rows=[];error=None
+ if search_requested:
+  try:rows=_unopposed_candidates(filters,position)
+  except Exception as exc:
+   app.logger.exception("Unopposed-candidate lookup failed")
+   error=str(exc)
+ return render_template("admin_unopposed_candidates.html",filters=filters,
+                        options=_register_hierarchy_options(filters),position=position,
+                        positions=[("all","All positions")]+[(key,title) for key,title,_step in ELECTIONS],
+                        search_requested=search_requested,rows=rows,error=error,
                         generated_at=kenya_now().strftime("%d %B %Y, %H:%M:%S EAT"))
 
 @app.get("/admin/voter-totals.pdf")
