@@ -15,5 +15,7 @@ services:
         sync: false
       - key: CANDIDATE_PORTAL_BASE_URL
         sync: false
+      - key: MAIN_NAVIGATION_DASHBOARD_URL
+        value: https://candidate-registration-system.onrender.com/navigation
       - key: VOTER_VERIFICATION_BASE_URL
         value: https://odm-member-photo-verifier.onrender.com

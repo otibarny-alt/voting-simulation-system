@@ -134,6 +134,10 @@ AGENTS_FORM_CACHE_SECONDS = int(os.getenv("AGENTS_FORM_CACHE_SECONDS", "600") or
 KOBO_OPENROSA_SUBMISSION_URL = os.getenv("KOBO_OPENROSA_SUBMISSION_URL", "").strip()
 _AGENTS_FORM_CACHE = {"loaded_at":0.0,"field_map":{},"deployment":{}}
 CANDIDATE_PORTAL_BASE_URL = os.getenv("CANDIDATE_PORTAL_BASE_URL", "").rstrip("/")
+MAIN_NAVIGATION_DASHBOARD_URL = os.getenv(
+ "MAIN_NAVIGATION_DASHBOARD_URL",
+ "https://candidate-registration-system.onrender.com/navigation"
+).strip()
 SYSTEM_RESET_TOKEN = os.getenv("SYSTEM_RESET_TOKEN", "").strip()
 CANDIDATE_ELIGIBILITY_TOKEN = os.getenv("CANDIDATE_ELIGIBILITY_TOKEN", SYSTEM_RESET_TOKEN).strip()
 CANDIDATE_CATALOG_CACHE_SECONDS = max(1,int(os.getenv("CANDIDATE_CATALOG_CACHE_SECONDS","60") or 60))
@@ -400,6 +404,16 @@ def membership_voter_lookup_banner_v23_210():
  return response
 
 
+@app.get("/main-navigation-dashboard")
+def main_navigation_dashboard():
+ """Stable local link to the nomination system's shared navigation hub."""
+ target=MAIN_NAVIGATION_DASHBOARD_URL
+ parsed=urlparse(target)
+ if parsed.scheme not in {"http","https"} or not parsed.netloc:
+  target="https://candidate-registration-system.onrender.com/navigation"
+ return redirect(target)
+
+
 @app.get("/party-brand/asset/<kind>")
 def party_brand_asset(kind):
  if kind not in {"header","screen","report","pdf"}:return Response("Not found",status=404)
@@ -465,9 +479,16 @@ def apply_party_branding_to_html(response):
   })
   addon=f'''<style id="party-brand-theme">:root{{--party-primary:{brand['primary']};--party-secondary:{brand['secondary']};--party-accent:{brand['accent']}}}
   header{{border-bottom-color:var(--party-primary)!important}} a.button,button,.btn,.save,.master-action,.verification-admin-link{{border-color:var(--party-primary)}}
-  .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}</style>
+  .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}
+  #global-main-dashboard-link{{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:inline-flex;align-items:center;gap:7px;padding:10px 15px;border:3px solid var(--party-primary,#ef7d00);border-radius:999px;background:#111;color:#fff!important;text-decoration:none;font:800 14px/1.1 Arial,sans-serif;box-shadow:0 5px 18px #0005}}
+  #global-main-dashboard-link:hover,#global-main-dashboard-link:focus{{background:var(--party-primary,#ef7d00);color:#111!important;outline:2px solid #111;outline-offset:2px}}
+  @media(max-width:600px){{#global-main-dashboard-link{{right:10px;bottom:10px;padding:9px 12px;font-size:13px}}}}
+  @media print{{#global-main-dashboard-link{{display:none!important}}}}</style>
   <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>'''
   html=html.replace("</head>",addon+"</head>")
+  if 'id="global-main-dashboard-link"' not in html:
+   dashboard_link=f'''<a id="global-main-dashboard-link" href="{url_for('main_navigation_dashboard')}" aria-label="Main Dashboard" title="Return to Main Navigation Dashboard">⌂ Main Dashboard</a>'''
+   html=re.sub(r"(?i)(<body(?:\s[^>]*)?>)",lambda match:match.group(1)+dashboard_link,html,count=1)
   response.set_data(html)
   response.headers["Content-Length"]=str(len(response.get_data()))
  except Exception:
