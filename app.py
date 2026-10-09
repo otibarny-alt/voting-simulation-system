@@ -389,6 +389,17 @@ def party_branding_api():
                  "header_url":urljoin(request.url_root,active_brand_header_url().lstrip("/"))})
 
 
+@app.get("/membership-voter-lookup-banner-v23-210.png")
+def membership_voter_lookup_banner_v23_210():
+ """Serve the approved membership/lookup banner without stale static cache."""
+ path=os.path.join(app.root_path,"static","orange_voting_banner_v23_210.png")
+ if not os.path.isfile(path):return Response("Page banner is unavailable.",status=404,mimetype="text/plain")
+ response=send_file(path,mimetype="image/png",max_age=0,conditional=False)
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+ response.headers["Pragma"]="no-cache";response.headers["Expires"]="0"
+ return response
+
+
 @app.get("/party-brand/asset/<kind>")
 def party_brand_asset(kind):
  if kind not in {"header","screen","report","pdf"}:return Response("Not found",status=404)
