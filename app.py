@@ -3524,6 +3524,25 @@ def close_stream():
    can_close_now=False,official_close_time=close_time_message()
   )
 
+ # Closing is a high-impact action. Re-enter the password assigned to this
+ # Voting Terminal before any local or central closed state is changed.
+ supplied_password=str(request.form.get("terminal_password") or "")
+ assignment=next((item for item in terminal_assignment_rows()
+                  if hmac.compare_digest(str(item.get("voting_id") or "").strip(),
+                                         str(agent.get("agent_id") or "").strip())
+                  and norm_key(item.get("polling_station"))==norm_key(ps)
+                  and norm_key(item.get("stream"))==norm_key(st)),None)
+ expected_password=str((assignment or {}).get("voting_password") or "")
+ if not supplied_password or not expected_password or not hmac.compare_digest(supplied_password,expected_password):
+  return render_template(
+   "stream_control.html",row=row,poll_station=ps,stream=st,
+   open_time=VOTING_OPEN_TIME,close_time=VOTING_CLOSE_TIME,
+   report_header_image_url=REPORT_HEADER_IMAGE_URL,
+   error="CLOSING NOT AUTHORIZED: enter the correct Voting Terminal password. The stream remains open and voting can continue.",
+   can_close_now=official_close_reached(),official_close_time=close_time_message(),
+   owns_current_stream=True
+  ),403
+
  # TESTING: official closing is temporarily fixed at 08:00 East Africa Time.
  if not official_close_reached():
   return render_template(

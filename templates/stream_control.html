@@ -176,10 +176,13 @@ if(openBtn){
          onsubmit="return confirm('Close this voting stream now? Voting will stop. An authenticated administrator can reopen it later if additional eligible voters must participate.');">
     <input type=hidden name=poll_station value="{{row['poll_station']}}">
     <input type=hidden name=stream value="{{row['stream']}}">
+    <label for="close_terminal_password"><b>Voting Terminal Password</b></label>
+    <input id="close_terminal_password" name="terminal_password" type="password"
+           autocomplete="off" required placeholder="Enter terminal login password">
     <button class="close-stream-btn">Close Voting Stream</button>
    </form>
    <div class="close-help active-close-help">
-    Official closing time has been reached. Closing stops voting. Only an authenticated administrator can reopen this training stream later.
+    Official closing time has been reached. The stream remains open until the correct Voting Terminal password is provided. Closing stops voting and opens paper-vote entry. Only an authenticated administrator can reopen this training stream later.
    </div>
   {% else %}
    <div class="close-stream-form">

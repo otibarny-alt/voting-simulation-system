@@ -939,9 +939,35 @@ input[type="button"]{
 
 .close-stream-form{
   display:flex;
+  flex-direction:column;
   justify-content:center;
   align-items:center;
+  gap:9px;
   margin:16px 0 10px;
+}
+
+.close-stream-form label,
+.close-stream-form input[type="password"]{
+  width:min(100%,390px);
+  box-sizing:border-box;
+}
+
+.close-stream-form label{
+  text-align:left;
+  color:#4f0010;
+}
+
+.close-stream-form input[type="password"]{
+  padding:13px 14px;
+  border:2px solid #700014;
+  border-radius:8px;
+  font-size:18px;
+  background:#fff;
+}
+
+.close-stream-form input[type="password"]:focus{
+  outline:4px solid rgba(176,0,32,.18);
+  outline-offset:2px;
 }
 
 .close-stream-btn{
