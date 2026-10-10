@@ -64,7 +64,7 @@ SMTP_USE_TLS=os.getenv("SMTP_USE_TLS","true").strip().lower() not in ("0","false
 SMTP_USE_SSL=os.getenv("SMTP_USE_SSL","false").strip().lower() in ("1","true","yes")
 
 ELECTIONS=[
- ("president","President",10),("governor","Governor",6),("senator","Senator",6),
+ ("governor","Governor",6),("senator","Senator",6),
  ("woman_rep","Woman Rep",6),("mna","MNA",6),("mca","MCA",6)
 ]
 
@@ -3736,14 +3736,8 @@ def stream_report():
   catalog={k:[] for k,_,_ in ELECTIONS}
   candidate_error=f"Registered candidate names could not be loaded from the Candidate Registration Portal: {exc}"
 
- position_rows=[
-  {"key":"president","title":"President","candidates":catalog.get("president",[])},
-  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
-  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
-  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
-  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
-  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])}
- ]
+ position_rows=[{"key":key,"title":title,"candidates":catalog.get(key,[])}
+                for key,title,_slots in ELECTIONS]
 
  # Idempotent safety retry: opening normally deposits in the background as
  # soon as it succeeds. Viewing the certificate repairs a transient repository
@@ -4078,7 +4072,7 @@ def review():
 def cast():
  if "voter_id" not in session:return redirect(url_for("home"))
  choices=session.get("choices",{})
- if len(choices)!=6:return redirect(url_for("review"))
+ if len(choices)!=len(ELECTIONS):return redirect(url_for("review"))
  c=con(); voter=session["voter_id"]; geo=session["geo"]
  existing=c.execute("SELECT poll_station, stream FROM demo_votes WHERE voter_session=? LIMIT 1",(voter,)).fetchone()
  if existing:
@@ -4090,7 +4084,7 @@ def cast():
   for e in cfg():
    picked=choices.get(e["key"])
    if not isinstance(picked,dict) or not picked.get("candidate_id"):
-    raise ValueError("All six ballot categories must be completed before saving.")
+    raise ValueError("All five nomination categories must be completed before saving.")
    event_id=secrets.token_hex(24)
    row=(event_id,session_date,e["key"],picked.get("candidate_id",""),picked.get("candidate_name",""),
         geo["county"],geo["constituency"],geo["ward"],geo["poll_station"],geo["stream"],recorded_at)
@@ -4131,7 +4125,7 @@ def cast():
   try:c.rollback()
   except Exception:pass
   app.logger.error("Ballot transaction rejected for %s: %s",voter,exc)
-  session["cast_error"]="BALLOT NOT SAVED: the central tally database did not confirm all six selections together. No partial ballot was accepted by this attempt. Please retry Save Simulated Ballot Set. " + str(exc)
+  session["cast_error"]="BALLOT NOT SAVED: the central tally database did not confirm all five selections together. No partial ballot was accepted by this attempt. Please retry Save Simulated Ballot Set. " + str(exc)
   return redirect(url_for("review"))
  finally:
   c.close()
@@ -4555,6 +4549,7 @@ def api_dashboard_woman_rep():
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
+ return jsonify({"ok":False,"error":"Presidential nominations are not being conducted at this stage."}),410
  """
  Read-only aggregate feed for the separate Presidential Simulation Results Dashboard.
  No voter National IDs are returned.
@@ -5534,7 +5529,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  story=[]
  # odm_report_header.png in an older build was truncated. Use the validated
  # screen header and verify it before ReportLab receives it; branding must
- # never be allowed to abort all six report deposits.
+ # never be allowed to abort all five nomination-report deposits.
  header_path=active_brand_asset_path()
  try:
   with PILImage.open(header_path) as header_check:header_check.verify()
@@ -6719,17 +6714,15 @@ def combined_voter_totals(level,filters):
               "total":sum(row["registered_voters"] for row in rows)}
 
 BALLOT_CHECKLIST_POSITIONS=(
- ("president","President"),("governor","Governor"),("senator","Senator"),
+ ("governor","Governor"),("senator","Senator"),
  ("woman_rep","Woman Representative"),("mna","MNA"),("mca","MCA")
 )
 
 def attach_ballot_checklists(rows):
- """Attach six scope-aware ballot availability checks to voter-total rows."""
+ """Attach five scope-aware nomination-ballot availability checks."""
  if not rows:return rows
- # The candidate API intentionally returns only national candidates when no
- # county is supplied. Load President once nationally, then load the complete
- # approved catalogue once for each county represented by the displayed rows.
- national_catalog=candidate_portal_catalog({})
+ # Load the complete approved catalogue once for each county represented by
+ # the displayed rows.
  county_catalogs={}
  county_labels={}
  for row in rows:
@@ -6743,9 +6736,7 @@ def attach_ballot_checklists(rows):
   county_catalog=county_catalogs.get(county_key,{})
   statuses={}
   for position,label in BALLOT_CHECKLIST_POSITIONS:
-   if position=="president":
-    count=len(national_catalog.get(position,[]))
-   elif position in ("governor","senator","woman_rep"):
+   if position in ("governor","senator","woman_rep"):
     count=len(county_catalog.get(position,[]))
    elif position=="mna":
     constituency=str(row.get("constituency") or "").strip()
@@ -6808,7 +6799,7 @@ def voter_totals_pdf(rows,meta,filters):
   Paragraph(escape(scope),subtitle),
   Paragraph(f"Generated: {kenya_now().strftime('%d %B %Y, %H:%M:%S')} EAT",subtitle)])
  fields=meta["fields"]
- pdf_position_labels={"president":"President","governor":"Governor","senator":"Senator",
+ pdf_position_labels={"governor":"Governor","senator":"Senator",
                       "woman_rep":"Woman Rep","mna":"MNA","mca":"MCA"}
  headings=["No.",*[field.replace("_"," ").title() for field in fields],"Registered Voters",
            *[pdf_position_labels[key] for key,_label in BALLOT_CHECKLIST_POSITIONS]]
@@ -6820,11 +6811,12 @@ def voter_totals_pdf(rows,meta,filters):
   cells.extend(Paragraph("✓" if statuses.get(key,{}).get("exists") else "✕",mark_style)
                for key,_label in BALLOT_CHECKLIST_POSITIONS)
   data.append(cells)
- total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}",*([""]*6)]
+ total_row=["",*([""]*(len(fields)-1)),"GRAND TOTAL",f"{meta['total']:,}",
+            *([""]*len(BALLOT_CHECKLIST_POSITIONS))]
  data.append([Paragraph(escape(value),header if index in (len(fields),len(fields)+1) else small)
               for index,value in enumerate(total_row)])
  available=269*mm;number_width=10*mm;total_width=29*mm
- status_widths=[18*mm,18*mm,18*mm,24*mm,16*mm,16*mm]
+ status_widths=[18*mm,18*mm,24*mm,16*mm,16*mm]
  geo_width=(available-number_width-total_width-sum(status_widths))/max(1,len(fields))
  table=Table(data,colWidths=[number_width,*([geo_width]*len(fields)),total_width,*status_widths],repeatRows=1,hAlign="LEFT")
  voter_column=len(fields)+1;status_start=voter_column+1
@@ -7022,7 +7014,7 @@ def admin_emergency_ballots():
    preview_error=str(exc)
  return render_template("admin_emergency_ballots.html",filters=filters,
                         options=_register_hierarchy_options(filters),
-                        positions=[("all","All six positions")]+[(key,title) for key,title,_ in ELECTIONS],
+                        positions=[("all","All five positions")]+[(key,title) for key,title,_ in ELECTIONS],
                         requested_position=requested,copies=copies,preview_requested=preview_requested,
                         preview_sections=preview_sections,preview_geo=preview_geo,preview_error=preview_error,
                         candidate_portal_base_url=CANDIDATE_PORTAL_BASE_URL)
@@ -7272,7 +7264,6 @@ def _safe_register_filename(filters,extension):
  return f"Voters_Register_{area}{suffix}.{extension}"
 
 WINNERS_REPORT_ELECTIONS=(
- ("president","President",()),
  ("governor","Governor",("county",)),
  ("senator","Senator",("county",)),
  ("woman_rep","Women Representative",("county",)),
@@ -8228,7 +8219,7 @@ def _unopposed_candidates(filters,requested_position="all"):
 
  county=str(filters.get("county") or "").strip()
  if not county:
-  raise ValueError("Select a county first. The county view lists every unopposed position from President to MCA.")
+  raise ValueError("Select a county first. The county view lists every unopposed position from Governor to MCA.")
 
  # The Candidate Registration API returns MNA only for an exact constituency
  # and MCA only for an exact ward. Expand the chosen county using county_main.
@@ -8245,7 +8236,7 @@ def _unopposed_candidates(filters,requested_position="all"):
                      if station_key(selected_constituency) in {station_key(item.get("name")),station_key(item.get("label"))}]
   if not constituency_rows:raise ValueError("The selected constituency is not in this county.")
  selected_ward=str(filters.get("ward") or "").strip()
- scopes=[("national",{},"",""),("county",{"county":county_label},"","")]
+ scopes=[("county",{"county":county_label},"","")]
  for constituency_row in constituency_rows:
   constituency_label=str(constituency_row.get("label") or constituency_row.get("name") or "").strip()
   constituency_name=str(constituency_row.get("name") or constituency_label).strip()
@@ -8267,9 +8258,6 @@ def _unopposed_candidates(filters,requested_position="all"):
    scope,geo,constituency,ward=pending[future]
    catalogs[(scope,station_key(constituency),station_key(ward))]=(future.result(),geo,constituency,ward)
 
- if requested_position in ("all","president"):
-  national=catalogs[("national","","")][0]
-  add_if_single("president","President",national.get("president",[]),"National",county=county_label)
  county_catalog=catalogs[("county","","")][0]
  for position,title in (("governor","Governor"),("senator","Senator"),("woman_rep","Woman Representative")):
   if requested_position not in ("all",position):continue
@@ -8882,7 +8870,7 @@ def repository_admin_logout():
 def report_repository():
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=request.full_path))
- order=[('president','Presidential Reports'),('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
+ order=[('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
  counts={}; error=''
  if not DATABASE_URL:
   error='Central repository requires DATABASE_URL (shared PostgreSQL).'
@@ -9078,7 +9066,7 @@ def report_repository_category(election):
  except Exception:
   app.logger.exception('Report repository category could not be loaded: %s',election)
   error='The report database is temporarily unavailable. Please retry shortly or check the Render database connection.'
- report_tabs=[('president','President'),('governor','Gubernatorial'),('senator','Senatorial'),('woman_rep','Women Rep'),('mna','MNA'),('mca','MCA')]
+ report_tabs=[('governor','Gubernatorial'),('senator','Senatorial'),('woman_rep','Women Rep'),('mna','MNA'),('mca','MCA')]
  resp=app.make_response(render_template('report_repository_category.html',election=election,title=allowed[election]+' Reports',report_tabs=report_tabs,rows=rows,total=total,page=page,pages=pages,per_page=per_page,filters=filters,counties=filter_sets['counties'],constituencies=filter_sets['constituencies'],wards=filter_sets['wards'],stations=filter_sets['stations'],streams=filter_sets['streams'],is_admin=repository_admin_logged_in(),error=error))
  resp.headers['Cache-Control']='private, max-age=10'
  return resp
@@ -9249,14 +9237,8 @@ def deposit_opening_report_snapshot(snapshot):
  except Exception as exc:
   app.logger.warning("Candidate catalogue unavailable while depositing opening report: %s",exc)
   catalog={k:[] for k,_,_ in ELECTIONS}
- position_rows=[
-  {"key":"president","title":"President","candidates":catalog.get("president",[])},
-  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
-  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
-  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
-  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
-  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])},
- ]
+ position_rows=[{"key":key,"title":title,"candidates":catalog.get(key,[])}
+                for key,title,_slots in ELECTIONS]
  pdf=render_opening_report_pdf(snapshot,position_rows)
  safe=lambda value:re.sub(r"[^A-Za-z0-9_-]+","_",str(value or "")).strip("_") or "unknown"
  filename=(f"Opening_Report_{safe(snapshot.get('county'))}_{safe(snapshot.get('constituency'))}_"
@@ -9325,14 +9307,8 @@ def email_opening_report():
  except Exception as exc:
   app.logger.warning("Candidate catalogue unavailable for emailed opening report: %s",exc)
   catalog={k:[] for k,_,_ in ELECTIONS}
- position_rows=[
-  {"key":"president","title":"President","candidates":catalog.get("president",[])},
-  {"key":"governor","title":"Governor","candidates":catalog.get("governor",[])},
-  {"key":"senator","title":"Senator","candidates":catalog.get("senator",[])},
-  {"key":"woman_rep","title":"Woman Representative","candidates":catalog.get("woman_rep",[])},
-  {"key":"mna","title":"MNA","candidates":catalog.get("mna",[])},
-  {"key":"mca","title":"MCA","candidates":catalog.get("mca",[])},
- ]
+ position_rows=[{"key":key,"title":title,"candidates":catalog.get(key,[])}
+                for key,title,_slots in ELECTIONS]
  try:
   pdf_bytes=render_opening_report_pdf(row,position_rows)
  except Exception as exc:

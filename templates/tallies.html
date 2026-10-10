@@ -8,7 +8,7 @@
 
 <div id="repository-sync" class="card" style="border:2px solid #ef7d00">
  <h2 style="margin-top:0">Saving Closed-Stream Reports</h2>
- <p id="repository-sync-message">Preparing all six category reports for the Central PDF Repository. Keep this page open until saving is complete.</p>
+ <p id="repository-sync-message">Preparing all five nomination-category reports for the Central PDF Repository. Keep this page open until saving is complete.</p>
  <div id="repository-sync-progress" role="status" aria-live="polite"><b>Starting…</b></div>
  <button id="repository-sync-retry" type="button" style="display:none" onclick="depositAllClosedReports()">Retry Failed Reports</button>
 </div>
@@ -366,7 +366,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       if(window.repositorySyncRunning){
         event.preventDefault();
         document.getElementById('repository-sync')?.scrollIntoView({behavior:'smooth',block:'center'});
-        alert('Please wait until all six closed-stream reports are saved.');
+        alert('Please wait until all five closed-stream reports are saved.');
       }
     });
   }

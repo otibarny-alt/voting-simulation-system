@@ -8,7 +8,7 @@
 <div class="odm-screen-header project-screen-brand">
  <img src="/static/odm_screen_header.png" alt="Orange Democratic Movement" class="odm-screen-header-image">
 </div>
-<div class=card><h2>Six simulated selections saved</h2><p>{{geo.poll_station}} · {{geo.stream}}</p>
+<div class=card><h2>Five nomination selections saved</h2><p>{{geo.poll_station}} · {{geo.stream}}</p>
  <div class="complete-next-voter-row">
   <a id="complete-next-voter" class="complete-next-voter-btn" href="{{ url_for('next_voter') }}">Next Voter</a>
   {% if stream_row and stream_row["closed_at"] %}<a class="complete-next-voter-btn" href="{{ url_for('tallies') }}">View Closing Tallies</a>{% elif terminal_lock %}<a class="complete-next-voter-btn" href="{{ url_for('stream_control',poll_station=terminal_lock.poll_station,stream=terminal_lock.stream) }}">Close Voting Stream</a>{% endif %}
