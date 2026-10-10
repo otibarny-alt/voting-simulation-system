@@ -529,8 +529,7 @@ def apply_party_branding_to_html(response):
   header{{border-bottom-color:var(--party-primary)!important}} a.button,button,.btn,.save,.master-action,.verification-admin-link{{border-color:var(--party-primary)}}
   .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}
   #global-main-dashboard-nav{{box-sizing:border-box;width:calc(100% - 36px);max-width:620px;margin:20px auto 12px;display:flex;justify-content:flex-start;position:relative;z-index:20}}
-  .voting-terminal-screen #global-main-dashboard-nav{{max-width:1240px}}
-  #global-main-dashboard-link{{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 16px;border:3px solid var(--party-primary,#ef7d00);border-radius:10px;background:#111;color:#fff!important;text-decoration:none;font:800 16px/1.2 Arial,sans-serif;box-shadow:0 4px 14px #0003}}
+  #global-main-dashboard-link{{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:7px;max-width:100%;padding:11px 16px;border:3px solid var(--party-primary,#ef7d00);border-radius:10px;background:#111;color:#fff!important;text-decoration:none;font:800 16px/1.2 Arial,sans-serif;box-shadow:0 4px 14px #0003;white-space:normal;text-align:center}}
   #global-main-dashboard-link:hover,#global-main-dashboard-link:focus{{background:var(--party-primary,#ef7d00);color:#111!important;outline:2px solid #111;outline-offset:2px}}
   @media(max-width:600px){{#global-main-dashboard-nav{{width:calc(100% - 24px);margin:12px auto 10px}}#global-main-dashboard-link{{box-sizing:border-box;width:100%;padding:12px 14px;font-size:16px;text-align:center}}}}
   @media print{{#global-main-dashboard-nav{{display:none!important}}}}</style>
