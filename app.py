@@ -1111,9 +1111,11 @@ def init_repository_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS simulation_paper_tally_submissions(
       session_date TEXT NOT NULL,county TEXT NOT NULL DEFAULT '',constituency TEXT NOT NULL DEFAULT '',
       ward TEXT NOT NULL DEFAULT '',poll_station TEXT NOT NULL,stream TEXT NOT NULL,
-      category_totals JSONB NOT NULL,submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      category_totals JSONB NOT NULL,paper_voter_count INTEGER,
+      submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY(session_date,county,constituency,ward,poll_station,stream)
     )""")
+    cur.execute("ALTER TABLE simulation_paper_tally_submissions ADD COLUMN IF NOT EXISTS paper_voter_count INTEGER")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_tallies_dashboard ON simulation_paper_vote_tallies(session_date,election,county,constituency,ward,poll_station,stream)")
    conn.commit()
   _REPOSITORY_DB_READY=True
@@ -2843,7 +2845,7 @@ def paper_tally_submission(ref):
  init_repository_db()
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT category_totals,submitted_by,submitted_at
+   cur.execute("""SELECT category_totals,paper_voter_count,submitted_by,submitted_at
     FROM simulation_paper_tally_submissions
     WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
       AND poll_station=%s AND stream=%s""",(ref.get("session_date") or today_iso(),
@@ -3054,7 +3056,7 @@ def central_stream_tally_rows(ref):
   return [],[]
 
 def merge_paper_tally_rows(ref,vote_rows,geo_rows,session_date=None):
- """Return combined electronic + locked paper rows without mutating either source."""
+ """Combine electronic votes with paper votes and category-specific paper skips."""
  if not DATABASE_URL:return vote_rows,geo_rows
  session_date=session_date or ref.get("session_date") or today_iso()
  try:
@@ -3067,7 +3069,36 @@ def merge_paper_tally_rows(ref,vote_rows,geo_rows,session_date=None):
         AND poll_station=%s AND stream=%s""",(session_date,ref.get("county") or "",
       ref.get("constituency") or "",ref.get("ward") or "",ref.get("poll_station") or "",ref.get("stream") or ""))
     paper=cur.fetchall()
+    cur.execute("""SELECT paper_voter_count FROM simulation_paper_tally_submissions
+      WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
+        AND poll_station=%s AND stream=%s""",(session_date,ref.get("county") or "",
+      ref.get("constituency") or "",ref.get("ward") or "",ref.get("poll_station") or "",ref.get("stream") or ""))
+    submission=cur.fetchone()
   if not paper:return vote_rows,geo_rows
+  paper_voter_count=(submission or {}).get("paper_voter_count") if hasattr(submission,"get") else None
+  if paper_voter_count is None:
+   paper_voter_count=authoritative_paper_voter_count(ref)
+   try:
+    with repository_db() as conn:
+     with conn.cursor() as cur:
+      cur.execute("""UPDATE simulation_paper_tally_submissions SET paper_voter_count=%s
+       WHERE session_date=%s AND county=%s AND constituency=%s AND ward=%s
+         AND poll_station=%s AND stream=%s AND paper_voter_count IS NULL""",
+       (paper_voter_count,session_date,ref.get("county") or "",ref.get("constituency") or "",
+        ref.get("ward") or "",ref.get("poll_station") or "",ref.get("stream") or ""))
+      # Retire any PDFs/certified rows produced by the older electronic-only
+      # skipped calculation. The corrected combined report is regenerated.
+      cur.execute("""DELETE FROM simulation_pdf_reports
+       WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+       (session_date,ref.get("poll_station") or "",ref.get("stream") or ""))
+      cur.execute("""DELETE FROM simulation_certified_stream_tallies
+       WHERE session_date=%s AND poll_station=%s AND stream=%s""",
+       (session_date,ref.get("poll_station") or "",ref.get("stream") or ""))
+     conn.commit()
+    invalidate_repository_cache()
+   except Exception as exc:
+    app.logger.warning("Paper-voter count backfill deferred: %s",exc)
+  paper_voter_count=max(0,int(paper_voter_count or 0))
   votes={}
   for row in vote_rows:
    key=(str(row.get("election") or ""),str(row.get("candidate_id") or ""))
@@ -3081,10 +3112,18 @@ def merge_paper_tally_rows(ref,vote_rows,geo_rows,session_date=None):
    amount=int(row.get("paper_votes") or 0);item["votes"]+=amount
    paper_totals[key[0]]=paper_totals.get(key[0],0)+amount
   geo={str(row.get("election") or ""):dict(row) for row in geo_rows}
-  for election,total in paper_totals.items():
+  for election,_title,_slots in ELECTIONS:
+   total=int(paper_totals.get(election,0) or 0)
+   paper_skipped=max(0,paper_voter_count-total)
+   if paper_skipped:
+    skip_key=(election,"__SKIP__")
+    skip_item=votes.setdefault(skip_key,{"election":election,"candidate":0,
+     "candidate_id":"__SKIP__","candidate_name":"Skipped Category","votes":0})
+    skip_item["votes"]+=paper_skipped
    item=geo.setdefault(election,{"election":election,"poll_station":ref.get("poll_station") or "",
      "stream":ref.get("stream") or "","participation":0,"skipped":0})
-   item["participation"]=int(item.get("participation") or 0)+total
+   item["participation"]=int(item.get("participation") or 0)+paper_voter_count
+   item["skipped"]=int(item.get("skipped") or 0)+paper_skipped
   return list(votes.values()),list(geo.values())
  except Exception as exc:
   app.logger.warning("Paper tally merge unavailable for %s / %s: %s",ref.get("poll_station"),ref.get("stream"),exc)
@@ -3699,10 +3738,10 @@ def paper_tally():
          WHERE session_date=%s AND poll_station=%s AND stream=%s""",
          (ref["session_date"],ref["poll_station"],ref["stream"]))
        cur.execute("""INSERT INTO simulation_paper_tally_submissions(
-        session_date,county,constituency,ward,poll_station,stream,category_totals,submitted_by)
-        VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING RETURNING submitted_at""",
+        session_date,county,constituency,ward,poll_station,stream,category_totals,paper_voter_count,submitted_by)
+        VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) ON CONFLICT DO NOTHING RETURNING submitted_at""",
         (ref["session_date"],ref["county"],ref["constituency"],ref["ward"],ref["poll_station"],ref["stream"],
-         json.dumps(category_totals),str(agent.get("agent_id") or "Voting Terminal")))
+         json.dumps(category_totals),paper_voter_limit,str(agent.get("agent_id") or "Voting Terminal")))
        accepted=cur.fetchone()
        if not accepted:raise ValueError("Paper tally was already submitted by another active session.")
        for election,cid,name,votes in entries:
@@ -4308,6 +4347,16 @@ def _persistent_dashboard_snapshot(election):
       """,(session_date,list(aliases),session_date,list(aliases)))
       rows=cur.fetchall()
 
+    # Paper tally rows contain candidate votes only. Add the paper voters who
+    # skipped this category as an explicit __SKIP__ aggregate so every results
+    # dashboard reconciles candidate votes + skips to total participants.
+    cur.execute("""SELECT county,constituency,ward,poll_station,stream,
+                          category_totals,paper_voter_count
+                   FROM simulation_paper_tally_submissions
+                   WHERE session_date=%s AND paper_voter_count IS NOT NULL""",
+                (session_date,))
+    paper_submissions=cur.fetchall()
+
     cur.execute("""
      SELECT session_date,county,constituency,ward,poll_station,stream,locked_at,released_at,closed_at
      FROM simulation_terminal_locks
@@ -4315,6 +4364,23 @@ def _persistent_dashboard_snapshot(election):
      ORDER BY COALESCE(closed_at,locked_at) DESC
     """,(session_date,))
     locks=cur.fetchall()
+  for submission in paper_submissions:
+   totals=submission.get("category_totals") or {}
+   if isinstance(totals,str):
+    try:totals=json.loads(totals)
+    except (TypeError,ValueError):totals={}
+   paper_voters=max(0,int(submission.get("paper_voter_count") or 0))
+   paper_cast=max(0,int((totals if isinstance(totals,dict) else {}).get(election,0) or 0))
+   paper_skipped=max(0,paper_voters-paper_cast)
+   if paper_skipped:
+    rows.append({
+     "county":submission.get("county") or "",
+     "constituency":submission.get("constituency") or "",
+     "ward":submission.get("ward") or "",
+     "poll_station":submission.get("poll_station") or "",
+     "stream":submission.get("stream") or "",
+     "candidate_id":"__SKIP__","candidate_name":"Skipped Category","n":paper_skipped
+    })
   return rows,locks
  except Exception as exc:
   app.logger.warning("%s persistent dashboard read failed; using local fallback: %s", election, exc)
