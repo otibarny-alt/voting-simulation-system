@@ -62,6 +62,7 @@ SMTP_FROM_EMAIL=os.getenv("SMTP_FROM_EMAIL",SMTP_USERNAME).strip()
 SMTP_FROM_NAME=os.getenv("SMTP_FROM_NAME","ODM Training Tally Reports").strip()
 SMTP_USE_TLS=os.getenv("SMTP_USE_TLS","true").strip().lower() not in ("0","false","no")
 SMTP_USE_SSL=os.getenv("SMTP_USE_SSL","false").strip().lower() in ("1","true","yes")
+TALLY_REPORT_FORMAT_VERSION="V23.223"
 
 ELECTIONS=[
  ("governor","Governor",6),("senator","Senator",6),
@@ -1065,10 +1066,11 @@ def init_repository_db():
        county TEXT, constituency TEXT, ward TEXT,
        poll_station TEXT NOT NULL, stream TEXT NOT NULL,
        closed_at TEXT, deposited_at TEXT NOT NULL,
-       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
+       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,format_version TEXT NOT NULL DEFAULT '',
        UNIQUE(session_date,election,poll_station,stream)
      )
     """)
+    cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS format_version TEXT NOT NULL DEFAULT ''")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_geo ON simulation_pdf_reports(election,county,constituency,ward,poll_station,stream)")
@@ -1278,10 +1280,11 @@ def init_global_lock_db():
        county TEXT, constituency TEXT, ward TEXT,
        poll_station TEXT NOT NULL, stream TEXT NOT NULL,
        closed_at TEXT, deposited_at TEXT NOT NULL,
-       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,
+       filename TEXT NOT NULL, pdf_data BYTEA NOT NULL,format_version TEXT NOT NULL DEFAULT '',
        UNIQUE(session_date,election,poll_station,stream)
      )
     """)
+    cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS format_version TEXT NOT NULL DEFAULT ''")
     # Composite indexes are deliberately metadata-only: pdf_data is never part of an index.
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_county ON simulation_pdf_reports(election,county)")
@@ -5373,6 +5376,12 @@ def tallies():
   return render_template("paper_tally_unavailable.html",ref=lock),503
  if not paper_ready:
   return redirect(url_for("paper_tally"))
+ paper_submission=paper_tally_submission(lock) or {}
+ paper_category_totals=paper_submission.get("category_totals") if hasattr(paper_submission,"get") else {}
+ if isinstance(paper_category_totals,str):
+  try:paper_category_totals=json.loads(paper_category_totals)
+  except (TypeError,ValueError):paper_category_totals={}
+ if not isinstance(paper_category_totals,dict):paper_category_totals={}
 
  # Do not generate or display any tally/general report for a closed stream
  # that recorded no completed simulated voter session. This check happens
@@ -5538,8 +5547,16 @@ def tallies():
   stream_summary.sort(key=lambda x:x["name"])
   station_registered_total=sum(x["registered"] for x in station_summary)
 
+  paper_cast=max(0,int(paper_category_totals.get(e["key"],0) or 0))
+  paper_skipped=max(0,int(paper_voter_limit or 0)-paper_cast)
+  electronic_cast=max(0,election_cast-paper_cast)
+  electronic_skipped=max(0,election_skipped-paper_skipped)
   skip_rate=(100.0*election_skipped/stream_registered_total) if stream_registered_total else 0.0
   tally_sections.append({"key":e["key"],"title":e["title"],"candidates":candidates,
+   "electronic_votes_cast":electronic_cast,
+   "electronic_votes_skipped":electronic_skipped,
+   "paper_votes_cast":paper_cast,
+   "paper_votes_skipped":paper_skipped,
    "total_votes_cast":election_cast,
    "total_skipped":election_skipped,
    "total_participation":election_participation,
@@ -5608,6 +5625,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  contest=_pdf_plain_html(title_match.group(1)) if title_match else str(ref.get("contest") or "Voting").replace("_"," ").title()
  title_style=ParagraphStyle("FallbackTitle",parent=styles["Title"],alignment=TA_CENTER,fontSize=17,leading=20,textColor=colors.HexColor("#111827"),spaceAfter=3*mm)
  section_style=ParagraphStyle("FallbackSection",parent=styles["Heading3"],fontSize=11,leading=14,textColor=colors.HexColor("#111827"),spaceBefore=4*mm,spaceAfter=2*mm)
+ header_style=ParagraphStyle("FallbackHeader",parent=styles["BodyText"],fontName="Helvetica-Bold",fontSize=7.4,leading=9,textColor=colors.white)
  notice_style=ParagraphStyle("FallbackNotice",parent=styles["BodyText"],alignment=TA_CENTER,fontSize=8.5,textColor=colors.HexColor("#9b4c00"),spaceAfter=3*mm)
  body_style=ParagraphStyle("FallbackBody",parent=styles["BodyText"],fontSize=8.2,leading=10)
  small_style=ParagraphStyle("FallbackSmall",parent=body_style,fontSize=7.4,leading=9)
@@ -5663,7 +5681,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
   parsed=_pdf_table_rows(candidate_match.group(1))
   for row_index,row in enumerate(parsed):
    if row_index==0:
-    candidate_rows.append([Paragraph("<b>Rank</b>",small_style),Paragraph("<b>Photo</b>",small_style),Paragraph("<b>Candidate</b>",small_style),Paragraph("<b>Votes</b>",small_style),Paragraph("<b>%</b>",small_style)])
+    candidate_rows.append([Paragraph("Rank",header_style),Paragraph("Photo",header_style),Paragraph("Candidate",header_style),Paragraph("Votes",header_style),Paragraph("%",header_style)])
     continue
    values=[x[0] for x in row]
    if len(values)<5:continue
@@ -5693,7 +5711,7 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  story.append(PageBreak())
  story.append(Paragraph("Candidate Agents' Certification — Polling Station Stream",title_style))
  story.append(Paragraph("We, the undersigned candidate agents, confirm that this is a true copy of the simulated results recorded for this polling station stream.",body_style))
- cert_rows=[[Paragraph("<b>Candidate</b>",small_style),Paragraph("<b>Agent Name</b>",small_style),Paragraph("<b>Signature</b>",small_style),Paragraph("<b>Date / Time</b>",small_style)]]
+ cert_rows=[[Paragraph("Candidate",header_style),Paragraph("Agent Name",header_style),Paragraph("Signature",header_style),Paragraph("Date / Time",header_style)]]
  for name in candidate_names:cert_rows.append([Paragraph(str(escape(name)),small_style),"","",""])
  certification=Table(cert_rows,colWidths=[65*mm,42*mm,38*mm,35*mm],repeatRows=1,rowHeights=[8*mm]+[16*mm]*len(candidate_names))
  certification.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#111111")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#888888")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
@@ -5926,23 +5944,23 @@ def deposit_report():
  # xhtml2pdf again. Tally pages may be revisited many times after closing.
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT id, filename FROM simulation_pdf_reports
+   cur.execute("""SELECT id, filename, format_version FROM simulation_pdf_reports
                   WHERE session_date=%s AND election=%s AND county=%s AND constituency=%s
                     AND ward=%s AND poll_station=%s AND stream=%s
                   LIMIT 1""",
                (ref.get('session_date',today_iso()),election,ref.get('county',''),ref.get('constituency',''),
                 ref.get('ward',''),ref.get('poll_station',''),ref.get('stream','')))
    existing=cur.fetchone()
- if existing:
+ if existing and str(existing.get('format_version') or '')==TALLY_REPORT_FORMAT_VERSION:
   return jsonify({"ok":True,"filename":existing.get('filename') or filename,"already_exists":True})
  # Generate the PDF only for a genuinely missing repository item.
  pdf=render_tally_pdf(report_html,ref)
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data)
-    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    ON CONFLICT(session_date,election,county,constituency,ward,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data""",
-    (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf)))
+   cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data,format_version)
+    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    ON CONFLICT(session_date,election,county,constituency,ward,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data,format_version=EXCLUDED.format_version""",
+    (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf),TALLY_REPORT_FORMAT_VERSION))
   conn.commit()
  invalidate_repository_cache()
  del pdf,report_html

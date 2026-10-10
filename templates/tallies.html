@@ -61,8 +61,12 @@
 <div class=participation>
 <h3>Voter Participation Summary</h3>
 <div class=summary-grid>
-<div class=summary-box><span>Votes Cast for a Candidate</span><strong>{{s.total_votes_cast}}</strong></div>
-<div class="summary-box skip-summary"><span>Voters Who Skipped This Category</span><strong>{{s.total_skipped}}</strong></div>
+<div class=summary-box><span>Electronic Ballots Cast</span><strong>{{s.electronic_votes_cast}}</strong></div>
+<div class="summary-box skip-summary"><span>Electronic Ballots Skipped</span><strong>{{s.electronic_votes_skipped}}</strong></div>
+<div class=summary-box><span>Paper Ballots Cast</span><strong>{{s.paper_votes_cast}}</strong></div>
+<div class="summary-box skip-summary"><span>Paper Ballots Skipped</span><strong>{{s.paper_votes_skipped}}</strong></div>
+<div class=summary-box><span>Total Ballots Cast</span><strong>{{s.total_votes_cast}}</strong></div>
+<div class="summary-box skip-summary"><span>Total Ballots Skipped</span><strong>{{s.total_skipped}}</strong></div>
 <div class=summary-box><span>Registered Voters — Polling Station</span><strong>{{s.stream_registered_total}}</strong></div>
 <div class="summary-box skip-summary"><span>Skipped / Registered Voters</span><strong>{{s.total_skipped}} / {{s.stream_registered_total}}</strong><small>{{"%.1f"|format(s.skip_rate)}}%</small></div>
 <div class=summary-box><span>Category Participation</span><strong>{{s.total_participation}}</strong></div>
