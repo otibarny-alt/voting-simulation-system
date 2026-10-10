@@ -884,12 +884,29 @@ def dashboard_candidate_catalog(election,candidate_totals,event_names=None,event
  event_names=event_names or {}
  event_geo=event_geo or {}
  candidates_by_id={}
- # Request the complete catalogue once. Earlier builds also called the remote
- # candidate service once per electoral area represented in vote events. MCA
- # could therefore perform hundreds of serial HTTPS calls and time out. The
- # complete catalogue plus the stored event fallbacks below contains everything
- # required by the aggregate dashboard without those per-area round trips.
- catalogue_geographies=[{}]
+ # The candidate API applies electoral-area security rules: an unfiltered
+ # request returns national candidates only. Query each distinct electoral
+ # area represented by durable vote events, deduplicated at the position's
+ # scope, so county/constituency/ward candidates remain visible in results.
+ scope_fields={
+  "president":(),
+  "governor":("county",),
+  "senator":("county",),
+  "woman_rep":("county",),
+  "mna":("county","constituency"),
+  "mca":("county","constituency","ward"),
+ }.get(election,("county","constituency","ward"))
+ catalogue_geographies=[]
+ seen_geographies=set()
+ for source_geo in event_geo.values():
+  geo={field:str(source_geo.get(field,"") or "").strip() for field in scope_fields}
+  key=tuple(norm_key(geo.get(field,"")) for field in scope_fields)
+  if key in seen_geographies or (scope_fields and not all(key)):
+   continue
+  seen_geographies.add(key)
+  catalogue_geographies.append(geo)
+ if not scope_fields:
+  catalogue_geographies=[{}]
 
  catalogue_errors=[]
  for geo in catalogue_geographies:
@@ -4281,6 +4298,67 @@ def dashboard_election_aliases(election):
  return (election,)
 
 
+def _certified_dashboard_snapshot(election):
+ """Return the latest formally submitted stream results for one contest.
+
+ A deposited closing report writes the final electronic + paper tally to
+ simulation_certified_stream_tallies.  This is the authoritative result and
+ must remain visible even after terminal locks are released or reset.
+ """
+ if not DATABASE_URL:
+  return None
+ aliases=dashboard_election_aliases(election)
+ init_repository_db()
+ try:
+  with repository_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT MAX(session_date) AS d
+                   FROM simulation_certified_stream_tallies
+                   WHERE LOWER(election)=ANY(%s)""",(list(aliases),))
+    latest=cur.fetchone()
+    session_date=(latest.get("d") if latest else None)
+    if not session_date:
+     return None
+    cur.execute("""SELECT county,constituency,ward,poll_station,stream,
+                          candidate_id,MAX(candidate_name) AS candidate_name,
+                          SUM(votes) AS n
+                   FROM simulation_certified_stream_tallies
+                   WHERE session_date=%s AND LOWER(election)=ANY(%s)
+                   GROUP BY county,constituency,ward,poll_station,stream,candidate_id""",
+                (session_date,list(aliases)))
+    rows=list(cur.fetchall())
+    if not rows:
+     return None
+    cur.execute("""SELECT session_date,county,constituency,ward,poll_station,
+                          stream,MIN(certified_at) AS locked_at,
+                          NULL::TEXT AS released_at,MAX(certified_at) AS closed_at
+                   FROM simulation_certified_stream_tallies
+                   WHERE session_date=%s AND LOWER(election)=ANY(%s)
+                   GROUP BY session_date,county,constituency,ward,poll_station,stream""",
+                (session_date,list(aliases)))
+    certified_streams=list(cur.fetchall())
+    cur.execute("""SELECT session_date,county,constituency,ward,poll_station,
+                          stream,locked_at,released_at,closed_at
+                   FROM simulation_terminal_locks
+                   WHERE session_date=%s""",(session_date,))
+    stored_locks=list(cur.fetchall())
+  by_stream={
+   (norm_key(r.get("county")),norm_key(r.get("constituency")),
+    norm_key(r.get("ward")),norm_key(r.get("poll_station")),norm_key(r.get("stream"))):r
+   for r in stored_locks
+  }
+  for row in certified_streams:
+   key=(norm_key(row.get("county")),norm_key(row.get("constituency")),
+        norm_key(row.get("ward")),norm_key(row.get("poll_station")),norm_key(row.get("stream")))
+   existing=by_stream.get(key)
+   if not existing or not existing.get("closed_at"):
+    by_stream[key]=row
+  return rows,list(by_stream.values())
+ except Exception as exc:
+  app.logger.warning("Certified %s dashboard snapshot unavailable: %s",election,exc)
+  return None
+
+
 def _persistent_dashboard_snapshot(election):
  """Return anonymous dashboard aggregates for an election, with safe fallback behavior.
 
@@ -4291,6 +4369,9 @@ def _persistent_dashboard_snapshot(election):
  """
  if not DATABASE_URL:
   return None
+ certified=_certified_dashboard_snapshot(election)
+ if certified is not None:
+  return certified
  init_dashboard_db();init_repository_db()
  try:
   c=con()
