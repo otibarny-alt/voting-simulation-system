@@ -7055,7 +7055,7 @@ def download_emergency_ballots_pdf():
                              textColor=colors.HexColor("#ef7d00"),spaceAfter=3*mm)
   small=ParagraphStyle("BallotSmall",parent=styles["Normal"],fontSize=7.5,leading=9)
   name_style=ParagraphStyle("CandidateName",parent=styles["Normal"],fontSize=9,leading=10.5,fontName="Helvetica-Bold")
-  # Versioned filename forces Render/browser caches to load the current ECC
+  # Versioned filename forces Render/browser caches to load the current NECC
   # ballot banner instead of retaining the earlier 20th-anniversary artwork.
   logo_path=os.path.join(app.root_path,"static","odm_2027_nominations_ballot_banner_ecc_v2.png")
   for copy_number in range(1,copies+1):
