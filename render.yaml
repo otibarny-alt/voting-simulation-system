@@ -1,21 +1,7 @@
 services:
   - type: web
-    name: training-e-ballot-prototype
-    env: python
-    buildCommand: pip install -r requirements.txt && python -m whitenoise.compress static
-    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120 --keep-alive 5 --max-requests 30 --max-requests-jitter 5
-    envVars:
-      - key: MASTER_REGISTER_DATABASE_URL
-        sync: false
-      - key: MASTER_REGISTER_STRICT
-        value: "false"
-      - key: AGENT_SSO_SECRET
-        sync: false
-      - key: SYSTEM_RESET_TOKEN
-        sync: false
-      - key: CANDIDATE_PORTAL_BASE_URL
-        sync: false
-      - key: MAIN_NAVIGATION_DASHBOARD_URL
-        value: https://candidate-registration-system.onrender.com/navigation
-      - key: VOTER_VERIFICATION_BASE_URL
-        value: https://odm-member-photo-verifier.onrender.com
+    name: senatorial-simulation-results-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --threads 2 --timeout 60
+    healthCheckPath: /health
