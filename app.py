@@ -4389,11 +4389,14 @@ def dashboard_election_aliases(election):
 
 
 def _certified_dashboard_snapshot(election):
- """Return the latest formally submitted stream results for one contest.
+ """Return the latest formal result for every submitted stream in one contest.
 
  A deposited closing report writes the final electronic + paper tally to
  simulation_certified_stream_tallies.  This is the authoritative result and
- must remain visible even after terminal locks are released or reset.
+ must remain visible even after terminal locks are released or reset. Streams
+ may close on different calendar dates, so never restrict the feed to one
+ global MAX(session_date).  Select the newest certified version independently
+ for each full polling-station stream identity.
  """
  if not DATABASE_URL:
   return None
@@ -4402,35 +4405,66 @@ def _certified_dashboard_snapshot(election):
  try:
   with repository_db() as conn:
    with conn.cursor() as cur:
-    cur.execute("""SELECT MAX(session_date) AS d
-                   FROM simulation_certified_stream_tallies
-                   WHERE LOWER(election)=ANY(%s)""",(list(aliases),))
-    latest=cur.fetchone()
-    session_date=(latest.get("d") if latest else None)
-    if not session_date:
-     return None
-    cur.execute("""SELECT county,constituency,ward,poll_station,stream,
-                          candidate_id,MAX(candidate_name) AS candidate_name,
-                          SUM(votes) AS n
-                   FROM simulation_certified_stream_tallies
-                   WHERE session_date=%s AND LOWER(election)=ANY(%s)
-                   GROUP BY county,constituency,ward,poll_station,stream,candidate_id""",
-                (session_date,list(aliases)))
+    cur.execute("""WITH stream_versions AS (
+                    SELECT session_date,election,county,constituency,ward,
+                           poll_station,stream,MAX(certified_at) AS certified_at
+                    FROM simulation_certified_stream_tallies
+                    WHERE LOWER(election)=ANY(%s)
+                    GROUP BY session_date,election,county,constituency,ward,
+                             poll_station,stream
+                   ), latest_streams AS (
+                    SELECT DISTINCT ON (
+                      LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                      LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream))
+                    ) session_date,election,county,constituency,ward,poll_station,
+                      stream,certified_at
+                    FROM stream_versions
+                    ORDER BY LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                      LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream)),
+                      certified_at DESC,session_date DESC
+                   )
+                   SELECT t.county,t.constituency,t.ward,t.poll_station,t.stream,
+                          t.candidate_id,MAX(t.candidate_name) AS candidate_name,
+                          SUM(t.votes) AS n
+                   FROM simulation_certified_stream_tallies t
+                   JOIN latest_streams s
+                     ON t.session_date=s.session_date AND t.election=s.election
+                    AND t.county=s.county AND t.constituency=s.constituency
+                    AND t.ward=s.ward AND t.poll_station=s.poll_station
+                    AND t.stream=s.stream
+                   GROUP BY t.county,t.constituency,t.ward,t.poll_station,
+                            t.stream,t.candidate_id""",(list(aliases),))
     rows=list(cur.fetchall())
     if not rows:
      return None
-    cur.execute("""SELECT session_date,county,constituency,ward,poll_station,
-                          stream,MIN(certified_at) AS locked_at,
-                          NULL::TEXT AS released_at,MAX(certified_at) AS closed_at
-                   FROM simulation_certified_stream_tallies
-                   WHERE session_date=%s AND LOWER(election)=ANY(%s)
-                   GROUP BY session_date,county,constituency,ward,poll_station,stream""",
-                (session_date,list(aliases)))
+    cur.execute("""WITH stream_versions AS (
+                    SELECT session_date,election,county,constituency,ward,
+                           poll_station,stream,MAX(certified_at) AS certified_at
+                    FROM simulation_certified_stream_tallies
+                    WHERE LOWER(election)=ANY(%s)
+                    GROUP BY session_date,election,county,constituency,ward,
+                             poll_station,stream
+                   )
+                   SELECT DISTINCT ON (
+                     LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                     LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream))
+                   ) session_date,county,constituency,ward,poll_station,stream,
+                     certified_at AS locked_at,NULL::TEXT AS released_at,
+                     certified_at AS closed_at
+                   FROM stream_versions
+                   ORDER BY LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                     LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream)),
+                     certified_at DESC,session_date DESC""",(list(aliases),))
     certified_streams=list(cur.fetchall())
-    cur.execute("""SELECT session_date,county,constituency,ward,poll_station,
-                          stream,locked_at,released_at,closed_at
+    cur.execute("""SELECT DISTINCT ON (
+                     LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                     LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream))
+                   ) session_date,county,constituency,ward,poll_station,
+                     stream,locked_at,released_at,closed_at
                    FROM simulation_terminal_locks
-                   WHERE session_date=%s""",(session_date,))
+                   ORDER BY LOWER(TRIM(county)),LOWER(TRIM(constituency)),
+                     LOWER(TRIM(ward)),LOWER(TRIM(poll_station)),LOWER(TRIM(stream)),
+                     COALESCE(closed_at,locked_at) DESC,session_date DESC""")
     stored_locks=list(cur.fetchall())
   by_stream={
    (norm_key(r.get("county")),norm_key(r.get("constituency")),
