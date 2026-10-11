@@ -431,6 +431,28 @@ def voters_register_distinct_stations(filters=None):
             return [dict(row) for row in cur.fetchall()]
 
 
+def voters_register_grouped_totals(group_fields, filters=None):
+    """Count active master-register voters by approved geography columns."""
+    allowed = ("county", "constituency", "ward", "polling_station")
+    fields = tuple(str(field or "").strip() for field in group_fields or ())
+    if not fields or any(field not in allowed for field in fields):
+        raise ValueError("Unsupported voters-register grouping.")
+    # Keep the hierarchy ordered and prevent callers from creating ambiguous
+    # combinations such as county + ward without constituency.
+    if fields != allowed[:len(fields)]:
+        raise ValueError("Voter totals must follow the electoral hierarchy.")
+    ensure_schema()
+    where, params = _register_where(filters)
+    columns = ",".join(fields)
+    order = ",".join(f"LOWER({field})" for field in fields)
+    with connect(statement_timeout_ms=120000, lock_timeout_ms=10000) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT {columns},COUNT(*) AS registered_voters
+                              FROM master_voters WHERE {where}
+                              GROUP BY {columns} ORDER BY {order}""", params)
+            return [dict(row) for row in cur.fetchall()]
+
+
 def matching_active_national_ids(national_ids, filters=None, batch_size=2000):
     """Return voted IDs that belong to the selected register filter."""
     ids=sorted({str(value or '').strip() for value in national_ids if str(value or '').strip()})
