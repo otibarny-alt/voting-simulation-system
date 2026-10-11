@@ -4842,7 +4842,6 @@ def api_dashboard_woman_rep():
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
- return jsonify({"ok":False,"error":"Presidential nominations are not being conducted at this stage."}),410
  """
  Read-only aggregate feed for the separate Presidential Simulation Results Dashboard.
  No voter National IDs are returned.
