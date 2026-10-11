@@ -155,6 +155,9 @@ SERIAL_LOOKUP_DATABASE_URL=(os.getenv("SERIAL_LOOKUP_DATABASE_URL","").strip()
 # The owning browser can renew its token after a network/Render interruption;
 # another device may claim the terminal only after this grace period.
 SERIAL_LOOKUP_LEASE_SECONDS=max(300,int(os.getenv("SERIAL_LOOKUP_LEASE_SECONDS","900") or 900))
+SERIAL_LOOKUP_TAKEOVER_GRACE_SECONDS=max(
+ 60,int(os.getenv("SERIAL_LOOKUP_TAKEOVER_GRACE_SECONDS","90") or 90))
+SERIAL_LOOKUP_DEVICE_COOKIE="serial_lookup_device"
 _SERIAL_LOOKUP_DB_READY=False
 _SERIAL_LOOKUP_DB_INIT_LOCK=threading.Lock()
 MASTER_REGISTER_STRICT = os.getenv("MASTER_REGISTER_STRICT", "false").strip().lower() in {"1","true","yes","on"}
@@ -1025,9 +1028,12 @@ def init_serial_lookup_db():
    with conn.cursor() as cur:
     cur.execute("""CREATE TABLE IF NOT EXISTS serial_lookup_terminal_sessions(
       terminal_id TEXT PRIMARY KEY,session_token TEXT NOT NULL,
+      device_token_hash TEXT,
       polling_station TEXT NOT NULL,stream TEXT NOT NULL,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("""ALTER TABLE serial_lookup_terminal_sessions
+      ADD COLUMN IF NOT EXISTS device_token_hash TEXT""")
    conn.commit()
   _SERIAL_LOOKUP_DB_READY=True
 
@@ -1063,6 +1069,43 @@ def serial_lookup_lease_is_current(terminal,renew=False):
     current=bool(cur.fetchone())
   conn.commit()
  return current
+
+def serial_lookup_device_hash(device_token):
+ return hashlib.sha256(str(device_token or "").encode("utf-8")).hexdigest()
+
+def serial_lookup_terminal_record(row,terminal_id,session_token):
+ return {
+  "terminal_id":terminal_id,"terminal_role":"serial_lookup",
+  "session_token":session_token,
+  "polling_station":str(row.get("polling_station") or "").strip(),
+  "polling_station_code":str(row.get("polling_station_code") or "").strip(),
+  "stream":str(row.get("stream") or "").strip(),
+  "county":str(row.get("county") or "").strip(),
+  "constituency":str(row.get("constituency") or "").strip(),
+  "ward":str(row.get("ward") or "").strip(),
+ }
+
+def recover_serial_lookup_device(device_token):
+ """Restore the same browser after its Flask session cookie is interrupted."""
+ if not device_token:return None
+ try:
+  init_serial_lookup_db()
+  with serial_lookup_db() as conn:
+   with conn.cursor() as cur:
+    cur.execute("""SELECT terminal_id,session_token FROM serial_lookup_terminal_sessions
+      WHERE device_token_hash=%s
+        AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
+      (serial_lookup_device_hash(device_token),SERIAL_LOOKUP_LEASE_SECONDS))
+    lease=cur.fetchone()
+  if not lease:return None
+  terminal_id=str(lease.get("terminal_id") or "").strip()
+  matches=[row for row in terminal_assignment_rows()
+           if terminal_id==str(row.get("serial_lookup_id") or "").strip()]
+  if len(matches)!=1:return None
+  return serial_lookup_terminal_record(matches[0],terminal_id,str(lease.get("session_token") or ""))
+ except Exception:
+  app.logger.exception("Serial Lookup device recovery failed")
+  return None
 
 def init_repository_db():
  """Initialize only the table used by the PDF repository."""
@@ -8645,6 +8688,9 @@ def legacy_admin_id_serial_lookup():
 @app.route("/id-serial-lookup",methods=["GET","POST"])
 def id_serial_lookup():
  """Station-bound National-ID lookup with no access path into administration."""
+ device_token=str(request.cookies.get(SERIAL_LOOKUP_DEVICE_COOKIE) or "").strip()
+ if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",device_token):
+  device_token=secrets.token_urlsafe(32)
  token=session.get("serial_lookup_csrf")
  if not token:
   token=secrets.token_urlsafe(32)
@@ -8654,6 +8700,11 @@ def id_serial_lookup():
   session.pop("serial_lookup_terminal",None)
   return redirect(url_for("id_serial_lookup"))
  lookup_terminal=session.get("serial_lookup_terminal") or None
+ if not lookup_terminal:
+  lookup_terminal=recover_serial_lookup_device(device_token)
+  if lookup_terminal:
+   session["serial_lookup_terminal"]=lookup_terminal
+   session.modified=True
  serial_no=None
  full_name=None
  polling_station=None
@@ -8694,43 +8745,49 @@ def id_serial_lookup():
      error="Terminal ID or password is incorrect."
     else:
      lease_token=secrets.token_urlsafe(32)
-     lookup_terminal={
-      "terminal_id":terminal_id,"terminal_role":"serial_lookup",
-      "session_token":lease_token,
-      "polling_station":str(row.get("polling_station") or "").strip(),
-      "polling_station_code":str(row.get("polling_station_code") or "").strip(),
-      "stream":str(row.get("stream") or "").strip(),
-      "county":str(row.get("county") or "").strip(),
-      "constituency":str(row.get("constituency") or "").strip(),
-      "ward":str(row.get("ward") or "").strip(),
-     }
+     lookup_terminal=serial_lookup_terminal_record(row,terminal_id,lease_token)
      try:
       init_serial_lookup_db()
       with serial_lookup_db() as conn:
        with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",("serial-lookup:"+terminal_id,))
-        cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
-          WHERE terminal_id=%s AND last_seen>=NOW()-(%s*INTERVAL '1 second') FOR UPDATE""",
-          (terminal_id,SERIAL_LOOKUP_LEASE_SECONDS))
-        already_active=bool(cur.fetchone())
+        cur.execute("""SELECT device_token_hash,last_seen FROM serial_lookup_terminal_sessions
+          WHERE terminal_id=%s FOR UPDATE""",(terminal_id,))
+        existing=cur.fetchone()
+        same_device=bool(existing and hmac.compare_digest(
+          str(existing.get("device_token_hash") or ""),
+          serial_lookup_device_hash(device_token)))
+        active_other=False
+        if existing and not same_device:
+         cur.execute("""SELECT 1 FROM serial_lookup_terminal_sessions
+           WHERE terminal_id=%s
+             AND last_seen>=NOW()-(%s*INTERVAL '1 second')""",
+           (terminal_id,SERIAL_LOOKUP_TAKEOVER_GRACE_SECONDS))
+         active_other=bool(cur.fetchone())
+        already_active=active_other
         if not already_active:
          cur.execute("""INSERT INTO serial_lookup_terminal_sessions
-           (terminal_id,session_token,polling_station,stream,started_at,last_seen)
-           VALUES(%s,%s,%s,%s,NOW(),NOW())
+           (terminal_id,session_token,device_token_hash,polling_station,stream,started_at,last_seen)
+           VALUES(%s,%s,%s,%s,%s,NOW(),NOW())
            ON CONFLICT(terminal_id) DO UPDATE SET session_token=EXCLUDED.session_token,
+             device_token_hash=EXCLUDED.device_token_hash,
              polling_station=EXCLUDED.polling_station,stream=EXCLUDED.stream,
              started_at=NOW(),last_seen=NOW()""",
-           (terminal_id,lease_token,lookup_terminal["polling_station"],lookup_terminal["stream"]))
+           (terminal_id,lease_token,serial_lookup_device_hash(device_token),
+            lookup_terminal["polling_station"],lookup_terminal["stream"]))
        if already_active:conn.rollback()
        else:conn.commit()
       if already_active:
        lookup_terminal=None
-       wait_minutes=max(1,(SERIAL_LOOKUP_LEASE_SECONDS+59)//60)
+       wait_minutes=max(1,(SERIAL_LOOKUP_TAKEOVER_GRACE_SECONDS+59)//60)
        error=f"Login blocked: this Serial Lookup ID is already active on another terminal. Log out there or wait {wait_minutes} minutes after it goes offline."
       else:
        session["serial_lookup_terminal"]=lookup_terminal
        session.modified=True
-       return redirect(url_for("id_serial_lookup"))
+       response=redirect(url_for("id_serial_lookup"))
+       response.set_cookie(SERIAL_LOOKUP_DEVICE_COOKIE,device_token,max_age=60*60*24*30,
+                           secure=True,httponly=True,samesite="Lax")
+       return response
      except Exception as exc:
       app.logger.exception("Serial Lookup terminal lease could not be reserved")
       lookup_terminal=None
@@ -8765,6 +8822,8 @@ def id_serial_lookup():
  response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, private"
  response.headers["Pragma"]="no-cache"
  response.headers["X-Robots-Tag"]="noindex, nofollow"
+ response.set_cookie(SERIAL_LOOKUP_DEVICE_COOKIE,device_token,max_age=60*60*24*30,
+                     secure=True,httponly=True,samesite="Lax")
  return response
 
 @app.post("/api/id-serial-lookup/keepalive")
