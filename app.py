@@ -2164,9 +2164,25 @@ def report_voters_register_members():
 
 def registered_voters_for_stream(poll_station_code,stream,poll_station="",county="",constituency="",ward=""):
  """Count unique voters from the generated voters register for one station."""
- if master_register.configured():
-  count=master_register.registered_for_station(poll_station_code,poll_station)
-  if count or MASTER_REGISTER_STRICT:return count
+ # Use the exact same combined PostgreSQL + legacy Kobo register count as the
+ # Admin Voters Register page.  The older polling_station_code shortcut could
+ # count a wider location (or collide after spreadsheet code conversion), so a
+ # station showing 101 voters in the register could incorrectly show 200 in
+ # the closing tally report.
+ canonical=_enrich_register_geography({
+  "county":str(county or "").strip(),
+  "constituency":str(constituency or "").strip(),
+  "ward":str(ward or "").strip(),
+  "polling_station":str(poll_station or "").strip()
+ })
+ exact_filters={key:str(canonical.get(key) or "").strip() for key in
+                ("county","constituency","ward","polling_station")}
+ if exact_filters["polling_station"]:
+  try:
+   count,_stats=authoritative_voters_register_count(exact_filters)
+   return int(count)
+  except Exception as exc:
+   app.logger.warning("Authoritative station register count failed; using merged-row fallback: %s",exc)
  # Resolve both the machine key and display label so register rows match either.
  station_aliases={station_key(poll_station)}
  stream_station=re.sub(r"(?:[_\s-]+stream[_\s-]*\d+)\s*$","",str(stream or ""),flags=re.I)
