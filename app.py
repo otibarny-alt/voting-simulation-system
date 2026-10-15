@@ -538,13 +538,9 @@ def apply_party_branding_to_html(response):
               active_brand_header_url(),html)
   # Text-node replacement avoids renaming stable form fields such as
   # odm_membership_no, which remain part of the database/API contract.
-  payload=json.dumps({
-   "Orange Democratic Movement":brand["name"],"ODM Voter Verification":brand["abbreviation"]+" Voter Verification",
-   "ODM Internal Nominations":brand["abbreviation"]+" Internal Nominations",
-   "ODM Membership No.":brand["abbreviation"]+" Membership No.","ODM Membership":brand["abbreviation"]+" Membership",
-   "ODM membership":brand["abbreviation"]+" membership","ODM registration":brand["abbreviation"]+" registration",
-   "ODM 2027":brand["abbreviation"]+" 2027","Tuko Tayari":brand["slogan"]
-  })
+  # Visible wording is party-neutral. Stable database/API names and saved
+  # membership identifiers keep their original values.
+  payload=json.dumps({"Orange Democratic Movement":"Party","ODM":"Party"})
   addon=f'''<style id="party-brand-theme">:root{{--party-primary:{brand['primary']};--party-secondary:{brand['secondary']};--party-accent:{brand['accent']}}}
   header{{border-bottom-color:var(--party-primary)!important}} a.button,button,.btn,.save,.master-action,.verification-admin-link{{border-color:var(--party-primary)}}
   .party-brand-chip{{background:var(--party-accent);border-left:6px solid var(--party-primary)}}
@@ -553,7 +549,7 @@ def apply_party_branding_to_html(response):
   #global-main-dashboard-link:hover,#global-main-dashboard-link:focus{{background:var(--party-primary,#ef7d00);color:#111!important;outline:2px solid #111;outline-offset:2px}}
   @media(max-width:600px){{#global-main-dashboard-nav{{width:calc(100% - 24px);margin:12px auto 10px}}#global-main-dashboard-link{{box-sizing:border-box;width:100%;padding:12px 14px;font-size:16px;text-align:center}}}}
   @media print{{#global-main-dashboard-nav{{display:none!important}}}}</style>
-  <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>
+  <script id="party-brand-text">(()=>{{const clean=v=>v.replace(/Orange Democratic Movement/gi,'Party').replace(/\\bODM\\b/gi,'Party');const apply=()=>{{document.title=clean(document.title);const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;n.nodeValue=clean(n.nodeValue)}}}};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',apply);else apply();}})();</script>
   <script id="party-brand-live-banner">(()=>{{
    const known=/(?:odm_screen_header|odm_report_header|odm_pdf_header|voter_verification_logo|orange_voting_banner|voter_lookup_verification_banner|membership-voter-lookup-banner|voter-lookup-banner|party-brand[/]asset[/]header)/i;
    async function sync(){{try{{const r=await fetch('/api/party-branding?_='+Date.now(),{{cache:'no-store'}});if(!r.ok)return;const d=await r.json(),b=d.brand||{{}};if(b.code!=='UDA'||!d.header_url)return;for(const img of document.images){{const src=img.getAttribute('src')||'';if(known.test(src)&&src!==d.header_url)img.src=d.header_url+(d.header_url.includes('?')?'&':'?')+'live='+Date.now();}}}}catch(e){{}}}}
