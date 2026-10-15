@@ -6248,7 +6248,7 @@ MEMBERSHIP_CSV_REQUIRED={
 MEMBERSHIP_SELF_SERVICE_FIELDS=(
  "phone_no","odm_membership_no","first_name","middle_name","surname",
  "county","constituency","ward","poll_station","poll_station_code",
- "member_id_photo","member_passport_photo",
+ "member_passport_photo",
 )
 
 # Existing members may correct only contact, photo, and assigned-location data.
@@ -6256,7 +6256,7 @@ MEMBERSHIP_SELF_SERVICE_FIELDS=(
 # malicious client adds altered values to the POST request.
 MEMBERSHIP_EXISTING_EDITABLE_FIELDS=(
  "phone_no","county","constituency","ward","poll_station",
- "poll_station_code","member_id_photo","member_passport_photo",
+ "poll_station_code","member_passport_photo",
 )
 MEMBERSHIP_LOCKED_IDENTITY_FIELDS=(
  "odm_membership_no","first_name","middle_name","surname",
@@ -6265,7 +6265,6 @@ MEMBERSHIP_LOCKED_IDENTITY_FIELDS=(
 MEMBERSHIP_SERIAL_DIGITS=8
 
 MEMBERSHIP_IMAGE_FIELDS={
- "member_id_photo":("id_photo","ID photo"),
  "member_passport_photo":("passport_photo","Passport photo"),
 }
 
@@ -8345,7 +8344,7 @@ def membership_application():
     submitted["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
    values.update(submitted)
    required_labels={
-    "phone_no":"Phone number","odm_membership_no":"ODM registration number",
+    "phone_no":"Phone number","odm_membership_no":"Party registration number",
     "first_name":"First name","surname":"Surname","county":"County",
     "constituency":"Constituency","ward":"Ward","poll_station":"Polling station",
    }
