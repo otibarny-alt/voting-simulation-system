@@ -47,8 +47,7 @@
 
   {% if station_match %}
   <div class="station-match">
-   ✓ POLLING STATION MATCH CONFIRMED<br>
-   This voter is registered in the Party Membership Portal at the same polling station as this current voting terminal.
+   ✓ POLLING STATION MATCH CONFIRMED
   </div>
   {% else %}
   <div class="station-mismatch">
@@ -65,7 +64,7 @@
   <div class=actions>
    <form method=post action=/membership/cancel><button class=secondary type=submit>Cancel / Different Voter</button></form>
    {% if station_match and entrance_approval_confirmed and entrance_approval %}
-   <form method=post action=/membership/confirm><button type=submit>Identity Confirmed — Continue to Simulation Ballot</button></form>
+   <form method=post action=/membership/confirm><button type=submit>Identity Confirmed — Continue to Vote</button></form>
    {% else %}
    <button type=button disabled>Voting Not Allowed at This Station</button>
    {% endif %}
