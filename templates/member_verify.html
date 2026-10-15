@@ -5,6 +5,7 @@
 <style>
 .voter-confirm-title{text-align:center;font-size:34px;line-height:1.2;margin:6px 0 14px;font-weight:900}
 .voter-confirm-message{text-align:center;font-size:24px;line-height:1.35;margin:0 0 24px;font-weight:800;color:#172033}
+.passport-only-photo{display:flex;justify-content:center}.passport-only-photo .photo-card{width:min(100%,520px)}
 @media(max-width:650px){.voter-confirm-title{font-size:30px}.voter-confirm-message{font-size:21px}}
 </style>
 <body class="voting-terminal-screen"><header><b>Training E-Ballot Prototype</b></header>
@@ -31,26 +32,7 @@
   <div class="station-mismatch">✕ ENTRANCE VERIFICATION NOT CONFIRMED — BALLOT ACCESS DENIED</div>
   {% endif %}
 
-  <div class="member-details">
-   <div><b>Serial No.:</b> {{member.serial_no or session.get('membership_serial_no','—')}}</div>
-   <div><b>National ID:</b> {{member.national_id}}</div>
-   <div><b>Name:</b> {{member.full_name or "Not available"}}</div>
-   <div><b>Party Membership No:</b> {{member.membership_no or "Not available"}}</div>
-   <div><b>Designated Polling Station:</b> {{member.polling_station_label or member.polling_station_key or "Not available"}}</div>
-   <div><b>Designated Polling Station Key:</b> {{member.polling_station_key or "Not available"}}</div>
-   <div><b>Current Voting Station:</b> {{geo.poll_station}}</div>
-   <div><b>Current Stream:</b> {{geo.stream}}</div>
-  </div>
-
-  <div class="photo-verify-grid">
-   <div class="photo-card">
-    <h3>ID Photo</h3>
-    {% if member.id_photo_name %}
-     <img class="zoomable-member-photo" src="/membership-photo/{{member.submission_id}}/id" alt="ID Photo" tabindex="0" role="button" aria-label="Zoom ID Photo" onclick="openPhotoZoom(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPhotoZoom(this);}">
-    {% else %}
-     <div class=photo-missing>ID photo not available in this membership record.</div>
-    {% endif %}
-   </div>
+  <div class="photo-verify-grid passport-only-photo">
    <div class="photo-card">
     <h3>Passport Photo</h3>
     {% if member.passport_photo_name %}
@@ -77,7 +59,7 @@
   {% endif %}
 
   <div class="identity-warning">
-   Continue only after the officer has visually confirmed that the person presenting the ID matches the ODM membership photographs.
+   Continue only after the officer has visually confirmed that this is You.
   </div>
 
   <div class=actions>
