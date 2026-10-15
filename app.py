@@ -399,8 +399,10 @@ def party_branding_api():
 
 @app.get("/membership-voter-lookup-banner-v23-210.png")
 def membership_voter_lookup_banner_v23_210():
- """Serve the approved membership/lookup banner without stale static cache."""
- path=os.path.join(app.root_path,"static","orange_voting_banner_v23_210.png")
+ """Serve the ODM banner or the universal UDA banner for the active party."""
+ brand=active_party_brand()
+ filename=brand["header_file"] if brand["code"]=="UDA" else "orange_voting_banner_v23_210.png"
+ path=os.path.join(app.root_path,"static",filename)
  if not os.path.isfile(path):return Response("Page banner is unavailable.",status=404,mimetype="text/plain")
  response=send_file(path,mimetype="image/png",max_age=0,conditional=False)
  response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
@@ -410,8 +412,10 @@ def membership_voter_lookup_banner_v23_210():
 
 @app.get("/voter-lookup-banner-v23-212.png")
 def voter_lookup_banner_v23_212():
- """Serve the voter lookup banner without stale browser/CDN caching."""
- path=os.path.join(app.root_path,"static","voter_lookup_verification_banner_v23_212.png")
+ """Serve the ODM banner or the universal UDA banner for the active party."""
+ brand=active_party_brand()
+ filename=brand["header_file"] if brand["code"]=="UDA" else "voter_lookup_verification_banner_v23_212.png"
+ path=os.path.join(app.root_path,"static",filename)
  if not os.path.isfile(path):return Response("Voter lookup banner is unavailable.",status=404,mimetype="text/plain")
  response=send_file(path,mimetype="image/png",max_age=0,conditional=False)
  response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
@@ -515,6 +519,13 @@ def apply_party_branding_to_html(response):
  try:
   brand=active_party_brand()
   html=response.get_data(as_text=True)
+  # These two legacy, cache-busting image routes intentionally retain their
+  # distinct ODM artwork while ODM is selected.  Under UDA they must both use
+  # the one approved UDA banner, including pages that hard-code either URL.
+  if brand["code"]=="UDA":
+   for old in ("/membership-voter-lookup-banner-v23-210.png",
+               "/voter-lookup-banner-v23-212.png"):
+    html=re.sub(re.escape(old)+r"(?:\?[^\"']*)?",active_brand_header_url(),html)
   for old in ("/static/odm_screen_header.png","/static/odm_report_header.png","/static/odm_pdf_header.jpg",
               "/static/voter_verification_logo.jpeg","/static/voter_verification_logo.jpg","/static/voter_verification_logo.png"):
    html=html.replace(old,active_brand_header_url())
