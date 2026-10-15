@@ -185,7 +185,7 @@ PARTY_BRANDS={
   "code":"UDA","name":"United Democratic Alliance","abbreviation":"UDA",
   "slogan":"Kazi ni Kazi","membership_prefix":"UDA",
   "primary":"#078b37","secondary":"#ffd20a","accent":"#f2ffe9",
-  "header_file":"brand_uda_header.png","asset_version":"73fb7661-v234"
+  "header_file":"brand_uda_header.png","asset_version":"70a8bfd6-v238"
  }
 }
 _PARTY_BRAND_CACHE={"loaded_at":0.0,"value":dict(PARTY_BRANDS["ODM"])}
