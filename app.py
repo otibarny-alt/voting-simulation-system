@@ -1133,43 +1133,29 @@ def recover_serial_lookup_device(device_token):
   app.logger.exception("Serial Lookup device recovery failed")
   return None
 
-def claim_serial_lookup_once(national_id,serial_no,terminal):
- """Atomically allow exactly one successful serial lookup per ID and election."""
- init_serial_lookup_db()
- with serial_lookup_db() as conn:
+def serial_lookup_voted_status(national_id):
+ """Return the authoritative completed-vote record, if one exists."""
+ init_voter_access_db()
+ with central_control_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""INSERT INTO serial_lookup_completed_checks
-     (election_id,national_id,serial_no,polling_station,stream,terminal_id,checked_at)
-     VALUES(%s,%s,%s,%s,%s,%s,NOW())
-     ON CONFLICT(election_id,national_id) DO NOTHING
-     RETURNING checked_at""",
-     (ELECTION_ID,national_id,serial_no,
-      str(terminal.get("polling_station") or "").strip(),
-      str(terminal.get("stream") or "").strip(),
-      str(terminal.get("terminal_id") or "").strip()))
-   inserted=cur.fetchone()
-   if inserted:
-    conn.commit()
-    return True,None
-   cur.execute("""SELECT polling_station,stream,checked_at
-     FROM serial_lookup_completed_checks
-     WHERE election_id=%s AND national_id=%s""",(ELECTION_ID,national_id))
-   previous=cur.fetchone()
-  conn.commit()
- return False,previous
+   cur.execute("""SELECT voted_at,voted_at_station,verified_by
+     FROM voter_status
+     WHERE election_id=%s AND national_id=%s AND voted_at IS NOT NULL""",
+     (ELECTION_ID,national_id))
+   return cur.fetchone()
 
-def serial_lookup_checked_message(national_id,previous):
- station=str((previous or {}).get("polling_station") or "its assigned polling station").strip()
- checked_at=(previous or {}).get("checked_at")
+def serial_lookup_voted_message(national_id,voted):
+ station=str((voted or {}).get("voted_at_station") or "the recorded polling station").strip()
+ voted_at=(voted or {}).get("voted_at")
  when=""
- if checked_at:
+ if voted_at:
   try:
-   when=" on "+checked_at.astimezone(KENYA_TZ).strftime("%d %b %Y at %H:%M")
+   when=" on "+voted_at.astimezone(KENYA_TZ).strftime("%d %b %Y at %H:%M")
   except Exception:
    when=""
  return ("SERIAL LOOKUP NOT ALLOWED: ID No "+national_id+
-         " has already had its serial number checked at "+station+when+
-         ". The serial number cannot be displayed again.")
+         " has already voted at "+station+when+
+         ". Its serial number cannot be displayed again.")
 
 def init_repository_db():
  """Initialize only the table used by the PDF repository."""
@@ -8926,14 +8912,14 @@ def id_serial_lookup():
      elif not serial_no and not error:
       error="This voter record does not have a serial number."
      elif serial_no and not error:
-      allowed,previous=claim_serial_lookup_once(national_id,serial_no,lookup_terminal)
-      if not allowed:
+      voted=serial_lookup_voted_status(national_id)
+      if voted:
        serial_no=None;full_name=None;polling_station=None
-       error=serial_lookup_checked_message(national_id,previous)
+       error=serial_lookup_voted_message(national_id,voted)
     except Exception as exc:
      app.logger.exception("Standalone ID-to-serial lookup failed")
      serial_no=None;full_name=None;polling_station=None
-     error="The voters register or duplicate-check service is temporarily unavailable: "+str(exc)
+     error="The voters register or voting-status service is temporarily unavailable: "+str(exc)
  response=make_response(render_template("admin_id_serial_lookup.html",csrf_token=token,
                         national_id=national_id,serial_no=serial_no,full_name=full_name,
                         polling_station=polling_station,error=error,lookup_terminal=lookup_terminal))
