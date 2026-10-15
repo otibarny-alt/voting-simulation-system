@@ -2,6 +2,11 @@
 <link rel=stylesheet href=/static/style.css>
 <script src="/static/terminal_lease.js" defer></script>
 <meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+.voter-confirm-title{text-align:center;font-size:34px;line-height:1.2;margin:6px 0 14px;font-weight:900}
+.voter-confirm-message{text-align:center;font-size:24px;line-height:1.35;margin:0 0 24px;font-weight:800;color:#172033}
+@media(max-width:650px){.voter-confirm-title{font-size:30px}.voter-confirm-message{font-size:21px}}
+</style>
 <body class="voting-terminal-screen"><header><b>Training E-Ballot Prototype</b></header>
 <div class=demo>TRAINING / SIMULATION ONLY — not official voting.</div>
 <div class=wrap>
@@ -10,8 +15,8 @@
 </div>
 
  <div class=card>
-  <h2>Party Membership Photo Verification</h2>
-  <p>Compare the voter physically present with the two photographs below before continuing to the simulated ballot.</p>
+  <h2 class="voter-confirm-title">Verify the Voter</h2>
+  <p class="voter-confirm-message">Confirm that This is You</p>
   {% if entrance_approval_confirmed and entrance_approval %}
   <div class="entrance-approval-confirmed">
    <div class="entrance-approval-title">✓ VOTER PASSED ENTRANCE VERIFICATION</div>
