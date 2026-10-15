@@ -185,7 +185,7 @@ PARTY_BRANDS={
   "code":"UDA","name":"United Democratic Alliance","abbreviation":"UDA",
   "slogan":"Kazi ni Kazi","membership_prefix":"UDA",
   "primary":"#078b37","secondary":"#ffd20a","accent":"#f2ffe9",
-  "header_file":"brand_uda_header.png"
+  "header_file":"brand_uda_header.png","asset_version":"73fb7661-v234"
  }
 }
 _PARTY_BRAND_CACHE={"loaded_at":0.0,"value":dict(PARTY_BRANDS["ODM"])}
@@ -386,15 +386,20 @@ def active_brand_asset_path():
 
 
 def active_brand_header_url():
- return url_for("party_brand_asset",kind="header",v=active_party_brand()["code"])
+ brand=active_party_brand()
+ version=brand.get("asset_version") or brand["code"]
+ return url_for("party_brand_asset",kind="header",v=version)
 
 
 @app.get("/api/party-branding")
 def party_branding_api():
  """Public, read-only configuration consumed by the other nomination services."""
  brand=active_party_brand()
- return jsonify({"ok":True,"brand":brand,
-                 "header_url":urljoin(request.url_root,active_brand_header_url().lstrip("/"))})
+ response=jsonify({"ok":True,"brand":brand,
+                   "header_url":urljoin(request.url_root,active_brand_header_url().lstrip("/"))})
+ response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+ response.headers["Pragma"]="no-cache";response.headers["Expires"]="0"
+ return response
 
 
 @app.get("/membership-voter-lookup-banner-v23-210.png")
@@ -549,6 +554,11 @@ def apply_party_branding_to_html(response):
   @media(max-width:600px){{#global-main-dashboard-nav{{width:calc(100% - 24px);margin:12px auto 10px}}#global-main-dashboard-link{{box-sizing:border-box;width:100%;padding:12px 14px;font-size:16px;text-align:center}}}}
   @media print{{#global-main-dashboard-nav{{display:none!important}}}}</style>
   <script id="party-brand-text">(()=>{{const r={payload};const w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){{if(['SCRIPT','STYLE','TEXTAREA','OPTION'].includes(n.parentElement?.tagName))continue;let v=n.nodeValue;for(const [a,b] of Object.entries(r))v=v.split(a).join(b);n.nodeValue=v}}}})();</script>
+  <script id="party-brand-live-banner">(()=>{{
+   const known=/(?:odm_screen_header|odm_report_header|odm_pdf_header|voter_verification_logo|orange_voting_banner|voter_lookup_verification_banner|membership-voter-lookup-banner|voter-lookup-banner|party-brand[/]asset[/]header)/i;
+   async function sync(){{try{{const r=await fetch('/api/party-branding?_='+Date.now(),{{cache:'no-store'}});if(!r.ok)return;const d=await r.json(),b=d.brand||{{}};if(b.code!=='UDA'||!d.header_url)return;for(const img of document.images){{const src=img.getAttribute('src')||'';if(known.test(src)&&src!==d.header_url)img.src=d.header_url+(d.header_url.includes('?')?'&':'?')+'live='+Date.now();}}}}catch(e){{}}}}
+   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',sync);else sync();setInterval(sync,10000);
+  }})();</script>
   <script id="render-fallback-worker">if("serviceWorker" in navigator){{window.addEventListener("load",()=>navigator.serviceWorker.register("/service-worker-v23-213.js",{{scope:"/"}}).catch(()=>{{}}));}}</script>'''
   html=html.replace("</head>",addon+"</head>")
   if 'id="global-main-dashboard-link"' not in html:
