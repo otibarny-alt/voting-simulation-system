@@ -6227,12 +6227,12 @@ DATA_FILE_SPECS={
 
 MEMBERSHIP_CSV_REQUIRED={
  "national_id_no","phone_no","odm_membership_no","first_name","middle_name",
- "surname","county","constituency","ward","poll_station","poll_station_code",
+ "surname","dob","gender","county","constituency","ward","poll_station","poll_station_code",
  "member_id_photo","member_passport_photo"
 }
 
 MEMBERSHIP_SELF_SERVICE_FIELDS=(
- "phone_no","odm_membership_no","first_name","middle_name","surname",
+ "phone_no","odm_membership_no","first_name","middle_name","surname","dob","gender",
  "county","constituency","ward","poll_station","poll_station_code",
  "member_passport_photo",
 )
@@ -6245,7 +6245,7 @@ MEMBERSHIP_EXISTING_EDITABLE_FIELDS=(
  "poll_station_code","member_passport_photo",
 )
 MEMBERSHIP_LOCKED_IDENTITY_FIELDS=(
- "odm_membership_no","first_name","middle_name","surname",
+ "odm_membership_no","first_name","middle_name","surname","dob","gender",
 )
 
 MEMBERSHIP_SERIAL_DIGITS=8
@@ -6298,6 +6298,19 @@ def clean_phone(value):
  elif len(digits)==9:
   digits="0"+digits
  return digits
+
+def normalize_membership_dob(value):
+ """Return a membership date of birth in the HTML/PostgreSQL ISO format."""
+ text=str(value or "").strip()
+ if not text:return ""
+ for pattern in ("%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%d-%m-%Y"):
+  try:
+   parsed=datetime.strptime(text,pattern).date()
+   if parsed>kenya_now().date() or parsed.year<1900:return ""
+   return parsed.isoformat()
+  except ValueError:
+   continue
+ return ""
 
 def registered_phone_owner(phone,national_id):
  """Find another approved member already using this normalized phone."""
@@ -8306,6 +8319,8 @@ def membership_application():
  values=dict(current or {})
  if latest and not current and latest.get("request_data"):
   values.update(latest["request_data"])
+ if values.get("dob"):
+  values["dob"]=normalize_membership_dob(values.get("dob"))
  values.setdefault("phone_no",session.get("membership_member_phone",""))
  if not current:
   values["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
@@ -8326,12 +8341,14 @@ def membership_application():
     for key in MEMBERSHIP_LOCKED_IDENTITY_FIELDS:
      submitted[key]=str(current.get(key) or "").strip()
    submitted["phone_no"]=clean_phone(submitted["phone_no"])
+   submitted["dob"]=normalize_membership_dob(submitted.get("dob"))
+   submitted["gender"]=str(submitted.get("gender") or "").strip().upper()
    if not current:
     submitted["odm_membership_no"]=active_party_brand()["membership_prefix"]+national_id
    values.update(submitted)
    required_labels={
     "phone_no":"Phone number","odm_membership_no":"Party registration number",
-    "first_name":"First name","surname":"Surname","county":"County",
+    "first_name":"First name","surname":"Surname","dob":"Date of Birth","gender":"Gender","county":"County",
     "constituency":"Constituency","ward":"Ward","poll_station":"Polling station",
    }
    missing=[label for key,label in required_labels.items() if not submitted.get(key)]
@@ -8344,6 +8361,8 @@ def membership_application():
     error="Complete the following fields: "+", ".join(missing)+"."
    elif not re.fullmatch(r"0\d{9}",submitted["phone_no"]):
     error="Enter a valid phone number."
+   elif submitted["gender"] not in ("MALE","FEMALE"):
+    error="Select a valid gender."
    else:
     try:
      init_membership_request_db()
@@ -8374,7 +8393,7 @@ def membership_application():
     except Exception as exc:
      app.logger.exception("Membership request submission failed")
      error="Membership details were not saved: "+str(exc)
- return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error)
+ return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error,today_date=kenya_now().date().isoformat())
 
 
 @app.post("/membership/logout")
