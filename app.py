@@ -5,7 +5,7 @@ import requests
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from datetime import datetime, date, time as dt_time
+from datetime import datetime, date, timedelta, time as dt_time
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 from email.message import EmailMessage
@@ -6312,6 +6312,21 @@ def normalize_membership_dob(value):
    continue
  return ""
 
+def membership_dob_bounds(application_date=None):
+ """Return inclusive DOB bounds for applicants aged 18 through 99."""
+ application_date=application_date or kenya_now().date()
+ def years_before(years):
+  try:return application_date.replace(year=application_date.year-years)
+  except ValueError:return application_date.replace(year=application_date.year-years,day=28)
+ return years_before(100)+timedelta(days=1),years_before(18)
+
+def membership_dob_is_eligible(value,application_date=None):
+ normalized=normalize_membership_dob(value)
+ if not normalized:return False
+ parsed=datetime.strptime(normalized,"%Y-%m-%d").date()
+ minimum,maximum=membership_dob_bounds(application_date)
+ return minimum<=parsed<=maximum
+
 def registered_phone_owner(phone,national_id):
  """Find another approved member already using this normalized phone."""
  phone=clean_phone(phone); national_id=clean_national_id(national_id)
@@ -8361,6 +8376,8 @@ def membership_application():
     error="Complete the following fields: "+", ".join(missing)+"."
    elif not re.fullmatch(r"0\d{9}",submitted["phone_no"]):
     error="Enter a valid phone number."
+   elif not membership_dob_is_eligible(submitted["dob"]):
+    error="The applicant must be at least 18 years old and less than 100 years old on the application date."
    elif submitted["gender"] not in ("MALE","FEMALE"):
     error="Select a valid gender."
    else:
@@ -8393,7 +8410,8 @@ def membership_application():
     except Exception as exc:
      app.logger.exception("Membership request submission failed")
      error="Membership details were not saved: "+str(exc)
- return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error,today_date=kenya_now().date().isoformat())
+ minimum_dob,maximum_dob=membership_dob_bounds()
+ return render_template("membership_application.html",national_id=national_id,current=current or {},values=values,latest=latest,csrf_token=token,error=error,message=message,candidate_locked=candidate_locked,candidate_lock_error=candidate_lock_error,minimum_dob=minimum_dob.isoformat(),maximum_dob=maximum_dob.isoformat())
 
 
 @app.post("/membership/logout")
