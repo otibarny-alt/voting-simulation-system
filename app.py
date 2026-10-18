@@ -35,6 +35,34 @@ from pypdf import PdfReader, PdfWriter
 import master_register as master_register
 import import_master_register as master_register_import
 
+def _master_existing_national_ids(national_ids,include_inactive=False,batch_size=2000):
+ """Compatibility bridge for old and new master_register modules.
+
+ Render rolling workers can momentarily import an older helper module while
+ app.py is already on the new release. Prefer the optimized module methods,
+ but query the same master_voters table directly when either method is absent.
+ """
+ ids=sorted({cleaned for value in national_ids
+             if (cleaned:=re.sub(r"\D","",str(value or "")))})
+ if not ids:return set()
+ method_name="existing_national_ids" if include_inactive else "existing_active_national_ids"
+ reader=getattr(master_register,method_name,None)
+ if callable(reader):return set(reader(ids))
+ database_url=(getattr(master_register,"MASTER_REGISTER_DATABASE_URL","")
+               or os.getenv("MASTER_REGISTER_DATABASE_URL","")
+               or os.getenv("DATABASE_URL","")).strip()
+ if not database_url:raise RuntimeError("MASTER_REGISTER_DATABASE_URL is not configured.")
+ found=set()
+ with psycopg.connect(database_url,row_factory=dict_row,connect_timeout=3,
+                      options="-c statement_timeout=30000 -c lock_timeout=3000") as conn:
+  with conn.cursor() as cur:
+   for start in range(0,len(ids),max(1,int(batch_size))):
+    batch=ids[start:start+max(1,int(batch_size))]
+    where="national_id=ANY(%s)" if include_inactive else "active AND national_id=ANY(%s)"
+    cur.execute("SELECT national_id FROM master_voters WHERE "+where,(batch,))
+    found.update(str(row.get("national_id") or "").strip() for row in cur.fetchall())
+ return found
+
 app=Flask(__name__)
 app.secret_key=os.getenv("FLASK_SECRET_KEY","training-only-change-me")
 app.config["MAX_CONTENT_LENGTH"]=int(os.getenv("DATA_UPLOAD_MAX_MB","30") or 30)*1024*1024
@@ -2047,7 +2075,7 @@ def membership_registered_breakdown():
   source_errors.append("kobo_membership_csv_unavailable")
   rows={}
  if master_register.configured() and database_records:
-  try:database_ids=master_register.existing_active_national_ids(rows.keys())
+  try:database_ids=_master_existing_national_ids(rows.keys(),include_inactive=False)
   except Exception as exc:
    app.logger.warning("Master/Kobo overlap query unavailable: %s",exc)
    source_errors.append("master_register_overlap_unavailable")
@@ -6799,7 +6827,7 @@ def _csv_only_register_members(filters=None):
   if member["member_id"] and (not filters or _filter_register([member],filters)):
    members.append(member)
  if master_register.configured() and members:
-  existing=master_register.existing_national_ids(member["member_id"] for member in members)
+  existing=_master_existing_national_ids((member["member_id"] for member in members),include_inactive=True)
   members=[member for member in members if member["member_id"] not in existing]
  return members
 
