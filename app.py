@@ -6921,8 +6921,13 @@ def combined_voters_register(filters=None,limit=None):
   elif existing.get("source")!="PostgreSQL master register" and member["submission_time"]>=existing.get("submission_time",""):
    newest[member_id]=member
  csv_rows=_load_membership_csv(); csv_added=0; csv_fields_filled=0
- inactive_master_ids=(master_register.inactive_national_ids()
-                      if master_register.configured() and csv_rows else set())
+ # Compatibility with deployments whose Render build briefly loads an older
+ # master_register module during a rolling restart.  The legacy module has no
+ # tombstone reader, so the register must not fail merely because that optional
+ # helper is absent.
+ inactive_reader=getattr(master_register,"inactive_national_ids",None)
+ inactive_master_ids=(inactive_reader()
+                      if callable(inactive_reader) and master_register.configured() and csv_rows else set())
  for member_id,raw in csv_rows.items():
   if member_id in inactive_master_ids:continue
   csv_member=_register_member_from_csv(raw)
@@ -8609,7 +8614,10 @@ def admin_voters_register_delete(national_id):
    raise ValueError("This voter has already voted. The record is protected and cannot be deleted from the election register.")
   if not master_register.configured():
    raise RuntimeError("MASTER_REGISTER_DATABASE_URL is not configured. Deletion was not attempted.")
-  master_register.deactivate_voter(national_id)
+  deactivate=getattr(master_register,"deactivate_voter",None)
+  if not callable(deactivate):
+   raise RuntimeError("The deletion helper is not active on this server yet. Redeploy this complete package, then retry.")
+  deactivate(national_id)
   _REGISTER_COUNT_CACHE.clear();_REGISTER_SUMMARY_CACHE.clear()
   flash("Voter ID "+national_id+" was removed from the active voters register. An audit tombstone was retained.","success")
  except Exception as exc:
