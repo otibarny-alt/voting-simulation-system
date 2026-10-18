@@ -6799,7 +6799,7 @@ def _csv_only_register_members(filters=None):
   if member["member_id"] and (not filters or _filter_register([member],filters)):
    members.append(member)
  if master_register.configured() and members:
-  existing=master_register.existing_active_national_ids(member["member_id"] for member in members)
+  existing=master_register.existing_national_ids(member["member_id"] for member in members)
   members=[member for member in members if member["member_id"] not in existing]
  return members
 
@@ -6921,7 +6921,10 @@ def combined_voters_register(filters=None,limit=None):
   elif existing.get("source")!="PostgreSQL master register" and member["submission_time"]>=existing.get("submission_time",""):
    newest[member_id]=member
  csv_rows=_load_membership_csv(); csv_added=0; csv_fields_filled=0
+ inactive_master_ids=(master_register.inactive_national_ids()
+                      if master_register.configured() and csv_rows else set())
  for member_id,raw in csv_rows.items():
+  if member_id in inactive_master_ids:continue
   csv_member=_register_member_from_csv(raw)
   if member_id not in newest: newest[member_id]=csv_member; csv_added+=1
   else:
@@ -8518,9 +8521,11 @@ def download_admin_user_manual():
 @app.get("/admin/voters-register")
 def admin_voters_register():
  if not repository_admin_logged_in(): return redirect(url_for("repository_admin_login",next=request.full_path))
+ token=session.get("voters_register_csrf") or secrets.token_urlsafe(32)
+ session["voters_register_csrf"]=token
  filters=_register_filters()
  if not any(filters.values()):
-  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=None,prompt="Enter a National ID or select a county, then click Apply Filters to load the register.")
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=None,prompt="Enter a National ID or select a county, then click Apply Filters to load the register.",csrf_token=token)
  try:
   members,stats=combined_voters_register(filters,limit=501)
   truncated=stats.get("unique_members",len(members))>500
@@ -8529,9 +8534,72 @@ def admin_voters_register():
   summary=authoritative_voters_register_summary(filters)
   stats["unique_members"]=summary["total"]
   groups=_register_station_groups(members)
-  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=summary["total"],summary=summary,scope_label=_register_scope_label(filters),displayed=len(members),truncated=truncated,error=None,prompt=None)
+  return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=summary["total"],summary=summary,scope_label=_register_scope_label(filters),displayed=len(members),truncated=truncated,error=None,prompt=None,csrf_token=token)
  except Exception as exc:
-  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None),502
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None,csrf_token=token),502
+
+def _valid_voters_register_csrf():
+ supplied=str(request.form.get("csrf_token") or "")
+ expected=str(session.get("voters_register_csrf") or "")
+ return bool(supplied and expected and hmac.compare_digest(supplied,expected))
+
+def _voters_register_return_url():
+ value=str(request.form.get("return_to") or "").strip()
+ return value if value.startswith("/admin/voters-register") and not value.startswith("//") else url_for("admin_voters_register")
+
+@app.post("/admin/voters-register/<national_id>/edit")
+def admin_voters_register_edit(national_id):
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.path))
+ if not _valid_voters_register_csrf():abort(400)
+ national_id=clean_national_id(national_id)
+ try:
+  row=membership_source_row(national_id)
+  if not row and master_register.configured():
+   legacy=dict(_load_membership_csv().get(national_id) or {})
+   if legacy:
+    serial_no=str(legacy.get("serial_no") or legacy.get("serial_number") or legacy.get("serial") or "").strip()
+    if not serial_no:raise ValueError("This legacy voter has no serial number and cannot be promoted for editing.")
+    master_register.apply_membership_change(national_id,"new",{
+     "serial_no":serial_no,"odm_membership_no":legacy.get("odm_membership_no",""),
+     "first_name":legacy.get("first_name",""),"middle_name":legacy.get("middle_name",""),
+     "surname":legacy.get("surname",""),"phone_no":legacy.get("phone_no",""),
+     "dob":legacy.get("dob",""),"gender":legacy.get("gender",""),
+     "county":legacy.get("county",""),"constituency":legacy.get("constituency",""),
+     "ward":legacy.get("ward",""),"poll_station":legacy.get("poll_station",""),
+     "poll_station_code":legacy.get("poll_station_code",""),
+     "member_passport_photo":legacy.get("member_passport_photo","")
+    })
+    row=membership_source_row(national_id)
+  if not row:raise ValueError("This active voter record could not be opened for editing.")
+  session["membership_member_id"]=national_id
+  session["membership_member_phone"]=clean_phone(row.get("phone_no"))
+  session["membership_member_existing"]=True
+  session["membership_csrf"]=secrets.token_urlsafe(32)
+  session["membership_admin_return_url"]=_voters_register_return_url()
+  return redirect(url_for("membership_application"))
+ except Exception as exc:
+  flash("Voter record could not be opened for editing: "+str(exc),"error")
+  return redirect(_voters_register_return_url())
+
+@app.post("/admin/voters-register/<national_id>/delete")
+def admin_voters_register_delete(national_id):
+ if not repository_admin_logged_in():return redirect(url_for("repository_admin_login",next=request.path))
+ if not _valid_voters_register_csrf():abort(400)
+ return_url=_voters_register_return_url();national_id=clean_national_id(national_id)
+ if not re.fullmatch(r"\d{7,8}",national_id):
+  flash("The voter record has an invalid National ID and was not deleted.","error")
+  return redirect(return_url)
+ try:
+  if national_id in _all_voted_national_ids():
+   raise ValueError("This voter has already voted. The record is protected and cannot be deleted from the election register.")
+  if not master_register.configured():
+   raise RuntimeError("MASTER_REGISTER_DATABASE_URL is not configured. Deletion was not attempted.")
+  master_register.deactivate_voter(national_id)
+  _REGISTER_COUNT_CACHE.clear();_REGISTER_SUMMARY_CACHE.clear()
+  flash("Voter ID "+national_id+" was removed from the active voters register. An audit tombstone was retained.","success")
+ except Exception as exc:
+  flash("Voter record was not deleted: "+str(exc),"error")
+ return redirect(return_url)
 
 @app.get("/admin/voter-totals")
 def admin_voter_totals():
