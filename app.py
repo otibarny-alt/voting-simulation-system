@@ -8531,12 +8531,27 @@ def admin_voters_register():
   truncated=stats.get("unique_members",len(members))>500
   if len(members)>500:members=members[:500]
   attach_voting_status(members)
-  summary=authoritative_voters_register_summary(filters)
-  stats["unique_members"]=summary["total"]
   groups=_register_station_groups(members)
+  # Keep the first page render bounded.  The former synchronous call to
+  # authoritative_voters_register_summary() opened several additional
+  # PostgreSQL connections and could exceed Render's gateway timeout even
+  # after the first 500 register rows had loaded successfully.  The browser's
+  # existing /summary refresh replaces these provisional values immediately
+  # and continues to refresh them in the background.
+  displayed_voted=sum(1 for member in members if member.get("voting_status")=="Voted")
+  displayed_stations={tuple(station_key(member.get(key)) for key in
+                            ("county","constituency","ward","polling_station"))
+                      for member in members if station_key(member.get("polling_station"))}
+  total=int(stats.get("unique_members",len(members)) or 0)
+  summary={"total":total,"polling_stations":len(displayed_stations),
+           "voted":displayed_voted,"not_voted":max(0,total-displayed_voted)}
   return render_template("admin_voters_register.html",groups=groups,filters=filters,options=_register_hierarchy_options(filters),stats=stats,total=summary["total"],summary=summary,scope_label=_register_scope_label(filters),displayed=len(members),truncated=truncated,error=None,prompt=None,csrf_token=token)
  except Exception as exc:
-  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None,csrf_token=token),502
+  # This is an administrative data view, not a disconnected voting terminal.
+  # Returning 502 caused the global recovery layer to hide the useful error
+  # behind the misleading "system is reconnecting" page.
+  app.logger.exception("Voters register page failed")
+  return render_template("admin_voters_register.html",groups=[],filters=filters,options=_register_hierarchy_options(filters),stats={},total=0,displayed=0,truncated=False,error=str(exc),prompt=None,csrf_token=token),200
 
 def _valid_voters_register_csrf():
  supplied=str(request.form.get("csrf_token") or "")
