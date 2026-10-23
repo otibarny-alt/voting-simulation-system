@@ -824,7 +824,8 @@ def _candidate_catalog_key_lock(cache_key):
   return _CANDIDATE_CATALOG_KEY_LOCKS.setdefault(cache_key,threading.Lock())
 
 def candidate_portal_catalog(geo):
- cache_key=tuple(norm_key(geo.get(k,"")) for k in ("county","constituency","ward"))
+ party_code=str(active_party_brand().get("code") or "ODM").strip().upper()
+ cache_key=(party_code,)+tuple(norm_key(geo.get(k,"")) for k in ("county","constituency","ward"))
  now=time.monotonic()
  cached=_CANDIDATE_CATALOG_CACHE.get(cache_key)
  if cached and now-cached[0] < CANDIDATE_CATALOG_CACHE_SECONDS:
@@ -844,12 +845,16 @@ def candidate_portal_catalog(geo):
    params={
     "county":geo.get("county",""),
     "constituency":geo.get("constituency",""),
-    "ward":geo.get("ward","")
+    "ward":geo.get("ward",""),
+    "party_code":party_code
    },
    timeout=(4,10)
   )
   r.raise_for_status()
   payload=r.json()
+  returned_party=str(payload.get("party_code") or party_code).strip().upper() if isinstance(payload,dict) else party_code
+  if returned_party!=party_code:
+   raise RuntimeError("Candidate Portal returned candidates for the wrong party.")
   rows=payload.get("results",[]) if isinstance(payload,dict) else []
   catalog={k:[] for k,_,_ in ELECTIONS}
  position_aliases={
@@ -871,6 +876,7 @@ def candidate_portal_catalog(geo):
    continue
   catalog[key].append({
    "candidate_id":str(row.get("candidate_id","")).strip(),
+   "party_code":party_code,
    "name":str(row.get("full_name","")).strip() or "Unnamed candidate",
    "membership_no":str(row.get("membership_no","")).strip(),
    "bio":str(row.get("bio","")).strip(),
