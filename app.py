@@ -4726,6 +4726,50 @@ def with_current_registered_metadata(payload):
  result["totals"]=totals
  return result
 
+def requested_dashboard_party_code():
+ """Party requested by a results dashboard; defaults to active branding."""
+ code=str(request.args.get("party_code") or active_report_party_code()).strip().upper()
+ return code if code in {"ODM","UDA"} else active_report_party_code()
+
+def party_candidate_id_matches(candidate_id,party_code):
+ cid=str(candidate_id or "").strip().upper()
+ if not cid or cid=="__SKIP__":return False
+ # V1.73+ IDs are ODM-CAND-* / UDA-CAND-*. Pre-party candidate IDs belong
+ # to the historical ODM dataset and remain visible under ODM.
+ return cid.startswith("UDA-") if party_code=="UDA" else not cid.startswith("UDA-")
+
+def party_scoped_dashboard_payload(payload,party_code):
+ """Return one party's results without mixing the other party's candidates.
+
+ Historical rows are classified by the permanent candidate-ID prefix. New
+ stream payloads may additionally carry party_code. This preserves older ODM
+ results and correctly separates UDA-CAND-* votes already recorded.
+ """
+ result=copy.deepcopy(payload or {});party_code=str(party_code or "ODM").upper()
+ result["party_code"]=party_code
+ result["candidates"]=[c for c in (result.get("candidates") or [])
+  if party_candidate_id_matches(c.get("candidate_id"),party_code)]
+ scoped_streams=[]
+ for original in result.get("streams") or []:
+  item=copy.deepcopy(original);original_votes=dict(item.get("candidate_votes") or {})
+  matched={cid:v for cid,v in original_votes.items() if party_candidate_id_matches(cid,party_code)}
+  tagged=str(item.get("party_code") or "").strip().upper()
+  if original_votes and not matched:continue
+  if not original_votes and (tagged or "ODM")!=party_code:continue
+  item["party_code"]=tagged or ("UDA" if any(str(cid).upper().startswith("UDA-") for cid in matched) else "ODM")
+  item["candidate_votes"]=matched
+  for field in ("candidate_names","candidate_counties","candidate_constituencies","candidate_wards"):
+   if isinstance(item.get(field),dict):item[field]={cid:v for cid,v in item[field].items() if cid in matched}
+  item["candidate_selections"]=sum(int(v or 0) for v in matched.values())
+  scoped_streams.append(item)
+ result["streams"]=scoped_streams
+ totals=dict(result.get("totals") or {})
+ totals["candidate_selections"]=sum(int(s.get("candidate_selections") or 0) for s in scoped_streams)
+ totals["skipped"]=sum(int(s.get("skipped") or 0) for s in scoped_streams)
+ totals["participants"]=sum(int(s.get("participants") or 0) for s in scoped_streams)
+ result["totals"]=totals
+ return result
+
 # Very short cache for the gubernatorial feed. This prevents several dashboard browser
 # requests from repeating the same PostgreSQL aggregation at the same moment.
 _GOV_DASHBOARD_CACHE={"at":0.0,"payload":None}
@@ -4897,15 +4941,15 @@ def api_dashboard_woman_rep():
  """Read-only aggregate feed for the Women Representative Simulation Results Dashboard."""
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
- now_ts=time.time()
+ party_code=requested_dashboard_party_code();now_ts=time.time()
  cached=_WOMAN_REP_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_WOMAN_REP_DASHBOARD_CACHE.get("at") or 0)<WOMAN_REP_DASHBOARD_CACHE_SECONDS:
-  return jsonify(with_current_registered_metadata(cached))
+  return jsonify(party_scoped_dashboard_payload(with_current_registered_metadata(cached),party_code))
  payload=_build_woman_rep_dashboard_payload()
  with _WOMAN_REP_DASHBOARD_CACHE_LOCK:
   _WOMAN_REP_DASHBOARD_CACHE["payload"]=payload
   _WOMAN_REP_DASHBOARD_CACHE["at"]=time.time()
- return jsonify(payload)
+ return jsonify(party_scoped_dashboard_payload(payload,party_code))
 
 @app.get("/api/dashboard/president")
 def api_dashboard_president():
@@ -5070,10 +5114,10 @@ def api_dashboard_governor():
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
 
- now_ts=time.time()
+ party_code=requested_dashboard_party_code();now_ts=time.time()
  cached=_GOV_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_GOV_DASHBOARD_CACHE.get("at") or 0)<GOV_DASHBOARD_CACHE_SECONDS:
-  return jsonify(with_current_registered_metadata(cached))
+  return jsonify(party_scoped_dashboard_payload(with_current_registered_metadata(cached),party_code))
 
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
@@ -5217,7 +5261,7 @@ def api_dashboard_governor():
  with _GOV_DASHBOARD_CACHE_LOCK:
   _GOV_DASHBOARD_CACHE["payload"]=payload
   _GOV_DASHBOARD_CACHE["at"]=time.time()
- return jsonify(payload)
+ return jsonify(party_scoped_dashboard_payload(payload,party_code))
 
 
 @app.get("/api/dashboard/senator")
@@ -5229,10 +5273,10 @@ def api_dashboard_senator():
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
 
- now_ts=time.time()
+ party_code=requested_dashboard_party_code();now_ts=time.time()
  cached=_SEN_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_SEN_DASHBOARD_CACHE.get("at") or 0)<SEN_DASHBOARD_CACHE_SECONDS:
-  return jsonify(with_current_registered_metadata(cached))
+  return jsonify(party_scoped_dashboard_payload(with_current_registered_metadata(cached),party_code))
 
  # Prefer the persistent anonymous PostgreSQL mirror so dashboard totals survive
  # Render deploys/restarts and reflect the current simulation across workers/devices.
@@ -5376,7 +5420,7 @@ def api_dashboard_senator():
  with _SEN_DASHBOARD_CACHE_LOCK:
   _SEN_DASHBOARD_CACHE["payload"]=payload
   _SEN_DASHBOARD_CACHE["at"]=time.time()
- return jsonify(payload)
+ return jsonify(party_scoped_dashboard_payload(payload,party_code))
 
 
 def _build_mna_dashboard_payload():
@@ -5489,15 +5533,15 @@ def api_dashboard_mna():
  """Read-only MNA aggregate feed; returns no voter identifiers."""
  if not dashboard_api_authorized():
   return jsonify({"error":"Unauthorized"}),401
- now_ts=time.time()
+ party_code=requested_dashboard_party_code();now_ts=time.time()
  cached=_MNA_DASHBOARD_CACHE.get("payload")
  if cached is not None and now_ts-float(_MNA_DASHBOARD_CACHE.get("at") or 0)<MNA_DASHBOARD_CACHE_SECONDS:
-  return jsonify(with_current_registered_metadata(cached))
+  return jsonify(party_scoped_dashboard_payload(with_current_registered_metadata(cached),party_code))
  payload=_build_mna_dashboard_payload()
  with _MNA_DASHBOARD_CACHE_LOCK:
   _MNA_DASHBOARD_CACHE["payload"]=payload
   _MNA_DASHBOARD_CACHE["at"]=time.time()
- return jsonify(payload)
+ return jsonify(party_scoped_dashboard_payload(payload,party_code))
 
 
 def _build_mca_dashboard_payload():
@@ -5588,12 +5632,12 @@ def _build_mca_dashboard_payload():
 def api_dashboard_mca():
  """Read-only MCA aggregate feed; returns no voter identifiers."""
  if not dashboard_api_authorized():return jsonify({"error":"Unauthorized"}),401
- now_ts=time.time();cached=_MCA_DASHBOARD_CACHE.get("payload")
- if cached is not None and now_ts-float(_MCA_DASHBOARD_CACHE.get("at") or 0)<MCA_DASHBOARD_CACHE_SECONDS:return jsonify(with_current_registered_metadata(cached))
+ party_code=requested_dashboard_party_code();now_ts=time.time();cached=_MCA_DASHBOARD_CACHE.get("payload")
+ if cached is not None and now_ts-float(_MCA_DASHBOARD_CACHE.get("at") or 0)<MCA_DASHBOARD_CACHE_SECONDS:return jsonify(party_scoped_dashboard_payload(with_current_registered_metadata(cached),party_code))
  payload=_build_mca_dashboard_payload()
  with _MCA_DASHBOARD_CACHE_LOCK:
   _MCA_DASHBOARD_CACHE["payload"]=payload;_MCA_DASHBOARD_CACHE["at"]=time.time()
- return jsonify(payload)
+ return jsonify(party_scoped_dashboard_payload(payload,party_code))
 
 
 @app.get("/complete")
