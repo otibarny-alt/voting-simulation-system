@@ -408,8 +408,9 @@ def active_party_brand(force=False):
   return dict(value)
 
 
-def active_brand_asset_path():
- brand=active_party_brand()
+def active_brand_asset_path(party_code=None):
+ code=str(party_code or "").strip().upper()
+ brand=dict(PARTY_BRANDS.get(code)) if code in PARTY_BRANDS else active_party_brand()
  return os.path.join(app.root_path,"static",brand["header_file"])
 
 
@@ -1204,6 +1205,7 @@ def init_repository_db():
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
        id BIGSERIAL PRIMARY KEY,
+       party_code TEXT NOT NULL DEFAULT 'ODM',
        session_date TEXT NOT NULL,
        election TEXT NOT NULL,
        election_title TEXT NOT NULL,
@@ -1214,6 +1216,8 @@ def init_repository_db():
        UNIQUE(session_date,election,poll_station,stream)
      )
     """)
+    cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS party_code TEXT NOT NULL DEFAULT 'ODM'")
+    cur.execute("UPDATE simulation_pdf_reports SET party_code='ODM' WHERE party_code IS NULL OR party_code NOT IN ('ODM','UDA')")
     cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS format_version TEXT NOT NULL DEFAULT ''")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election_deposited ON simulation_pdf_reports(election,deposited_at DESC,id DESC)")
@@ -1221,10 +1225,13 @@ def init_repository_db():
     # Polling-station and stream names can repeat in different wards/counties.
     # Replace the legacy partial geographic uniqueness rule with the full key.
     cur.execute("ALTER TABLE simulation_pdf_reports DROP CONSTRAINT IF EXISTS simulation_pdf_reports_session_date_election_poll_station_stream_key")
-    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_pdf_full_geo ON simulation_pdf_reports(session_date,election,county,constituency,ward,poll_station,stream)")
+    cur.execute("DROP INDEX IF EXISTS uq_sim_pdf_full_geo")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_pdf_party_full_geo ON simulation_pdf_reports(party_code,session_date,election,county,constituency,ward,poll_station,stream)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_party_election ON simulation_pdf_reports(party_code,election,deposited_at DESC,id DESC)")
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_opening_pdf_reports(
        id BIGSERIAL PRIMARY KEY,
+       party_code TEXT NOT NULL DEFAULT 'ODM',
        session_date TEXT NOT NULL,
        county TEXT NOT NULL DEFAULT '', constituency TEXT NOT NULL DEFAULT '',
        ward TEXT NOT NULL DEFAULT '', poll_station TEXT NOT NULL, stream TEXT NOT NULL,
@@ -1232,7 +1239,11 @@ def init_repository_db():
        filename TEXT NOT NULL, pdf_data BYTEA NOT NULL
      )
     """)
-    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_opening_pdf_full_geo ON simulation_opening_pdf_reports(session_date,county,constituency,ward,poll_station,stream)")
+    cur.execute("ALTER TABLE simulation_opening_pdf_reports ADD COLUMN IF NOT EXISTS party_code TEXT NOT NULL DEFAULT 'ODM'")
+    cur.execute("UPDATE simulation_opening_pdf_reports SET party_code='ODM' WHERE party_code IS NULL OR party_code NOT IN ('ODM','UDA')")
+    cur.execute("DROP INDEX IF EXISTS uq_sim_opening_pdf_full_geo")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sim_opening_pdf_party_full_geo ON simulation_opening_pdf_reports(party_code,session_date,county,constituency,ward,poll_station,stream)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_opening_pdf_party ON simulation_opening_pdf_reports(party_code,deposited_at DESC,id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_opening_pdf_deposited ON simulation_opening_pdf_reports(deposited_at DESC,id DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_opening_pdf_geo ON simulation_opening_pdf_reports(county,constituency,ward,poll_station,stream)")
     cur.execute("""
@@ -1418,6 +1429,7 @@ def init_global_lock_db():
     cur.execute("""
      CREATE TABLE IF NOT EXISTS simulation_pdf_reports(
        id BIGSERIAL PRIMARY KEY,
+       party_code TEXT NOT NULL DEFAULT 'ODM',
        session_date TEXT NOT NULL,
        election TEXT NOT NULL,
        election_title TEXT NOT NULL,
@@ -1428,6 +1440,8 @@ def init_global_lock_db():
        UNIQUE(session_date,election,poll_station,stream)
      )
     """)
+    cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS party_code TEXT NOT NULL DEFAULT 'ODM'")
+    cur.execute("UPDATE simulation_pdf_reports SET party_code='ODM' WHERE party_code IS NULL OR party_code NOT IN ('ODM','UDA')")
     cur.execute("ALTER TABLE simulation_pdf_reports ADD COLUMN IF NOT EXISTS format_version TEXT NOT NULL DEFAULT ''")
     # Composite indexes are deliberately metadata-only: pdf_data is never part of an index.
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sim_pdf_election ON simulation_pdf_reports(election)")
@@ -5890,7 +5904,9 @@ def render_tally_pdf_reportlab(report_html, ref=None):
  # odm_report_header.png in an older build was truncated. Use the validated
  # screen header and verify it before ReportLab receives it; branding must
  # never be allowed to abort all five nomination-report deposits.
- header_path=active_brand_asset_path()
+ try: report_party_code=row.get("party_code","")
+ except Exception: report_party_code=""
+ header_path=active_brand_asset_path(report_party_code)
  try:
   with PILImage.open(header_path) as header_check:header_check.verify()
   story.extend([RLImage(header_path,width=190*mm,height=31*mm,kind="proportional"),Spacer(1,2*mm)])
@@ -6040,18 +6056,25 @@ def render_tally_pdf(report_html, ref=None):
   del html,report_html,fallback_report_html,pdf_header_html
   gc.collect()
 
-def repository_counts(force=False):
+def active_report_party_code():
+ code=str(active_party_brand().get("code") or "ODM").strip().upper()
+ return code if code in {"ODM","UDA"} else "ODM"
+
+def requested_report_party(value=None):
+ code=str(value if value is not None else request.args.get("party_code","")).strip().upper()
+ return code if code in {"ODM","UDA","ALL"} else active_report_party_code()
+
+def repository_counts(force=False,party_code=None):
  if not DATABASE_URL:return {}
  init_repository_db()
- now=time.monotonic()
- if not force and _REPO_COUNTS_CACHE.get("value") and (now-_REPO_COUNTS_CACHE.get("at",0.0)) < _REPO_COUNTS_TTL:
-  return dict(_REPO_COUNTS_CACHE["value"])
+ party_code=requested_report_party(party_code)
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports GROUP BY election")
+   if party_code=="ALL":
+    cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports GROUP BY election")
+   else:
+    cur.execute("SELECT election,COUNT(*) AS report_count FROM simulation_pdf_reports WHERE party_code=%s GROUP BY election",(party_code,))
    value={r['election']:int(r['report_count']) for r in cur.fetchall()}
- _REPO_COUNTS_CACHE["value"]=value
- _REPO_COUNTS_CACHE["at"]=now
  return dict(value)
 
 def invalidate_repository_cache():
@@ -6061,7 +6084,8 @@ def invalidate_repository_cache():
 
 def repository_filter_sets(election,filters):
  """Return cascading dropdown values with a short in-process cache."""
- key=(election,filters.get("county","") or "",filters.get("constituency","") or "",filters.get("ward","") or "",filters.get("poll_station","") or "")
+ party_code=requested_report_party(filters.get("party_code"))
+ key=(party_code,election,filters.get("county","") or "",filters.get("constituency","") or "",filters.get("ward","") or "",filters.get("poll_station","") or "")
  now=time.monotonic()
  cached=_REPO_FILTER_CACHE.get(key)
  if cached and (now-cached[0]) < _REPO_FILTER_TTL:
@@ -6083,6 +6107,8 @@ def repository_filter_sets(election,filters):
      if not filters.get(parent):
       continue
     where=['election=%s']; params=[election]
+    if party_code!="ALL":
+     where.append('party_code=%s');params.append(party_code)
     for pkey,val in parents.items():
      if val:
       where.append(f"{pkey}=%s"); params.append(val)
@@ -6095,6 +6121,9 @@ def repository_filter_sets(election,filters):
 def repository_category_rows(election,filters,page=1,per_page=50):
  init_repository_db()
  where=['election=%s']; params=[election]
+ party_code=requested_report_party(filters.get("party_code"))
+ if party_code!="ALL":
+  where.append('party_code=%s');params.append(party_code)
  for key in ('county','constituency','ward','poll_station','stream'):
   val=(filters.get(key) or '').strip()
   if val:
@@ -6105,7 +6134,7 @@ def repository_category_rows(election,filters,page=1,per_page=50):
   with conn.cursor() as cur:
    cur.execute(f"SELECT COUNT(*) AS n FROM simulation_pdf_reports WHERE {base}",params)
    total=int(cur.fetchone()['n'])
-   cur.execute(f"""SELECT id,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename
+   cur.execute(f"""SELECT id,party_code,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename
     FROM simulation_pdf_reports WHERE {base}
     ORDER BY deposited_at DESC,id DESC LIMIT %s OFFSET %s""",params+[per_page,offset])
    rows=cur.fetchall()
@@ -6190,9 +6219,9 @@ def deposit_report():
    "no_votes":True,
    "error":"No report generated: this polling-station stream recorded no simulated voters."
   }),409
- title=allowed[election]
+ title=allowed[election];party_code=active_report_party_code()
  safe=lambda v: re.sub(r'[^A-Za-z0-9_-]+','_',str(v or '')).strip('_') or 'unknown'
- filename=f"{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
+ filename=f"{party_code}_{safe(title)}_Tally_{safe(ref.get('poll_station'))}_{safe(ref.get('stream'))}.pdf"
  now=kenya_now().isoformat(timespec='seconds'); init_repository_db()
  # Store the structured tally before handling the PDF. This makes repeated
  # deposits/backfills repair consolidation even when the PDF already exists.
@@ -6202,10 +6231,10 @@ def deposit_report():
  with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""SELECT id, filename, format_version FROM simulation_pdf_reports
-                  WHERE session_date=%s AND election=%s AND county=%s AND constituency=%s
+                  WHERE party_code=%s AND session_date=%s AND election=%s AND county=%s AND constituency=%s
                     AND ward=%s AND poll_station=%s AND stream=%s
                   LIMIT 1""",
-               (ref.get('session_date',today_iso()),election,ref.get('county',''),ref.get('constituency',''),
+               (party_code,ref.get('session_date',today_iso()),election,ref.get('county',''),ref.get('constituency',''),
                 ref.get('ward',''),ref.get('poll_station',''),ref.get('stream','')))
    existing=cur.fetchone()
  if existing and str(existing.get('format_version') or '')==TALLY_REPORT_FORMAT_VERSION:
@@ -6214,10 +6243,10 @@ def deposit_report():
  pdf=render_tally_pdf(report_html,ref)
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""INSERT INTO simulation_pdf_reports(session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data,format_version)
-    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    ON CONFLICT(session_date,election,county,constituency,ward,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data,format_version=EXCLUDED.format_version""",
-    (ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf),TALLY_REPORT_FORMAT_VERSION))
+   cur.execute("""INSERT INTO simulation_pdf_reports(party_code,session_date,election,election_title,county,constituency,ward,poll_station,stream,closed_at,deposited_at,filename,pdf_data,format_version)
+    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    ON CONFLICT(party_code,session_date,election,county,constituency,ward,poll_station,stream) DO UPDATE SET election_title=EXCLUDED.election_title,closed_at=EXCLUDED.closed_at,deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,pdf_data=EXCLUDED.pdf_data,format_version=EXCLUDED.format_version""",
+    (party_code,ref.get('session_date',today_iso()),election,title,ref.get('county',''),ref.get('constituency',''),ref.get('ward',''),ref.get('poll_station',''),ref.get('stream',''),row['closed_at'] if row else '',now,filename,psycopg.Binary(pdf),TALLY_REPORT_FORMAT_VERSION))
   conn.commit()
  invalidate_repository_cache()
  del pdf,report_html
@@ -9380,19 +9409,19 @@ def report_repository():
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=request.full_path))
  order=[('governor','Gubernatorial Reports'),('senator','Senatorial Reports'),('woman_rep','Women Rep Reports'),('mna','MNA Reports'),('mca','MCA Reports')]
- counts={}; error=''
+ party_code=requested_report_party();counts={}; error=''
  if not DATABASE_URL:
   error='Central repository requires DATABASE_URL (shared PostgreSQL).'
  else:
   try:
-   counts=repository_counts()
+   counts=repository_counts(party_code=party_code)
   except Exception:
    app.logger.exception('Report repository summary could not be loaded')
    error='The report database is temporarily unavailable. The repository link is working; please retry shortly or check the Render database connection.'
  groups=[{'key':k,'title':title,'count':counts.get(k,0)} for k,title in order]
  total_reports=sum(g['count'] for g in groups)
  resp=app.make_response(render_template(
-  'report_repository.html',groups=groups,total_reports=total_reports,error=error,
+  'report_repository.html',groups=groups,total_reports=total_reports,error=error,party_code=party_code,
   is_admin=repository_admin_logged_in(),has_closed_stream=bool(closed_stream_cookie())
  ))
  resp.headers['Cache-Control']='private, max-age=15'
@@ -9401,7 +9430,10 @@ def report_repository():
 def opening_repository_data(filters,page=1,per_page=50):
  """Return paginated opening certificates and cascading filter choices."""
  init_repository_db()
+ party_code=requested_report_party(filters.get("party_code"))
  where=[];params=[]
+ if party_code!="ALL":
+  where.append("party_code=%s");params.append(party_code)
  for key in ("county","constituency","ward","poll_station","stream"):
   value=(filters.get(key) or "").strip()
   if value:
@@ -9417,13 +9449,15 @@ def opening_repository_data(filters,page=1,per_page=50):
   with conn.cursor() as cur:
    cur.execute(f"SELECT COUNT(*) AS n FROM simulation_opening_pdf_reports{base}",params)
    total=int(cur.fetchone()["n"] or 0)
-   cur.execute(f"""SELECT id,session_date,county,constituency,ward,poll_station,stream,
+   cur.execute(f"""SELECT id,party_code,session_date,county,constituency,ward,poll_station,stream,
                     opened_at,deposited_at,filename
                    FROM simulation_opening_pdf_reports{base}
                    ORDER BY deposited_at DESC,id DESC LIMIT %s OFFSET %s""",params+[per_page,offset])
    rows=cur.fetchall()
    for output,column,parents in specs:
     choice_where=[];choice_params=[]
+    if party_code!="ALL":
+     choice_where.append("party_code=%s");choice_params.append(party_code)
     for parent in parents:
      value=(filters.get(parent) or "").strip()
      if value:
@@ -9438,6 +9472,7 @@ def opening_report_repository():
  if not repository_admin_logged_in():
   return redirect(url_for("repository_admin_login",next=request.full_path))
  filters={key:(request.args.get(key) or "").strip() for key in ("county","constituency","ward","poll_station","stream")}
+ filters["party_code"]=requested_report_party()
  try:page=max(1,int(request.args.get("page","1")))
  except Exception:page=1
  per_page=50;rows=[];total=0;pages=1;error=""
@@ -9535,13 +9570,14 @@ def opening_repository_email(report_id):
  init_repository_db()
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT filename,pdf_data,county,constituency,ward,poll_station,stream
+   cur.execute("""SELECT filename,pdf_data,party_code,county,constituency,ward,poll_station,stream
                   FROM simulation_opening_pdf_reports WHERE id=%s""",(report_id,))
    row=cur.fetchone()
  if not row:return jsonify({"ok":False,"error":"Opening report not found."}),404
  area=" / ".join(str(row.get(key) or "") for key in ("county","constituency","ward","poll_station","stream"))
- return send_stored_repository_pdf(recipient,f"Voting Stream Opening Report - {area}",
-  f"The archived voting-stream opening report for {area} is attached.",row["filename"],row["pdf_data"])
+ party=str(row.get("party_code") or "ODM")
+ return send_stored_repository_pdf(recipient,f"{party} Voting Stream Opening Report - {area}",
+  f"The archived {party} voting-stream opening report for {area} is attached.",row["filename"],row["pdf_data"])
 
 @app.post("/opening-report-repository/delete/<int:report_id>")
 def opening_repository_delete(report_id):
@@ -9561,6 +9597,7 @@ def report_repository_category(election):
  if election not in allowed:return Response('Report category not found',status=404)
  if not DATABASE_URL:return Response('Repository unavailable',status=503)
  filters={k:(request.args.get(k,'') or '').strip() for k in ('county','constituency','ward','poll_station','stream')}
+ filters['party_code']=requested_report_party()
  try: page=max(1,int(request.args.get('page','1')))
  except Exception: page=1
  per_page=50
@@ -9636,14 +9673,15 @@ def repository_email(report_id):
  init_repository_db()
  with repository_db() as conn:
   with conn.cursor() as cur:
-   cur.execute("""SELECT filename,pdf_data,election,election_title,county,constituency,ward,poll_station,stream
+   cur.execute("""SELECT filename,pdf_data,party_code,election,election_title,county,constituency,ward,poll_station,stream
                   FROM simulation_pdf_reports WHERE id=%s""",(report_id,))
    row=cur.fetchone()
  if not row:return jsonify({"ok":False,"error":"Report not found."}),404
  area=" / ".join(str(row.get(key) or "") for key in ("county","constituency","ward","poll_station","stream"))
  title=str(row.get("election_title") or row.get("election") or "Voting").strip()
- return send_stored_repository_pdf(recipient,f"{title} Tally Report - {area}",
-  f"The archived {title} tally report for {area} is attached.",row["filename"],row["pdf_data"])
+ party=str(row.get("party_code") or "ODM")
+ return send_stored_repository_pdf(recipient,f"{party} {title} Tally Report - {area}",
+  f"The archived {party} {title} tally report for {area} is attached.",row["filename"],row["pdf_data"])
 
 def render_opening_report_pdf(row,position_rows):
  """Create a printable A4 opening certificate without browser-side HTML."""
@@ -9677,6 +9715,7 @@ def render_opening_report_pdf(row,position_rows):
  precast_label=("0 — VERIFIED CLEAN" if precast_voters==0 else
                 f"{precast_voters} — PRE-EXISTING VOTES RECORDED — NOT A CLEAN OPENING")
  info=[
+  ["Party",str(value("party_code")) or "ODM"],
   ["County",str(value("county")) or "Not recorded"],
   ["Constituency",str(value("constituency")) or "Not recorded"],
   ["Ward",str(value("ward")) or "Not recorded"],
@@ -9741,6 +9780,8 @@ def deposit_opening_report_snapshot(snapshot):
  if not DATABASE_URL:
   raise RuntimeError("Central opening-report repository requires DATABASE_URL.")
  geo={key:str(snapshot.get(key) or "") for key in ("county","constituency","ward","poll_station","stream")}
+ party_code=str(snapshot.get("party_code") or active_report_party_code()).strip().upper()
+ if party_code not in {"ODM","UDA"}:party_code="ODM"
  try:
   catalog=candidate_portal_catalog(geo)
  except Exception as exc:
@@ -9750,21 +9791,21 @@ def deposit_opening_report_snapshot(snapshot):
                 for key,title,_slots in ELECTIONS]
  pdf=render_opening_report_pdf(snapshot,position_rows)
  safe=lambda value:re.sub(r"[^A-Za-z0-9_-]+","_",str(value or "")).strip("_") or "unknown"
- filename=(f"Opening_Report_{safe(snapshot.get('county'))}_{safe(snapshot.get('constituency'))}_"
+ filename=(f"{party_code}_Opening_Report_{safe(snapshot.get('county'))}_{safe(snapshot.get('constituency'))}_"
            f"{safe(snapshot.get('ward'))}_{safe(snapshot.get('poll_station'))}_{safe(snapshot.get('stream'))}.pdf")
  deposited_at=kenya_now().isoformat(timespec="seconds")
  init_repository_db()
  with repository_db() as conn:
   with conn.cursor() as cur:
    cur.execute("""INSERT INTO simulation_opening_pdf_reports(
-                   session_date,county,constituency,ward,poll_station,stream,
+                   party_code,session_date,county,constituency,ward,poll_station,stream,
                    opened_at,deposited_at,filename,pdf_data)
-                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                  ON CONFLICT(session_date,county,constituency,ward,poll_station,stream)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT(party_code,session_date,county,constituency,ward,poll_station,stream)
                   DO UPDATE SET opened_at=EXCLUDED.opened_at,
                     deposited_at=EXCLUDED.deposited_at,filename=EXCLUDED.filename,
                     pdf_data=EXCLUDED.pdf_data""",
-               (snapshot.get("session_date") or today_iso(),geo["county"],geo["constituency"],geo["ward"],
+               (party_code,snapshot.get("session_date") or today_iso(),geo["county"],geo["constituency"],geo["ward"],
                 geo["poll_station"],geo["stream"],snapshot.get("opened_at") or "",deposited_at,
                 filename,psycopg.Binary(pdf)))
   conn.commit()
@@ -9773,8 +9814,9 @@ def deposit_opening_report_snapshot(snapshot):
 def defer_opening_report_deposit(snapshot):
  """Single-flight background deposit; safe to call again from report viewing."""
  snapshot=dict(snapshot or {})
+ snapshot.setdefault("party_code",active_report_party_code())
  key=tuple(str(snapshot.get(name) or "") for name in (
-  "session_date","county","constituency","ward","poll_station","stream"
+  "party_code","session_date","county","constituency","ward","poll_station","stream"
  ))
  if not snapshot.get("poll_station") or not snapshot.get("stream"):
   return False
